@@ -10,7 +10,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.scripts]
-unsat = "unsat:main"
+unsat = "unsat.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]
@@ -18,7 +18,101 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.170.17",
+    "import-linter>=2.17",
     "pytest>=9.2.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.17.6",
+    "rumdl>=0.3.5",
     "ty>=0.0.107",
 ]
+
+[tool.pytest.ini_options]
+timeout = 30
+
+[tool.importlinter]
+root_package = "unsat"
+
+[[tool.importlinter.contracts]]
+name = "Layered solver architecture"
+type = "layers"
+containers = ["unsat"]
+exhaustive = true
+layers = [
+    "__main__",
+    "cli",
+    "parser",
+    "api",
+    "smt",
+    "quantifiers",
+    "theories | tactics",
+    "model",
+    "syntax | sat",
+]
+
+[[tool.importlinter.contracts]]
+name = "Internal modules must not import the public facade"
+type = "protected"
+protected_modules = ["unsat"]
+allowed_importers = []
+as_packages = false
+
+[[tool.importlinter.contracts]]
+name = "The public facade imports only api directly"
+type = "forbidden"
+source_modules = ["unsat"]
+forbidden_modules = ["unsat.**"]
+as_packages = false
+allow_indirect_imports = true
+ignore_imports = ["unsat -> unsat.api"]
+unmatched_ignore_imports_alerting = "none"
+
+[[tool.importlinter.contracts]]
+name = "API accesses solver internals through smt"
+type = "forbidden"
+source_modules = ["unsat.api"]
+forbidden_modules = ["unsat.sat", "unsat.quantifiers", "unsat.theories", "unsat.tactics"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Parser accesses model and theory internals through its frontends"
+type = "forbidden"
+source_modules = ["unsat.parser"]
+forbidden_modules = ["unsat.model", "unsat.quantifiers", "unsat.theories", "unsat.tactics"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "CLI entry points access solver internals through parser, smt and sat"
+type = "forbidden"
+source_modules = ["unsat.cli", "unsat.__main__"]
+forbidden_modules = [
+    "unsat.api", "unsat.syntax", "unsat.model", "unsat.quantifiers", "unsat.theories", "unsat.tactics",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Lower layers must not depend on sat"
+type = "forbidden"
+source_modules = [
+    "unsat.quantifiers",
+    "unsat.theories",
+    "unsat.tactics",
+    "unsat.model",
+    "unsat.syntax",
+]
+forbidden_modules = [
+    "unsat.sat",
+]
+
+[[tool.importlinter.contracts]]
+name = "Quantifiers must not depend on tactics"
+type = "forbidden"
+source_modules = [
+    "unsat.quantifiers",
+]
+forbidden_modules = [
+    "unsat.tactics",
+]
+
+[tool.rumdl]
+disable = ["MD013"]

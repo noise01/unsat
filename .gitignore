@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Import Linter cache
+.import_linter_cache/
+
+# rumdl cache
+.rumdl_cache/

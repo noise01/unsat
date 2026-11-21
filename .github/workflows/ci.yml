@@ -33,5 +33,14 @@ jobs:
       - name: Run ruff format check
         run: uv run ruff format --check .
 
+      - name: Run ty check
+        run: uv run ty check
+
+      - name: Run import-linter
+        run: uv run lint-imports
+
+      - name: Run rumdl check
+        run: uv run rumdl check .
+
       - name: Run tests
         run: uv run pytest tests
