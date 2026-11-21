@@ -3,12 +3,22 @@
 Depends on: ``syntax``, ``model``.
 """
 
-from unsat.theories.base import EUFStats, LRAStats, TheoryLit, TheorySolver
+from unsat.theories.arrays import ArrayLemma, ArraySolver
+from unsat.theories.base import (
+    ArrayStats,
+    EUFStats,
+    LRAStats,
+    TheoryLit,
+    TheorySolver,
+)
 from unsat.theories.euf import EUFSolver
 from unsat.theories.lia import LIACutLemma, LIASplitLemma, find_lia_lemma
 from unsat.theories.lra import DeltaRational, LRASolver
 
 __all__ = [
+    "ArrayLemma",
+    "ArraySolver",
+    "ArrayStats",
     "DeltaRational",
     "EUFSolver",
     "EUFStats",

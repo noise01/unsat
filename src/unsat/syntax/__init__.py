@@ -10,6 +10,7 @@ from unsat.syntax.walk import (
     collect_const_decls,
     collect_func_decls,
     format_expr,
+    format_sort,
     iter_subexprs,
     quote_smt2_symbol,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "collect_const_decls",
     "collect_func_decls",
     "format_expr",
+    "format_sort",
     "iter_subexprs",
     "quote_smt2_symbol",
 ]

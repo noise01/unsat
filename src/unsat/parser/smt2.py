@@ -16,6 +16,7 @@ from unsat.syntax import (
     Sort,
     SortKind,
     format_expr,
+    format_sort,
     quote_smt2_symbol,
 )
 
@@ -24,6 +25,7 @@ type SExpr = _Atom | tuple[SExpr, ...]
 _SIMPLE_SYMBOL_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789~!@$%^&*_-+=<>.?/"
 )
+_HEX_CHARS = frozenset("0123456789abcdefABCDEF")
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +50,15 @@ class _StringLit:
     col: int
 
 
-type _Atom = _Symbol | _Keyword | _StringLit
+@dataclass(frozen=True, slots=True)
+class _BVLiteral:
+    value: int
+    width: int
+    line: int
+    col: int
+
+
+type _Atom = _Symbol | _Keyword | _StringLit | _BVLiteral
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +170,34 @@ def tokenize_smt2(text: str) -> list[_Token]:
                 raise ValueError(msg)
             tokens.append(_Token("KEYWORD", text[start:i], line, start_col))
             continue
+        if ch == "#":
+            start_col = col
+            if i + 1 < n and text[i + 1] == "b":
+                i += 2
+                col += 2
+                start = i
+                while i < n and text[i] in ("0", "1"):
+                    i += 1
+                    col += 1
+                if i == start:
+                    msg = f"Line {line}, col {start_col}: empty binary '#b' literal"
+                    raise ValueError(msg)
+                tokens.append(_Token("BVBIN", text[start:i], line, start_col))
+                continue
+            if i + 1 < n and text[i + 1] == "x":
+                i += 2
+                col += 2
+                start = i
+                while i < n and text[i] in _HEX_CHARS:
+                    i += 1
+                    col += 1
+                if i == start:
+                    msg = f"Line {line}, col {start_col}: empty hex '#x' literal"
+                    raise ValueError(msg)
+                tokens.append(_Token("BVHEX", text[start:i], line, start_col))
+                continue
+            msg = f"Line {line}, col {col}: unexpected '#' literal"
+            raise ValueError(msg)
         if ch in _SIMPLE_SYMBOL_CHARS:
             start_col = col
             start = i
@@ -201,6 +239,10 @@ def _parse_sexprs(tokens: Sequence[_Token]) -> list[SExpr]:
             atom = _Symbol(tok.value, True, tok.line, tok.col)
         elif tok.kind == "KEYWORD":
             atom = _Keyword(tok.value, tok.line, tok.col)
+        elif tok.kind == "BVBIN":
+            atom = _BVLiteral(int(tok.value, 2), len(tok.value), tok.line, tok.col)
+        elif tok.kind == "BVHEX":
+            atom = _BVLiteral(int(tok.value, 16), 4 * len(tok.value), tok.line, tok.col)
         else:
             atom = _StringLit(tok.value, tok.line, tok.col)
 
@@ -226,6 +268,16 @@ _SUPPORTED_LOGICS = frozenset(
         "QF_UFLRA",
         "QF_UFLIA",
         "QF_LIRA",
+        "QF_BV",
+        "QF_UFBV",
+        "QF_AX",
+        "QF_ABV",
+        "QF_AUFBV",
+        "QF_ALIA",
+        "QF_ALRA",
+        "QF_AUFLIA",
+        "QF_AUFLRA",
+        "QF_AUFLIRA",
         "ALL",
     }
 )
@@ -236,37 +288,38 @@ def _is_decimal_token(name: str) -> bool:
     return len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit()
 
 
-def _default_const_for_model(model: Model, sort: Sort) -> Const:
-    if sort.kind is SortKind.BOOL:
-        return model.ctx.mk_false()
-    if sort.kind is SortKind.INT:
-        return model.ctx.mk_int_val(0)
-    if sort.kind is SortKind.REAL:
-        return model.ctx.mk_real_val(0)
-    universe = model.universe(sort)
-    if universe:
-        return universe[0]
-    return model.ctx.mk_domain_val(sort, 0)
+def _default_expr_for_model(model: Model, sort: Sort) -> Expr:
+    chain: list[Sort] = []
+    cur = sort
+    while cur.kind is SortKind.ARRAY:
+        chain.append(cur.index_sort)
+        cur = cur.element_sort
+    if cur.kind is SortKind.BOOL:
+        val: Expr = model.ctx.mk_false()
+    elif cur.kind is SortKind.INT:
+        val = model.ctx.mk_int_val(0)
+    elif cur.kind is SortKind.REAL:
+        val = model.ctx.mk_real_val(0)
+    elif cur.kind is SortKind.BITVEC:
+        val = model.ctx.mk_bv_val(0, cur.size)
+    else:
+        universe = model.universe(cur)
+        val = universe[0] if universe else model.ctx.mk_domain_val(cur, 0)
+    for idx_sort in reversed(chain):
+        val = model.ctx.mk_const_array(idx_sort, val)
+    return val
 
 
-def _format_value_atom(ctx: Context, val: Value) -> str:
+def _format_value_atom(ctx: Context, val: Value, sort: Sort) -> str:
     if isinstance(val, bool):
         return "true" if val else "false"
     if isinstance(val, int):
+        if sort.is_bv:
+            return format_expr(ctx.mk_bv_val(val, sort.size))
         return format_expr(ctx.mk_int_val(val))
     if isinstance(val, Fraction):
         return format_expr(ctx.mk_real_val(val))
     return format_expr(val)
-
-
-def _format_sort(sort: Sort) -> str:
-    if sort.kind is SortKind.BOOL:
-        return "Bool"
-    if sort.kind is SortKind.INT:
-        return "Int"
-    if sort.kind is SortKind.REAL:
-        return "Real"
-    return quote_smt2_symbol(sort.name)
 
 
 def format_smt2_model(
@@ -284,20 +337,20 @@ def format_smt2_model(
     lines = ["("]
     for decl in target_decls:
         sym = quote_smt2_symbol(decl.name)
-        range_str = _format_sort(decl.range_sort)
+        range_str = format_sort(decl.range_sort)
         if decl.arity == 0:
             raw_val = model.get(decl)
             val_str = (
-                _format_value_atom(model.ctx, raw_val)
+                _format_value_atom(model.ctx, raw_val, decl.range_sort)
                 if raw_val is not None
-                else format_expr(_default_const_for_model(model, decl.range_sort))
+                else format_expr(_default_expr_for_model(model, decl.range_sort))
             )
             lines.append(f"  (define-fun {sym} () {range_str} {val_str})")
             continue
 
         param_names = [f"x!{i}" for i in range(decl.arity)]
         params_str = " ".join(
-            f"({p} {_format_sort(sort)})"
+            f"({p} {format_sort(sort)})"
             for p, sort in zip(param_names, decl.domain, strict=True)
         )
         if model.has_func_interp(decl):
@@ -314,14 +367,14 @@ def format_smt2_model(
                     cond = f"(and {eqs})"
                 body = f"(ite {cond} {format_expr(result)} {body})"
         else:
-            body = format_expr(_default_const_for_model(model, decl.range_sort))
+            body = format_expr(_default_expr_for_model(model, decl.range_sort))
         lines.append(f"  (define-fun {sym} ({params_str}) {range_str} {body})")
     lines.append(")")
     return "\n".join(lines)
 
 
 class SMT2Runner:
-    """Stateful SMT-LIB2 command executor for ``QF_BOOL``, ``QF_UF``, and LIA/LRA."""
+    """Stateful SMT-LIB2 command executor for core & combined SMT logics."""
 
     def __init__(self) -> None:
         self.ctx = Context()
@@ -378,6 +431,20 @@ class SMT2Runner:
         return sexpr
 
     def _resolve_sort(self, sexpr: SExpr, context_desc: str) -> Sort:
+        if isinstance(sexpr, tuple) and sexpr:
+            head = self._expect_symbol(sexpr[0], context_desc)
+            if not head.quoted and head.name == "_" and len(sexpr) == 3:
+                tag = self._expect_symbol(sexpr[1], context_desc)
+                if not tag.quoted and tag.name == "BitVec":
+                    width = self._parse_nonneg_int(sexpr[2], context_desc)
+                    return self.ctx.mk_bv_sort(width)
+            if not head.quoted and head.name == "Array" and len(sexpr) == 3:
+                idx_sort = self._resolve_sort(sexpr[1], context_desc)
+                elem_sort = self._resolve_sort(sexpr[2], context_desc)
+                return self.ctx.mk_array_sort(idx_sort, elem_sort)
+            msg = f"Invalid compound sort {sexpr!r} in {context_desc}"
+            raise ValueError(msg)
+
         sym = self._expect_symbol(sexpr, context_desc)
         if not sym.quoted:
             if sym.name == "Bool":
@@ -630,6 +697,9 @@ class SMT2Runner:
         ]
 
     def _parse_term(self, sexpr: SExpr, local_env: dict[str, Expr]) -> Expr:
+        if isinstance(sexpr, _BVLiteral):
+            return self.ctx.mk_bv_val(sexpr.value, sexpr.width)
+
         if isinstance(sexpr, _Symbol):
             if not sexpr.quoted:
                 if sexpr.name == "true":
@@ -637,7 +707,7 @@ class SMT2Runner:
                 if sexpr.name == "false":
                     return self.ctx.mk_false()
                 if sexpr.name.isdigit():
-                    if self._logic in ("QF_LRA", "QF_UFLRA"):
+                    if self._logic in ("QF_LRA", "QF_UFLRA", "QF_ALRA", "QF_AUFLRA"):
                         return self.ctx.mk_real_val(sexpr.name)
                     return self.ctx.mk_int_val(int(sexpr.name))
                 if _is_decimal_token(sexpr.name):
@@ -666,6 +736,9 @@ class SMT2Runner:
             msg = f"Invalid SMT-LIB2 term: {sexpr!r}"
             raise ValueError(msg)
 
+        if isinstance(sexpr[0], tuple):
+            return self._parse_compound_head_term(sexpr[0], sexpr[1:], local_env)
+
         head = self._expect_symbol(sexpr[0], "term operator")
         args = sexpr[1:]
 
@@ -681,6 +754,19 @@ class SMT2Runner:
             raise ValueError(msg)
 
         op = head.name
+        if op == "_":
+            if len(args) == 2:
+                bv_sym = self._expect_symbol(args[0], "indexed bitvector")
+                if (
+                    not bv_sym.quoted
+                    and bv_sym.name.startswith("bv")
+                    and bv_sym.name[2:].isdigit()
+                ):
+                    bv_val = int(bv_sym.name[2:])
+                    bv_width = self._parse_nonneg_int(args[1], "(_ bv...)")
+                    return self.ctx.mk_bv_val(bv_val, bv_width)
+            msg = f"Unsupported indexed identifier: {sexpr!r}"
+            raise ValueError(msg)
         if op == "!":
             if len(args) < 3 or len(args) % 2 == 0:
                 msg = "Attribute term '(! <term> :kw <val> ...)' is malformed"
@@ -830,6 +916,187 @@ class SMT2Runner:
                     msg = "'to_real' expects 1 argument"
                     raise ValueError(msg)
                 return self.ctx.mk_to_real(parsed[0])
+            case "bvnot":
+                if len(parsed) != 1:
+                    msg = "'bvnot' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_not(parsed[0])
+            case "bvneg":
+                if len(parsed) != 1:
+                    msg = "'bvneg' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_neg(parsed[0])
+            case "bvand":
+                if len(parsed) < 2:
+                    msg = "'bvand' expects at least 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_and(*parsed)
+            case "bvor":
+                if len(parsed) < 2:
+                    msg = "'bvor' expects at least 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_or(*parsed)
+            case "bvxor":
+                if len(parsed) < 2:
+                    msg = "'bvxor' expects at least 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_xor(*parsed)
+            case "bvnand":
+                if len(parsed) != 2:
+                    msg = "'bvnand' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_not(self.ctx.mk_bv_and(parsed[0], parsed[1]))
+            case "bvnor":
+                if len(parsed) != 2:
+                    msg = "'bvnor' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_not(self.ctx.mk_bv_or(parsed[0], parsed[1]))
+            case "bvxnor":
+                if len(parsed) != 2:
+                    msg = "'bvxnor' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_not(self.ctx.mk_bv_xor(parsed[0], parsed[1]))
+            case "bvcomp":
+                if len(parsed) != 2:
+                    msg = "'bvcomp' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_ite(
+                    self.ctx.mk_eq(parsed[0], parsed[1]),
+                    self.ctx.mk_bv_val(1, 1),
+                    self.ctx.mk_bv_val(0, 1),
+                )
+            case "bvadd":
+                if len(parsed) < 2:
+                    msg = "'bvadd' expects at least 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_add(*parsed)
+            case "bvsub":
+                if len(parsed) != 2:
+                    msg = "'bvsub' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_sub(parsed[0], parsed[1])
+            case "bvmul":
+                if len(parsed) < 2:
+                    msg = "'bvmul' expects at least 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_mul(*parsed)
+            case "bvudiv":
+                if len(parsed) != 2:
+                    msg = "'bvudiv' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_udiv(parsed[0], parsed[1])
+            case "bvurem":
+                if len(parsed) != 2:
+                    msg = "'bvurem' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_urem(parsed[0], parsed[1])
+            case "bvsdiv":
+                if len(parsed) != 2:
+                    msg = "'bvsdiv' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_sdiv(parsed[0], parsed[1])
+            case "bvsrem":
+                if len(parsed) != 2:
+                    msg = "'bvsrem' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_srem(parsed[0], parsed[1])
+            case "bvsmod":
+                if len(parsed) != 2:
+                    msg = "'bvsmod' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_smod(parsed[0], parsed[1])
+            case "bvshl":
+                if len(parsed) != 2:
+                    msg = "'bvshl' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_shl(parsed[0], parsed[1])
+            case "bvlshr":
+                if len(parsed) != 2:
+                    msg = "'bvlshr' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_lshr(parsed[0], parsed[1])
+            case "bvashr":
+                if len(parsed) != 2:
+                    msg = "'bvashr' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_ashr(parsed[0], parsed[1])
+            case "bvult":
+                if len(parsed) != 2:
+                    msg = "'bvult' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_ult(parsed[0], parsed[1])
+            case "bvule":
+                if len(parsed) != 2:
+                    msg = "'bvule' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_ule(parsed[0], parsed[1])
+            case "bvugt":
+                if len(parsed) != 2:
+                    msg = "'bvugt' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_ugt(parsed[0], parsed[1])
+            case "bvuge":
+                if len(parsed) != 2:
+                    msg = "'bvuge' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_uge(parsed[0], parsed[1])
+            case "bvslt":
+                if len(parsed) != 2:
+                    msg = "'bvslt' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_slt(parsed[0], parsed[1])
+            case "bvsle":
+                if len(parsed) != 2:
+                    msg = "'bvsle' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_sle(parsed[0], parsed[1])
+            case "bvsgt":
+                if len(parsed) != 2:
+                    msg = "'bvsgt' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_sgt(parsed[0], parsed[1])
+            case "bvsge":
+                if len(parsed) != 2:
+                    msg = "'bvsge' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_bv_sge(parsed[0], parsed[1])
+            case "concat":
+                if len(parsed) < 2:
+                    msg = "'concat' expects at least 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_concat(*parsed)
+            case "select":
+                if len(parsed) != 2:
+                    msg = "'select' expects 2 arguments"
+                    raise ValueError(msg)
+                arr, idx = parsed
+                if (
+                    arr.is_array
+                    and arr.sort.index_sort.is_real
+                    and isinstance(idx, Const)
+                    and idx.is_int
+                ):
+                    idx = self.ctx.mk_to_real(idx)
+                return self.ctx.mk_select(arr, idx)
+            case "store":
+                if len(parsed) != 3:
+                    msg = "'store' expects 3 arguments"
+                    raise ValueError(msg)
+                arr, idx, val = parsed
+                if arr.is_array:
+                    if (
+                        arr.sort.index_sort.is_real
+                        and isinstance(idx, Const)
+                        and idx.is_int
+                    ):
+                        idx = self.ctx.mk_to_real(idx)
+                    if (
+                        arr.sort.element_sort.is_real
+                        and isinstance(val, Const)
+                        and val.is_int
+                    ):
+                        val = self.ctx.mk_to_real(val)
+                return self.ctx.mk_store(arr, idx, val)
             case _:
                 decl = self._lookup_decl(op)
                 if decl is not None:
@@ -839,6 +1106,72 @@ class SMT2Runner:
                     f"unsupported operator or undeclared function {op!r}"
                 )
                 raise ValueError(msg)
+
+    def _parse_compound_head_term(
+        self,
+        head_tuple: tuple[SExpr, ...],
+        args: tuple[SExpr, ...],
+        local_env: dict[str, Expr],
+    ) -> Expr:
+        if not head_tuple:
+            msg = f"Invalid empty operator head in {head_tuple!r}"
+            raise ValueError(msg)
+        tag = self._expect_symbol(head_tuple[0], "compound operator")
+        if not tag.quoted and tag.name == "as":
+            if len(head_tuple) != 3 or len(args) != 1:
+                msg = f"Malformed constant array application: ({head_tuple!r} ...)"
+                raise ValueError(msg)
+            const_sym = self._expect_symbol(head_tuple[1], "as const")
+            if const_sym.quoted or const_sym.name != "const":
+                msg = f"Unsupported qualified identifier '(as {const_sym.name} ...)'"
+                raise ValueError(msg)
+            sort = self._resolve_sort(head_tuple[2], "(as const <Sort>)")
+            if not sort.is_array:
+                msg = f"Expected Array sort in '(as const ...)', got '{sort}'"
+                raise TypeError(msg)
+            val = self._parse_term(args[0], local_env)
+            if sort.element_sort.is_real and isinstance(val, Const) and val.is_int:
+                val = self.ctx.mk_to_real(val)
+            return self.ctx.mk_const_array(sort.index_sort, val)
+
+        if not tag.quoted and tag.name == "_":
+            if len(head_tuple) < 3 or len(args) != 1:
+                msg = f"Unsupported indexed operator application: {head_tuple!r}"
+                raise ValueError(msg)
+            op_sym = self._expect_symbol(head_tuple[1], "indexed BV operator")
+            if op_sym.quoted:
+                msg = f"Unsupported quoted indexed operator {op_sym.name!r}"
+                raise ValueError(msg)
+            arg = self._parse_term(args[0], local_env)
+            op_name = op_sym.name
+            if op_name == "extract":
+                if len(head_tuple) != 4:
+                    msg = "'(_ extract hi lo)' expects 2 indices"
+                    raise ValueError(msg)
+                hi = self._parse_nonneg_int(head_tuple[2], "extract high")
+                lo = self._parse_nonneg_int(head_tuple[3], "extract low")
+                return self.ctx.mk_extract(hi, lo, arg)
+            if len(head_tuple) != 3:
+                msg = f"'(_ {op_name} n)' expects 1 index"
+                raise ValueError(msg)
+            param = self._parse_nonneg_int(head_tuple[2], op_name)
+            match op_name:
+                case "zero_extend":
+                    return self.ctx.mk_zero_ext(param, arg)
+                case "sign_extend":
+                    return self.ctx.mk_sign_ext(param, arg)
+                case "rotate_left":
+                    return self.ctx.mk_rotate_left(param, arg)
+                case "rotate_right":
+                    return self.ctx.mk_rotate_right(param, arg)
+                case "repeat":
+                    return self.ctx.mk_repeat(param, arg)
+                case _:
+                    msg = f"Unsupported indexed operator '(_ {op_name} ...)'"
+                    raise ValueError(msg)
+
+        msg = f"Unsupported compound operator head: {head_tuple!r}"
+        raise ValueError(msg)
 
 
 def execute_smt2(text: str) -> tuple[list[str], dict[str, int]]:

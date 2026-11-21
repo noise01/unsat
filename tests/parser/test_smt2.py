@@ -264,3 +264,68 @@ def test_smt2_qf_lra_qf_lia_lira_and_qf_uflia() -> None:
     assert out[1] == "sat"
     assert "(define-fun h ((x!0 Int)) Int (ite (= x!0 0) 7 0))" in out[2]
     assert out[3] == "((z 0) (y 0) ((h y) 7))"
+
+
+def test_smt2_qf_bv_qf_ax_and_qf_auflia() -> None:
+    bv_script = """
+    (set-logic QF_BV)
+    (declare-const x (_ BitVec 8))
+    (declare-const y (_ BitVec 8))
+    (assert (= (bvadd x y) #x10))
+    (assert (= (bvor ((_ extract 3 0) x) #b0001) #x3))
+    (assert (= (bvcomp ((_ zero_extend 4) ((_ extract 3 0) y)) (_ bv14 8)) #b1))
+    (assert (distinct (bvnand x y) (bvnot (bvand x y))))
+    (check-sat)
+    (reset-assertions)
+    (declare-const a (_ BitVec 8))
+    (assert (= a #x0a))
+    (assert (= ((_ rotate_left 2) a) #x28))
+    (assert (= ((_ sign_extend 4) #x8) #xf8))
+    (assert (= ((_ repeat 2) #x5) #x55))
+    (check-sat)
+    (get-model)
+    (get-value (a))
+    """
+    bv_out = run_smt2(bv_script)
+    assert bv_out[0] == "unsat"
+    assert bv_out[1] == "sat"
+    assert "(define-fun a () (_ BitVec 8) #x0a)" in bv_out[2]
+    assert bv_out[3] == "((a #x0a))"
+
+    ax_script = """
+    (set-logic QF_AX)
+    (declare-sort I 0)
+    (declare-sort V 0)
+    (declare-const a (Array I V))
+    (declare-const i I)
+    (declare-const v V)
+    (assert (= (select a i) v))
+    (assert (= (store a i v) a))
+    (check-sat)
+    (reset-assertions)
+    (declare-const b (Array Int Int))
+    (declare-const x Int)
+    (assert (= (store ((as const (Array Int Int)) 0) x 9) b))
+    (assert (= x 4))
+    (check-sat)
+    (get-model)
+    (get-value ((select b 4) (select b 0)))
+    """
+    ax_out = run_smt2(ax_script)
+    assert ax_out[0] == "sat"
+    assert ax_out[1] == "sat"
+    assert "(define-fun b () (Array Int Int)" in ax_out[2]
+    assert ax_out[3] == "(((select b 4) 9) ((select b 0) 0))"
+
+    auflia_script = """
+    (set-logic QF_AUFLIA)
+    (declare-const arr (Array Int Int))
+    (declare-const i Int)
+    (declare-const j Int)
+    (declare-fun g (Int) Int)
+    (assert (= (select (store arr i 11) j) (g 3)))
+    (assert (= i j))
+    (assert (distinct (g 3) 11))
+    (check-sat)
+    """
+    assert run_smt2(auflia_script) == ["unsat"]

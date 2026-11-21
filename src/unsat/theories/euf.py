@@ -33,6 +33,15 @@ _OP_UNION = 8
 _OP_WATCH_APPEND = 9
 _OP_ASSERT_SET = 10
 
+_EUF_CONGRUENCE_KINDS = frozenset(
+    {
+        DeclKind.UNINTERPRETED,
+        DeclKind.SELECT,
+        DeclKind.STORE,
+        DeclKind.CONST_ARRAY,
+    }
+)
+
 
 def _dedup_lits(lits: Sequence[TheoryLit]) -> list[TheoryLit]:
     return list(dict.fromkeys(lits))
@@ -411,19 +420,15 @@ class EUFSolver:
             raise ValueError(msg)
         return self._explain_eq(lhs_id, rhs_id)
 
-    def build_model(
+    def _assign_root_values(
         self,
-        external_values: Mapping[Expr, Const] | None = None,
-    ) -> Model:
-        """Construct a model realizing all current EUF equivalences."""
-        self._drain()
-        if self._conflict is not None:
-            msg = "Cannot build an EUF model in a conflicted state"
-            raise ValueError(msg)
-
+        external_values: Mapping[Expr, Expr] | None = None,
+    ) -> tuple[dict[int, Expr], dict[Sort, list[Const]]]:
         sort_roots: dict[Sort, list[int]] = {}
         int_roots: list[int] = []
         real_roots: list[int] = []
+        bv_roots: dict[Sort, list[int]] = {}
+        array_roots: dict[Sort, list[int]] = {}
         for nid, expr in enumerate(self._id_to_expr):
             if self._rep[nid] != nid:
                 continue
@@ -434,8 +439,12 @@ class EUFSolver:
                 int_roots.append(nid)
             elif kind is SortKind.REAL:
                 real_roots.append(nid)
+            elif kind is SortKind.BITVEC:
+                bv_roots.setdefault(expr.sort, []).append(nid)
+            elif kind is SortKind.ARRAY:
+                array_roots.setdefault(expr.sort, []).append(nid)
 
-        root_val: dict[int, Const] = {}
+        root_val: dict[int, Expr] = {}
         universes: dict[Sort, list[Const]] = {}
 
         for sort, roots in sort_roots.items():
@@ -447,12 +456,23 @@ class EUFSolver:
                     assert not isinstance(fixed.value, bool)
                     root_val[r] = fixed
                     used_indices.add(fixed.value)
+                elif external_values is not None:
+                    for member in self._class_members[r]:
+                        ext = external_values.get(self._id_to_expr[member])
+                        if isinstance(ext, Const) and ext.sort is sort:
+                            assert isinstance(ext.value, int)
+                            assert not isinstance(ext.value, bool)
+                            root_val[r] = ext
+                            used_indices.add(ext.value)
+                            break
 
             next_idx = 0
             sort_elems: list[Const] = []
             for r in roots:
                 if r in root_val:
-                    sort_elems.append(root_val[r])
+                    existing_c = root_val[r]
+                    assert isinstance(existing_c, Const)
+                    sort_elems.append(existing_c)
                     continue
                 while next_idx in used_indices:
                     next_idx += 1
@@ -474,7 +494,7 @@ class EUFSolver:
             elif external_values is not None:
                 for member in self._class_members[r]:
                     ext = external_values.get(self._id_to_expr[member])
-                    if ext is not None:
+                    if isinstance(ext, Const) and ext.is_int:
                         assert isinstance(ext.value, int)
                         assert not isinstance(ext.value, bool)
                         root_val[r] = ext
@@ -500,7 +520,7 @@ class EUFSolver:
             elif external_values is not None:
                 for member in self._class_members[r]:
                     ext = external_values.get(self._id_to_expr[member])
-                    if ext is not None:
+                    if isinstance(ext, Const) and ext.is_real:
                         assert isinstance(ext.value, Fraction)
                         root_val[r] = ext
                         used_reals.add(ext.value)
@@ -515,14 +535,125 @@ class EUFSolver:
                 used_reals.add(Fraction(next_real))
                 next_real += 1
 
+        for bv_sort, roots in bv_roots.items():
+            used_bvs: set[int] = set()
+            width = bv_sort.size
+            limit = 1 << width
+            for r in roots:
+                fixed = self._class_const[r]
+                if fixed is not None:
+                    assert isinstance(fixed.value, int)
+                    assert not isinstance(fixed.value, bool)
+                    root_val[r] = fixed
+                    used_bvs.add(fixed.value)
+                elif external_values is not None:
+                    for member in self._class_members[r]:
+                        ext = external_values.get(self._id_to_expr[member])
+                        if isinstance(ext, Const) and ext.sort is bv_sort:
+                            assert isinstance(ext.value, int)
+                            assert not isinstance(ext.value, bool)
+                            root_val[r] = ext
+                            used_bvs.add(ext.value)
+                            break
+
+            next_bv = 0
+            for r in roots:
+                if r not in root_val:
+                    while next_bv in used_bvs and len(used_bvs) < limit:
+                        next_bv = (next_bv + 1) % limit
+                    cand = self._ctx.mk_bv_val(next_bv, width)
+                    root_val[r] = cand
+                    used_bvs.add(next_bv % limit)
+                    next_bv = (next_bv + 1) % limit
+
         # Assign Boolean equivalence classes: fixed true/false or false by default.
         for nid, expr in enumerate(self._id_to_expr):
             if self._rep[nid] == nid and expr.is_bool:
                 fixed = self._class_const[nid]
                 root_val[nid] = fixed if fixed is not None else self._ctx.mk_false()
 
+        for arr_sort, roots in array_roots.items():
+            for offset, r in enumerate(roots):
+                if external_values is not None:
+                    for member in self._class_members[r]:
+                        ext = external_values.get(self._id_to_expr[member])
+                        if ext is not None:
+                            root_val[r] = ext
+                            break
+                if r not in root_val:
+                    root_val[r] = self._default_expr_for_sort(
+                        arr_sort, universes, tag=offset
+                    )
+
+        return root_val, universes
+
+    def _default_expr_for_sort(
+        self,
+        sort: Sort,
+        universes: dict[Sort, list[Const]],
+        *,
+        tag: int = 0,
+    ) -> Expr:
+        chain: list[Sort] = []
+        cur = sort
+        while cur.kind is SortKind.ARRAY:
+            chain.append(cur.index_sort)
+            cur = cur.element_sort
+
+        if cur.kind is SortKind.BOOL:
+            elem: Expr = self._ctx.mk_true() if (tag % 2 == 1) else self._ctx.mk_false()
+        elif cur.kind is SortKind.INT:
+            elem = self._ctx.mk_int_val(tag)
+        elif cur.kind is SortKind.REAL:
+            elem = self._ctx.mk_real_val(tag)
+        elif cur.kind is SortKind.BITVEC:
+            elem = self._ctx.mk_bv_val(tag, cur.size)
+        else:
+            sort_univ = universes.setdefault(cur, [])
+            if tag < len(sort_univ):
+                elem = sort_univ[tag]
+            else:
+                elem = self._ctx.mk_domain_val(cur, tag)
+                if elem not in sort_univ:
+                    sort_univ.append(elem)
+
+        for idx_sort in reversed(chain):
+            elem = self._ctx.mk_const_array(idx_sort, elem)
+        return elem
+
+    def resolve_scalar_values(
+        self, external_values: Mapping[Expr, Expr] | None = None
+    ) -> dict[Expr, Expr]:
+        """Return concrete ``Const`` values for registered non-Array terms."""
+        self._drain()
+        if self._conflict is not None:
+            msg = "Cannot resolve EUF values in a conflicted state"
+            raise ValueError(msg)
+        root_val, _ = self._assign_root_values(external_values)
+        out: dict[Expr, Expr] = {}
+        for nid, expr in enumerate(self._id_to_expr):
+            if expr.is_array:
+                continue
+            r = self._rep[nid]
+            val = root_val.get(r)
+            if val is not None:
+                out[expr] = val
+        return out
+
+    def build_model(
+        self,
+        external_values: Mapping[Expr, Expr] | None = None,
+    ) -> Model:
+        """Construct a model realizing all current EUF equivalences."""
+        self._drain()
+        if self._conflict is not None:
+            msg = "Cannot build an EUF model in a conflicted state"
+            raise ValueError(msg)
+
+        root_val, universes = self._assign_root_values(external_values)
+
         values: dict[FuncDecl, Value] = {}
-        func_tables: dict[FuncDecl, dict[tuple[Const, ...], Const]] = {}
+        func_tables: dict[FuncDecl, dict[tuple[Expr, ...], Expr]] = {}
 
         for nid, expr in enumerate(self._id_to_expr):
             if not isinstance(expr, App) or not expr.decl.is_uninterpreted:
@@ -531,13 +662,21 @@ class EUFSolver:
             val = root_val[r]
             if expr.is_const_symbol:
                 if expr.is_bool:
+                    assert isinstance(val, Const)
                     values[expr.decl] = bool(val.value)
                 elif expr.is_int:
+                    assert isinstance(val, Const)
                     assert isinstance(val.value, int)
                     assert not isinstance(val.value, bool)
                     values[expr.decl] = val.value
                 elif expr.is_real:
+                    assert isinstance(val, Const)
                     assert isinstance(val.value, Fraction)
+                    values[expr.decl] = val.value
+                elif expr.is_bv:
+                    assert isinstance(val, Const)
+                    assert isinstance(val.value, int)
+                    assert not isinstance(val.value, bool)
                     values[expr.decl] = val.value
                 else:
                     values[expr.decl] = val
@@ -549,20 +688,7 @@ class EUFSolver:
 
         functions: dict[FuncDecl, FuncInterp] = {}
         for decl, table in func_tables.items():
-            range_sort = decl.range_sort
-            if range_sort.kind is SortKind.BOOL:
-                else_val = self._ctx.mk_false()
-            elif range_sort.kind is SortKind.INT:
-                else_val = self._ctx.mk_int_val(0)
-            elif range_sort.kind is SortKind.REAL:
-                else_val = self._ctx.mk_real_val(0)
-            else:
-                sort_univ = universes.get(range_sort)
-                if sort_univ:
-                    else_val = sort_univ[0]
-                else:
-                    else_val = self._ctx.mk_domain_val(range_sort, 0)
-                    universes[range_sort] = [else_val]
+            else_val = self._default_expr_for_sort(decl.range_sort, universes)
             functions[decl] = FuncInterp(decl, table, else_val)
 
         return Model(self._ctx, values, functions=functions, universes=universes)
@@ -589,7 +715,7 @@ class EUFSolver:
             if (
                 not expanded
                 and isinstance(node, App)
-                and node.decl.is_uninterpreted
+                and node.decl.kind in _EUF_CONGRUENCE_KINDS
                 and node.args
             ):
                 stack.append((node, True))
@@ -614,7 +740,9 @@ class EUFSolver:
         self._eq_watches.append([])
 
         is_uapp = (
-            isinstance(expr, App) and expr.decl.is_uninterpreted and bool(expr.args)
+            isinstance(expr, App)
+            and expr.decl.kind in _EUF_CONGRUENCE_KINDS
+            and bool(expr.args)
         )
         if is_uapp:
             assert isinstance(expr, App)

@@ -21,7 +21,100 @@ from unsat.syntax import (
     iter_subexprs,
 )
 
-type Value = bool | int | Fraction | Const
+type Value = bool | int | Fraction | Expr
+
+
+def _is_concrete_value(expr: Expr) -> bool:
+    stack = [expr]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, Const):
+            continue
+        if isinstance(node, App) and node.decl.kind in (
+            DeclKind.CONST_ARRAY,
+            DeclKind.STORE,
+        ):
+            stack.extend(node.args)
+            continue
+        return False
+    return True
+
+
+def _unpack_concrete_array(expr: Expr) -> tuple[Expr, list[tuple[Expr, Expr]]] | None:
+    overrides: list[tuple[Expr, Expr]] = []
+    cur = expr
+    while isinstance(cur, App) and cur.decl.kind is DeclKind.STORE:
+        overrides.append((cur.args[1], cur.args[2]))
+        cur = cur.args[0]
+    if isinstance(cur, App) and cur.decl.kind is DeclKind.CONST_ARRAY:
+        return cur.args[0], overrides
+    return None
+
+
+def _concrete_values_equal(
+    a: Expr,
+    b: Expr,
+    universes: Mapping[Sort, tuple[Const, ...]] | None = None,
+) -> bool:
+    if a is b:
+        return True
+    if a.sort is not b.sort:
+        return False
+    if isinstance(a, Const) and isinstance(b, Const):
+        return a is b
+    if not a.is_array:
+        return False
+
+    ua = _unpack_concrete_array(a)
+    ub = _unpack_concrete_array(b)
+    if ua is None or ub is None:
+        return False
+    d1, ov1 = ua
+    d2, ov2 = ub
+
+    def _lookup(default: Expr, ov: list[tuple[Expr, Expr]], key: Expr) -> Expr:
+        for k, v in ov:
+            if _concrete_values_equal(k, key, universes):
+                return v
+        return default
+
+    unique_keys: list[Expr] = []
+    for k, _ in ov1:
+        if not any(_concrete_values_equal(k, prev, universes) for prev in unique_keys):
+            unique_keys.append(k)
+    for k, _ in ov2:
+        if not any(_concrete_values_equal(k, prev, universes) for prev in unique_keys):
+            unique_keys.append(k)
+
+    idx_sort = a.sort.index_sort
+    if idx_sort.is_bool:
+        return all(
+            _concrete_values_equal(
+                _lookup(d1, ov1, probe), _lookup(d2, ov2, probe), universes
+            )
+            for probe in (a.ctx.false_expr, a.ctx.true_expr)
+        )
+    if (
+        idx_sort.is_bv
+        and idx_sort.size <= 8
+        and len(unique_keys) >= (1 << idx_sort.size)
+    ):
+        width = idx_sort.size
+        return all(
+            _concrete_values_equal(
+                _lookup(d1, ov1, a.ctx.mk_bv_val(i, width)),
+                _lookup(d2, ov2, a.ctx.mk_bv_val(i, width)),
+                universes,
+            )
+            for i in range(1 << width)
+        )
+
+    if not _concrete_values_equal(d1, d2, universes):
+        return False
+    return all(
+        _concrete_values_equal(_lookup(d1, ov1, k), _lookup(d2, ov2, k), universes)
+        for k in unique_keys
+    )
 
 
 class FuncInterp:
@@ -31,16 +124,15 @@ class FuncInterp:
         self,
         decl: FuncDecl,
         entries: (
-            Mapping[tuple[Const, ...], Const]
-            | Sequence[tuple[tuple[Const, ...], Const]]
+            Mapping[tuple[Expr, ...], Expr] | Sequence[tuple[tuple[Expr, ...], Expr]]
         ),
-        else_value: Const,
+        else_value: Expr,
     ) -> None:
         if not decl.is_uninterpreted or decl.arity < 1:
             msg = f"FuncInterp requires an arity >= 1 uninterpreted decl, got '{decl}'"
             raise ValueError(msg)
-        if not isinstance(else_value, Const):
-            msg = f"FuncInterp else_value must be a Const, got {type(else_value)}"
+        if not isinstance(else_value, Expr) or not _is_concrete_value(else_value):
+            msg = f"FuncInterp else_value must be concrete, got {else_value!r}"
             raise TypeError(msg)
         if else_value.ctx is not decl.ctx:
             msg = "FuncInterp else_value belongs to a different Context"
@@ -54,7 +146,7 @@ class FuncInterp:
 
         self._decl = decl
         self._else_value = else_value
-        self._table: dict[tuple[Const, ...], Const] = {}
+        self._table: dict[tuple[Expr, ...], Expr] = {}
 
         pairs = entries.items() if isinstance(entries, Mapping) else entries
         for key, result in pairs:
@@ -67,8 +159,8 @@ class FuncInterp:
             for i, (arg, expected_sort) in enumerate(
                 zip(key, decl.domain, strict=True)
             ):
-                if not isinstance(arg, Const):
-                    msg = f"FuncInterp key argument {i} must be a Const"
+                if not isinstance(arg, Expr) or not _is_concrete_value(arg):
+                    msg = f"FuncInterp key argument {i} must be concrete"
                     raise TypeError(msg)
                 if arg.ctx is not decl.ctx:
                     msg = f"FuncInterp key argument {i} belongs to a different Context"
@@ -79,8 +171,8 @@ class FuncInterp:
                         f"match '{expected_sort}'"
                     )
                     raise TypeError(msg)
-            if not isinstance(result, Const):
-                msg = f"FuncInterp entry result must be a Const, got {type(result)}"
+            if not isinstance(result, Expr) or not _is_concrete_value(result):
+                msg = f"FuncInterp entry result must be concrete, got {result!r}"
                 raise TypeError(msg)
             if result.ctx is not decl.ctx:
                 msg = "FuncInterp entry result belongs to a different Context"
@@ -104,25 +196,34 @@ class FuncInterp:
         return self._decl.arity
 
     @property
-    def else_value(self) -> Const:
+    def else_value(self) -> Expr:
         """Default constant returned for argument tuples absent from the table."""
         return self._else_value
 
-    def entries(self) -> tuple[tuple[tuple[Const, ...], Const], ...]:
+    def entries(self) -> tuple[tuple[tuple[Expr, ...], Expr], ...]:
         """Return explicit ``(args, value)`` table entries in insertion order."""
         return tuple(self._table.items())
 
     def __len__(self) -> int:
         return len(self._table)
 
-    def __call__(self, *args: Const) -> Const:
+    def __call__(self, *args: Expr) -> Expr:
         if len(args) != self._decl.arity:
             msg = (
                 f"FuncInterp for '{self._decl}' expects {self._decl.arity} args, "
                 f"got {len(args)}"
             )
             raise ValueError(msg)
-        return self._table.get(args, self._else_value)
+        direct = self._table.get(args)
+        if direct is not None:
+            return direct
+        if any(not isinstance(arg, Const) for arg in args):
+            for key, result in self._table.items():
+                if all(
+                    _concrete_values_equal(a, k) for a, k in zip(args, key, strict=True)
+                ):
+                    return result
+        return self._else_value
 
     def __repr__(self) -> str:
         items = ", ".join(
@@ -213,6 +314,38 @@ class Model:
             msg = f"Expected Real value for '{decl}', got {val!r}"
             raise TypeError(msg)
 
+        if kind is SortKind.BITVEC:
+            width = decl.range_sort.size
+            if isinstance(val, int) and not isinstance(val, bool):
+                if not (0 <= val < (1 << width)):
+                    msg = f"BitVec value {val} out of range for {width}-bit '{decl}'"
+                    raise ValueError(msg)
+                return val
+            if isinstance(val, Const) and val.sort is decl.range_sort:
+                if val.ctx is not self._ctx:
+                    msg = f"Value '{val}' belongs to a different Context"
+                    raise ValueError(msg)
+                assert isinstance(val.value, int)
+                assert not isinstance(val.value, bool)
+                return val.value
+            msg = f"Expected BitVec({width}) value for '{decl}', got {val!r}"
+            raise TypeError(msg)
+
+        if kind is SortKind.ARRAY:
+            if not isinstance(val, Expr) or not _is_concrete_value(val):
+                msg = f"Expected concrete Array value for '{decl}', got {val!r}"
+                raise TypeError(msg)
+            if val.ctx is not self._ctx:
+                msg = f"Value '{val}' belongs to a different Context"
+                raise ValueError(msg)
+            if val.sort is not decl.range_sort:
+                msg = (
+                    f"Value sort '{val.sort}' does not match declaration sort "
+                    f"'{decl.range_sort}'"
+                )
+                raise TypeError(msg)
+            return val
+
         if not isinstance(val, Const):
             msg = f"Expected domain Const for '{decl}', got {val!r}"
             raise TypeError(msg)
@@ -264,20 +397,31 @@ class Model:
             return key.decl
         raise KeyError(key)
 
-    def _default_const_for_sort(self, sort: Sort) -> Const:
-        if sort.kind is SortKind.BOOL:
-            return self._ctx.mk_false()
-        if sort.kind is SortKind.INT:
-            return self._ctx.mk_int_val(0)
-        if sort.kind is SortKind.REAL:
-            return self._ctx.mk_real_val(0)
-        universe = self._universes.get(sort)
-        if universe:
-            return universe[0]
-        return self._ctx.mk_domain_val(sort, 0)
+    def _default_value_expr(self, sort: Sort) -> Expr:
+        chain: list[Sort] = []
+        cur = sort
+        while cur.kind is SortKind.ARRAY:
+            chain.append(cur.index_sort)
+            cur = cur.element_sort
 
-    def _value_to_const(self, val: Value, sort: Sort) -> Const:
-        if isinstance(val, Const):
+        if cur.kind is SortKind.BOOL:
+            val: Expr = self._ctx.mk_false()
+        elif cur.kind is SortKind.INT:
+            val = self._ctx.mk_int_val(0)
+        elif cur.kind is SortKind.REAL:
+            val = self._ctx.mk_real_val(0)
+        elif cur.kind is SortKind.BITVEC:
+            val = self._ctx.mk_bv_val(0, cur.size)
+        else:
+            universe = self._universes.get(cur)
+            val = universe[0] if universe else self._ctx.mk_domain_val(cur, 0)
+
+        for idx_sort in reversed(chain):
+            val = self._ctx.mk_const_array(idx_sort, val)
+        return val
+
+    def _value_to_expr(self, val: Value, sort: Sort) -> Expr:
+        if isinstance(val, Expr):
             return val
         if sort.kind is SortKind.BOOL:
             assert isinstance(val, bool)
@@ -286,6 +430,10 @@ class Model:
             assert isinstance(val, int)
             assert not isinstance(val, bool)
             return self._ctx.mk_int_val(val)
+        if sort.kind is SortKind.BITVEC:
+            assert isinstance(val, int)
+            assert not isinstance(val, bool)
+            return self._ctx.mk_bv_val(val, sort.size)
         assert sort.kind is SortKind.REAL
         assert isinstance(val, (int, Fraction))
         return self._ctx.mk_real_val(val)
@@ -371,11 +519,9 @@ class Model:
 
             if node.is_const_symbol:
                 if node.decl in self._values:
-                    memo[node] = self._value_to_const(
-                        self._values[node.decl], node.sort
-                    )
+                    memo[node] = self._value_to_expr(self._values[node.decl], node.sort)
                 elif model_completion:
-                    memo[node] = self._default_const_for_sort(node.sort)
+                    memo[node] = self._default_value_expr(node.sort)
                 else:
                     memo[node] = node
                 continue
@@ -393,10 +539,28 @@ class Model:
                 case DeclKind.XOR:
                     memo[node] = self._ctx.mk_xor(eval_args[0], eval_args[1])
                 case DeclKind.EQ:
-                    memo[node] = self._ctx.mk_eq(eval_args[0], eval_args[1])
+                    a0, a1 = eval_args
+                    if _is_concrete_value(a0) and _is_concrete_value(a1):
+                        memo[node] = self._ctx.mk_bool_val(
+                            _concrete_values_equal(a0, a1, self._universes)
+                        )
+                    else:
+                        memo[node] = self._ctx.mk_eq(a0, a1)
                 case DeclKind.DISTINCT:
                     if eval_args and eval_args[0].is_bool and len(eval_args) >= 3:
                         memo[node] = self._ctx.mk_false()
+                    elif all(_is_concrete_value(arg) for arg in eval_args):
+                        all_diff = True
+                        for i in range(len(eval_args)):
+                            for j in range(i + 1, len(eval_args)):
+                                if _concrete_values_equal(
+                                    eval_args[i], eval_args[j], self._universes
+                                ):
+                                    all_diff = False
+                                    break
+                            if not all_diff:
+                                break
+                        memo[node] = self._ctx.mk_bool_val(all_diff)
                     else:
                         memo[node] = self._ctx.mk_distinct(*eval_args)
                 case DeclKind.ITE:
@@ -423,15 +587,64 @@ class Model:
                     memo[node] = self._ctx.mk_ge(eval_args[0], eval_args[1])
                 case DeclKind.TO_REAL:
                     memo[node] = self._ctx.mk_to_real(eval_args[0])
+                case DeclKind.SELECT:
+                    arr_e, idx_e = eval_args
+                    if _is_concrete_value(arr_e) and _is_concrete_value(idx_e):
+                        unpacked = _unpack_concrete_array(arr_e)
+                        if unpacked is not None:
+                            default_v, overrides = unpacked
+                            res_v = default_v
+                            for k_v, val_v in overrides:
+                                if _concrete_values_equal(k_v, idx_e, self._universes):
+                                    res_v = val_v
+                                    break
+                            memo[node] = res_v
+                        else:
+                            memo[node] = self._ctx.mk_select(arr_e, idx_e)
+                    else:
+                        memo[node] = self._ctx.mk_select(arr_e, idx_e)
+                case (
+                    DeclKind.BV_NOT
+                    | DeclKind.BV_AND
+                    | DeclKind.BV_OR
+                    | DeclKind.BV_XOR
+                    | DeclKind.BV_NEG
+                    | DeclKind.BV_ADD
+                    | DeclKind.BV_SUB
+                    | DeclKind.BV_MUL
+                    | DeclKind.BV_UDIV
+                    | DeclKind.BV_UREM
+                    | DeclKind.BV_SDIV
+                    | DeclKind.BV_SREM
+                    | DeclKind.BV_SMOD
+                    | DeclKind.BV_SHL
+                    | DeclKind.BV_LSHR
+                    | DeclKind.BV_ASHR
+                    | DeclKind.BV_ULT
+                    | DeclKind.BV_ULE
+                    | DeclKind.BV_UGT
+                    | DeclKind.BV_UGE
+                    | DeclKind.BV_SLT
+                    | DeclKind.BV_SLE
+                    | DeclKind.BV_SGT
+                    | DeclKind.BV_SGE
+                    | DeclKind.BV_CONCAT
+                    | DeclKind.BV_EXTRACT
+                    | DeclKind.BV_ZERO_EXT
+                    | DeclKind.BV_SIGN_EXT
+                    | DeclKind.BV_ROTATE_LEFT
+                    | DeclKind.BV_ROTATE_RIGHT
+                    | DeclKind.BV_REPEAT
+                    | DeclKind.STORE
+                    | DeclKind.CONST_ARRAY
+                ):
+                    memo[node] = self._ctx.mk_app(node.decl, *eval_args)
                 case DeclKind.UNINTERPRETED:
-                    const_args = tuple(
-                        arg for arg in eval_args if isinstance(arg, Const)
-                    )
-                    if len(const_args) == len(eval_args):
+                    if all(_is_concrete_value(arg) for arg in eval_args):
                         if node.decl in self._functions:
-                            memo[node] = self._functions[node.decl](*const_args)
+                            memo[node] = self._functions[node.decl](*eval_args)
                         elif model_completion:
-                            memo[node] = self._default_const_for_sort(node.sort)
+                            memo[node] = self._default_value_expr(node.sort)
                         else:
                             memo[node] = self._ctx.mk_app(node.decl, *eval_args)
                     else:
@@ -477,6 +690,23 @@ class Model:
             evaluated.value, Fraction
         ):
             msg = f"Expression '{expr}' did not reduce to a Real constant: {evaluated}"
+            raise ValueError(msg)
+        return evaluated.value
+
+    def eval_bv(self, expr: Expr, *, model_completion: bool = True) -> int:
+        """Evaluate ``BitVec`` expression ``expr`` to an unsigned Python ``int``."""
+        if not expr.is_bv:
+            msg = f"Expected BitVec expression, got sort '{expr.sort}'"
+            raise TypeError(msg)
+        evaluated = self.eval(expr, model_completion=model_completion)
+        if (
+            not isinstance(evaluated, Const)
+            or not isinstance(evaluated.value, int)
+            or isinstance(evaluated.value, bool)
+        ):
+            msg = (
+                f"Expression '{expr}' did not reduce to a BitVec constant: {evaluated}"
+            )
             raise ValueError(msg)
         return evaluated.value
 

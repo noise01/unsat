@@ -769,7 +769,7 @@ class LRASolver:
                 raise TypeError(msg)
 
             kind = node.decl.kind
-            if kind in (DeclKind.UNINTERPRETED, DeclKind.ITE):
+            if kind in (DeclKind.UNINTERPRETED, DeclKind.ITE, DeclKind.SELECT):
                 vid = self._alloc_orig_var(node)
                 memo[node] = ({vid: Fraction(1)}, Fraction(0))
                 continue

@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 
-from unsat.syntax.core import App, Const, Expr, FuncDecl
+from unsat.syntax.core import App, Const, Expr, FuncDecl, Sort
 from unsat.syntax.kinds import DeclKind, SortKind
 
 _SIMPLE_SYMBOL_PUNCTUATION = frozenset("~!@$%^&*_-+=<>.?/")
@@ -60,7 +60,51 @@ _BUILTIN_SMT2_NAMES: dict[DeclKind, str] = {
     DeclKind.GT: ">",
     DeclKind.GE: ">=",
     DeclKind.TO_REAL: "to_real",
+    DeclKind.BV_NOT: "bvnot",
+    DeclKind.BV_AND: "bvand",
+    DeclKind.BV_OR: "bvor",
+    DeclKind.BV_XOR: "bvxor",
+    DeclKind.BV_NEG: "bvneg",
+    DeclKind.BV_ADD: "bvadd",
+    DeclKind.BV_SUB: "bvsub",
+    DeclKind.BV_MUL: "bvmul",
+    DeclKind.BV_UDIV: "bvudiv",
+    DeclKind.BV_UREM: "bvurem",
+    DeclKind.BV_SDIV: "bvsdiv",
+    DeclKind.BV_SREM: "bvsrem",
+    DeclKind.BV_SMOD: "bvsmod",
+    DeclKind.BV_SHL: "bvshl",
+    DeclKind.BV_LSHR: "bvlshr",
+    DeclKind.BV_ASHR: "bvashr",
+    DeclKind.BV_ULT: "bvult",
+    DeclKind.BV_ULE: "bvule",
+    DeclKind.BV_UGT: "bvugt",
+    DeclKind.BV_UGE: "bvuge",
+    DeclKind.BV_SLT: "bvslt",
+    DeclKind.BV_SLE: "bvsle",
+    DeclKind.BV_SGT: "bvsgt",
+    DeclKind.BV_SGE: "bvsge",
+    DeclKind.BV_CONCAT: "concat",
+    DeclKind.SELECT: "select",
+    DeclKind.STORE: "store",
 }
+
+
+def format_sort(sort: Sort) -> str:
+    """Render ``sort`` iteratively as an SMT-LIB2 sort expression."""
+    if sort.kind is SortKind.BOOL:
+        return "Bool"
+    if sort.kind is SortKind.INT:
+        return "Int"
+    if sort.kind is SortKind.REAL:
+        return "Real"
+    if sort.kind is SortKind.BITVEC:
+        return f"(_ BitVec {sort.size})"
+    if sort.kind is SortKind.ARRAY:
+        return (
+            f"(Array {format_sort(sort.index_sort)} {format_sort(sort.element_sort)})"
+        )
+    return quote_smt2_symbol(sort.name)
 
 
 def iter_subexprs(expr: Expr) -> Iterator[Expr]:
@@ -137,10 +181,24 @@ def format_expr(expr: Expr) -> str:
             else:
                 rendered[node] = str(node)
         elif isinstance(node, App):
-            if node.decl.kind is DeclKind.UNINTERPRETED:
+            kind = node.decl.kind
+            if kind is DeclKind.UNINTERPRETED:
                 head = quote_smt2_symbol(node.decl.name)
+            elif kind is DeclKind.CONST_ARRAY:
+                head = f"(as const {format_sort(node.decl.range_sort)})"
+            elif kind is DeclKind.BV_EXTRACT:
+                hi, lo = node.decl.params
+                head = f"(_ extract {hi} {lo})"
+            elif kind in (
+                DeclKind.BV_ZERO_EXT,
+                DeclKind.BV_SIGN_EXT,
+                DeclKind.BV_ROTATE_LEFT,
+                DeclKind.BV_ROTATE_RIGHT,
+                DeclKind.BV_REPEAT,
+            ):
+                head = f"(_ {kind.value} {node.decl.params[0]})"
             else:
-                head = _BUILTIN_SMT2_NAMES[node.decl.kind]
+                head = _BUILTIN_SMT2_NAMES[kind]
             if not node.args:
                 rendered[node] = head
             else:

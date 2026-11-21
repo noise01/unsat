@@ -9,7 +9,7 @@ Will promote to a ``smt/`` subpackage as implementation grows.
 Depends on: ``syntax``, ``sat``, ``theories``, ``tactics``, ``quantifiers``, ``model``.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from unsat.model import Model, Value
 from unsat.sat import (
@@ -21,8 +21,9 @@ from unsat.sat import (
     pos_lit,
 )
 from unsat.syntax import App, Const, Context, DeclKind, Expr, FuncDecl, Sort
-from unsat.tactics import simplify
+from unsat.tactics import BitBlaster, bv_simplify, simplify
 from unsat.theories import (
+    ArraySolver,
     EUFSolver,
     LIACutLemma,
     LIASplitLemma,
@@ -42,6 +43,46 @@ _ARITH_OP_KINDS = frozenset(
         DeclKind.TO_REAL,
     }
 )
+_BV_CMP_KINDS = frozenset(
+    {
+        DeclKind.BV_ULT,
+        DeclKind.BV_ULE,
+        DeclKind.BV_UGT,
+        DeclKind.BV_UGE,
+        DeclKind.BV_SLT,
+        DeclKind.BV_SLE,
+        DeclKind.BV_SGT,
+        DeclKind.BV_SGE,
+    }
+)
+_BV_OP_KINDS = frozenset(
+    {
+        DeclKind.BV_NOT,
+        DeclKind.BV_AND,
+        DeclKind.BV_OR,
+        DeclKind.BV_XOR,
+        DeclKind.BV_NEG,
+        DeclKind.BV_ADD,
+        DeclKind.BV_SUB,
+        DeclKind.BV_MUL,
+        DeclKind.BV_UDIV,
+        DeclKind.BV_UREM,
+        DeclKind.BV_SDIV,
+        DeclKind.BV_SREM,
+        DeclKind.BV_SMOD,
+        DeclKind.BV_SHL,
+        DeclKind.BV_LSHR,
+        DeclKind.BV_ASHR,
+        DeclKind.BV_CONCAT,
+        DeclKind.BV_EXTRACT,
+        DeclKind.BV_ZERO_EXT,
+        DeclKind.BV_SIGN_EXT,
+        DeclKind.BV_ROTATE_LEFT,
+        DeclKind.BV_ROTATE_RIGHT,
+        DeclKind.BV_REPEAT,
+    }
+)
+_ARRAY_OP_KINDS = frozenset({DeclKind.SELECT, DeclKind.STORE, DeclKind.CONST_ARRAY})
 
 
 def _strip_nots(expr: Expr) -> tuple[Expr, bool]:
@@ -63,18 +104,22 @@ def _is_bool_fixed_distinct(node: Expr) -> bool:
 
 
 class _CombinedPropagator:
-    """Adapter coordinating ``EUFSolver``, ``LRASolver``, ``LIA``, and ``MBTC``."""
+    """Propagator coordinating ``EUF``, ``LRA``, ``LIA``, ``Arrays``, and ``MBTC``."""
 
     def __init__(
         self,
         ctx: Context,
         euf_solver: EUFSolver,
         lra_solver: LRASolver,
+        array_solver: ArraySolver,
+        bitblaster: BitBlaster,
     ) -> None:
         self._ctx = ctx
         self._sat: SATSolver | None = None
         self._euf = euf_solver
         self._lra = lra_solver
+        self._arrays = array_solver
+        self._bitblaster = bitblaster
         self._encoder: _PlaistedGreenbaumEncoder | None = None
 
         self._euf_lit_to_atoms: dict[Lit, list[tuple[Expr, bool]]] = {}
@@ -85,6 +130,8 @@ class _CombinedPropagator:
 
         self._shared_arith_terms: dict[Sort, list[Expr]] = {}
         self._shared_arith_set: set[Expr] = set()
+        self._shared_bv_terms: dict[Sort, list[Expr]] = {}
+        self._shared_bv_set: set[Expr] = set()
         self._emitted_cuts: set[Expr] = set()
 
     def attach(self, sat_solver: SATSolver, encoder: _PlaistedGreenbaumEncoder) -> None:
@@ -105,9 +152,21 @@ class _CombinedPropagator:
         self._euf.register_term(term)
         self._lra.register_term(term)
 
+    def add_shared_bv_term(self, term: Expr) -> None:
+        """Record a ``BitVec`` term participating in EUF/Arrays for BV MBTC."""
+        if term in self._shared_bv_set or not term.is_bv:
+            return
+        self._shared_bv_set.add(term)
+        self._shared_bv_terms.setdefault(term.sort, []).append(term)
+        self._euf.register_term(term)
+
     def all_shared_arith_terms(self) -> list[Expr]:
         """Return all registered mixed EUF+arithmetic interface terms."""
         return [t for terms in self._shared_arith_terms.values() for t in terms]
+
+    def all_shared_bv_terms(self) -> list[Expr]:
+        """Return all registered mixed EUF/Array+BitVec interface terms."""
+        return [t for terms in self._shared_bv_terms.values() for t in terms]
 
     def has_shared_term(self, term: Expr) -> bool:
         """Return whether ``term`` is an arithmetic/EUF interface term."""
@@ -269,7 +328,96 @@ class _CombinedPropagator:
             if mbtc_lemmas:
                 return mbtc_lemmas
 
+        if self._shared_bv_terms:
+            bv_mbtc = self._check_mbtc_bv()
+            if bv_mbtc:
+                return bv_mbtc
+
+        array_lemmas = self._arrays.check(self._euf)
+        if array_lemmas:
+            assert self._encoder is not None
+            out: list[list[Lit]] = []
+            for lemma in array_lemmas:
+                base = self._euf_conflict_to_clause(lemma.reasons)
+                if lemma.formula is self._ctx.true_expr:
+                    continue
+                if lemma.formula is self._ctx.false_expr:
+                    out.append(base)
+                    continue
+                f_lit, def_clauses = self._encoder.encode_lemma(
+                    lemma.formula, polarity=1
+                )
+                out.extend(def_clauses)
+                out.append([*base, f_lit])
+            if out:
+                return out
+
         return ()
+
+    def _sat_bit_lookup(self) -> Callable[[Expr], bool]:
+        assert self._sat is not None
+        assert self._encoder is not None
+        sat = self._sat
+        enc = self._encoder
+
+        def _lookup(node: Expr) -> bool:
+            var = enc.expr_var_or_none(node)
+            if var is None:
+                return False
+            val = sat.value(pos_lit(var))
+            return bool(val) if val is not None else False
+
+        return _lookup
+
+    def _check_mbtc_bv(self) -> list[list[Lit]]:
+        assert self._encoder is not None
+        lookup = self._sat_bit_lookup()
+        vals: dict[Expr, int] = {
+            term: self._bitblaster.eval_term_bits(term, lookup)
+            for term in self.all_shared_bv_terms()
+        }
+
+        # Direction 1 (EUF -> BV): force matching bit vectors on EUF-equal terms.
+        sort_reps: dict[Sort, dict[Expr, Expr]] = {}
+        for sort, terms in self._shared_bv_terms.items():
+            groups: dict[Expr, Expr] = {}
+            for term in terms:
+                rep = self._euf.rep_expr(term)
+                leader = groups.get(rep)
+                if leader is None:
+                    groups[rep] = term
+                    continue
+                if vals[term] != vals[leader]:
+                    reasons = self._euf.explain_terms_equal(term, leader)
+                    base = self._euf_conflict_to_clause(reasons)
+                    eq_atom = self._ctx.mk_eq(term, leader)
+                    if eq_atom is self._ctx.true_expr:
+                        continue
+                    if eq_atom is self._ctx.false_expr:
+                        return [base]
+                    lit_eq, def_clauses = self._encoder.encode_lemma(
+                        eq_atom, polarity=0
+                    )
+                    return [*def_clauses, [*base, lit_eq]]
+            sort_reps[sort] = groups
+
+        # Direction 2 (BV -> EUF): speculate interface equalities when BV values match.
+        for groups in sort_reps.values():
+            seen_val: dict[int, Expr] = {}
+            for leader in groups.values():
+                val = vals[leader]
+                other = seen_val.get(val)
+                if other is None:
+                    seen_val[val] = leader
+                    continue
+                eq_atom = self._ctx.mk_eq(leader, other)
+                if eq_atom is self._ctx.false_expr or eq_atom is self._ctx.true_expr:
+                    continue
+                _, def_clauses = self._encoder.encode_lemma(eq_atom, polarity=0)
+                if def_clauses:
+                    return def_clauses
+
+        return []
 
     def _ensure_lra_lemma_lit(self, atom: Expr) -> Lit:
         assert self._encoder is not None
@@ -385,7 +533,7 @@ class _CombinedPropagator:
 
 
 class _PlaistedGreenbaumEncoder:
-    """Polarity-aware incremental Tseitin, EUF, and LRA/LIA term encoder."""
+    """Polarity-aware incremental Tseitin, EUF, LRA/LIA, BV, and Array encoder."""
 
     def __init__(
         self,
@@ -393,25 +541,54 @@ class _PlaistedGreenbaumEncoder:
         sat_solver: SATSolver,
         euf_solver: EUFSolver,
         lra_solver: LRASolver,
+        array_solver: ArraySolver,
+        bitblaster: BitBlaster,
         prop: _CombinedPropagator,
     ) -> None:
         self._ctx = ctx
         self._sat = sat_solver
         self._euf = euf_solver
         self._lra = lra_solver
+        self._arrays = array_solver
+        self._bitblaster = bitblaster
         self._prop = prop
         self._expr_to_var: dict[Expr, Var] = {}
         self._decl_to_var: dict[FuncDecl, Var] = {}
         self._pos_encoded: set[Expr] = set()
         self._neg_encoded: set[Expr] = set()
-        self._registered_terms: set[Expr] = set()
+        self._terms_non_euf: set[Expr] = set()
+        self._terms_euf: set[Expr] = set()
         self._true_lit: Lit | None = None
         self._first_lit: Lit | None = None
+        self._clause_sink: list[list[Lit]] | None = None
 
     @property
     def decl_to_var(self) -> dict[FuncDecl, Var]:
         """Mapping from Boolean 0-arity declarations to SAT variable indices."""
         return self._decl_to_var
+
+    def expr_var_or_none(self, expr: Expr) -> Var | None:
+        """Return SAT variable index allocated for ``expr``, or ``None``."""
+        return self._expr_to_var.get(expr)
+
+    def _emit_clause(self, lits: list[Lit]) -> None:
+        if self._clause_sink is not None:
+            self._clause_sink.append(lits)
+        else:
+            self._sat.add_clause(lits)
+
+    def encode_lemma(
+        self, expr: Expr, polarity: int = 1
+    ) -> tuple[Lit, list[list[Lit]]]:
+        """Encode ``expr`` during ``check()``, capturing definition clauses."""
+        prev_sink = self._clause_sink
+        clauses: list[list[Lit]] = []
+        self._clause_sink = clauses
+        try:
+            lit = self.encode(expr, polarity=polarity)
+        finally:
+            self._clause_sink = prev_sink
+        return lit, clauses
 
     def any_lit(self) -> Lit | None:
         """Return an allocated SAT literal if any variable exists yet."""
@@ -432,7 +609,7 @@ class _PlaistedGreenbaumEncoder:
     def _get_true_lit(self) -> Lit:
         if self._true_lit is None:
             lit = pos_lit(self._sat.new_var())
-            self._sat.add_clause([lit])
+            self._emit_clause([lit])
             self._true_lit = lit
             if self._first_lit is None:
                 self._first_lit = lit
@@ -442,44 +619,67 @@ class _PlaistedGreenbaumEncoder:
         return negate(self._get_true_lit())
 
     def _register_term(self, term: Expr, *, in_euf: bool = True) -> None:
-        """Walk ``term`` registering EUF/LRA subterms, Bool args, and non-Bool ITEs."""
+        """Walk ``term`` registering EUF/LRA/Array/BV subterms and non-Bool ITEs."""
         bool_args: list[Expr] = []
         non_bool_ites: list[App] = []
         stack: list[tuple[Expr, bool, bool]] = [(term, in_euf, False)]
 
         while stack:
             node, euf_flag, expanded = stack.pop()
-            if node in self._registered_terms:
-                if euf_flag and node.is_arith:
-                    self._prop.add_shared_arith_term(node)
+            if euf_flag:
+                if node in self._terms_euf:
+                    continue
+            elif node in self._terms_euf or node in self._terms_non_euf:
                 continue
 
             if isinstance(node, Const):
-                self._registered_terms.add(node)
                 if euf_flag:
+                    self._terms_euf.add(node)
                     self._euf.register_term(node)
                     if node.is_arith:
                         self._prop.add_shared_arith_term(node)
+                    elif node.is_bv:
+                        self._prop.add_shared_bv_term(node)
+                else:
+                    self._terms_non_euf.add(node)
                 continue
 
             if not isinstance(node, App):
-                self._registered_terms.add(node)
                 if euf_flag:
+                    self._terms_euf.add(node)
                     self._euf.register_term(node)
+                else:
+                    self._terms_non_euf.add(node)
                 continue
 
             kind = node.decl.kind
             if kind is DeclKind.ITE and not node.is_bool:
-                if not expanded:
-                    stack.append((node, euf_flag, True))
-                    stack.append((node.args[2], euf_flag, False))
-                    stack.append((node.args[1], euf_flag, False))
+                eff_euf = euf_flag or node.is_array
+                if node.is_bv and not eff_euf:
+                    if not expanded:
+                        stack.append((node, euf_flag, True))
+                        stack.append((node.args[2], euf_flag, False))
+                        stack.append((node.args[1], euf_flag, False))
+                        continue
+                    self._terms_non_euf.add(node)
                     continue
-                self._registered_terms.add(node)
-                if euf_flag:
+
+                if not expanded:
+                    stack.append((node, eff_euf, True))
+                    stack.append((node.args[2], eff_euf, False))
+                    stack.append((node.args[1], eff_euf, False))
+                    continue
+                if eff_euf:
+                    self._terms_euf.add(node)
                     self._euf.register_term(node)
                     if node.is_arith:
                         self._prop.add_shared_arith_term(node)
+                    elif node.is_bv:
+                        self._prop.add_shared_bv_term(node)
+                    if node.is_array:
+                        self._arrays.register_term(node)
+                else:
+                    self._terms_non_euf.add(node)
                 if node.is_arith:
                     self._lra.register_term(node)
                 non_bool_ites.append(node)
@@ -491,9 +691,44 @@ class _PlaistedGreenbaumEncoder:
                     for arg in reversed(node.args):
                         stack.append((arg, euf_flag, False))
                     continue
-                self._registered_terms.add(node)
-                if euf_flag and node.is_arith:
+                if euf_flag:
+                    self._terms_euf.add(node)
+                    if node.is_arith:
+                        self._prop.add_shared_arith_term(node)
+                else:
+                    self._terms_non_euf.add(node)
+                continue
+
+            if kind in _BV_OP_KINDS:
+                if not expanded:
+                    stack.append((node, euf_flag, True))
+                    for arg in reversed(node.args):
+                        stack.append((arg, euf_flag, False))
+                    continue
+                if euf_flag:
+                    self._terms_euf.add(node)
+                    if node.is_bv:
+                        self._prop.add_shared_bv_term(node)
+                else:
+                    self._terms_non_euf.add(node)
+                continue
+
+            if kind in _ARRAY_OP_KINDS:
+                if not expanded:
+                    stack.append((node, True, True))
+                    for arg in reversed(node.args):
+                        if arg.is_bool:
+                            bool_args.append(arg)
+                        else:
+                            stack.append((arg, True, False))
+                    continue
+                self._terms_euf.add(node)
+                self._arrays.register_term(node)
+                self._euf.register_term(node)
+                if node.is_arith:
                     self._prop.add_shared_arith_term(node)
+                elif node.is_bv:
+                    self._prop.add_shared_bv_term(node)
                 continue
 
             if node.decl.is_uninterpreted:
@@ -507,26 +742,38 @@ class _PlaistedGreenbaumEncoder:
                                 # Arguments of an uninterpreted App always touch EUF.
                                 stack.append((arg, True, False))
                         continue
-                    self._registered_terms.add(node)
+                    self._terms_euf.add(node)
                     self._euf.register_term(node)
                     if node.is_arith:
                         self._prop.add_shared_arith_term(node)
+                    elif node.is_bv:
+                        self._prop.add_shared_bv_term(node)
+                    elif node.is_array:
+                        self._arrays.register_term(node)
                 else:
-                    self._registered_terms.add(node)
                     if euf_flag:
+                        self._terms_euf.add(node)
                         self._euf.register_term(node)
                         if node.is_arith:
                             self._prop.add_shared_arith_term(node)
+                        elif node.is_bv:
+                            self._prop.add_shared_bv_term(node)
+                        elif node.is_array:
+                            self._arrays.register_term(node)
+                    else:
+                        self._terms_non_euf.add(node)
                 continue
 
             if node.is_bool:
-                self._registered_terms.add(node)
+                self._terms_euf.add(node)
                 bool_args.append(node)
                 continue
 
-            self._registered_terms.add(node)
             if euf_flag:
+                self._terms_euf.add(node)
                 self._euf.register_term(node)
+            else:
+                self._terms_non_euf.add(node)
 
         for b_arg in bool_args:
             if isinstance(b_arg, Const):
@@ -534,15 +781,15 @@ class _PlaistedGreenbaumEncoder:
                 continue
             lit_arg = self.encode(b_arg, polarity=0)
             self._euf.register_bool_term(b_arg)
-            self._prop.bind_euf(lit_arg, b_arg)
+            self._prop.bind_euf(lit_arg, b_arg, catch_up=(self._clause_sink is None))
 
         for ite_node in non_bool_ites:
             cond, then_b, else_b = ite_node.args
             lit_c = self.encode(cond, polarity=0)
             lit_then = self.encode(self._ctx.mk_eq(ite_node, then_b), polarity=1)
             lit_else = self.encode(self._ctx.mk_eq(ite_node, else_b), polarity=1)
-            self._sat.add_clause([negate(lit_c), lit_then])
-            self._sat.add_clause([lit_c, lit_else])
+            self._emit_clause([negate(lit_c), lit_then])
+            self._emit_clause([lit_c, lit_else])
 
     def _is_encoded(self, node: Expr, pol: int) -> bool:
         if pol > 0:
@@ -609,10 +856,10 @@ class _PlaistedGreenbaumEncoder:
             ]
             if emit_pos:
                 for eq_lit in pair_lits:
-                    self._sat.add_clause([nv, negate(eq_lit)])
+                    self._emit_clause([nv, negate(eq_lit)])
                 self._pos_encoded.add(node)
             if emit_neg:
-                self._sat.add_clause([v, *pair_lits])
+                self._emit_clause([v, *pair_lits])
                 self._neg_encoded.add(node)
             return
 
@@ -622,46 +869,46 @@ class _PlaistedGreenbaumEncoder:
             case DeclKind.AND:
                 if emit_pos:
                     for lit in lits:
-                        self._sat.add_clause([nv, lit])
+                        self._emit_clause([nv, lit])
                 if emit_neg:
-                    self._sat.add_clause([v, *(negate(lit) for lit in lits)])
+                    self._emit_clause([v, *(negate(lit) for lit in lits)])
             case DeclKind.OR:
                 if emit_pos:
-                    self._sat.add_clause([nv, *lits])
+                    self._emit_clause([nv, *lits])
                 if emit_neg:
                     for lit in lits:
-                        self._sat.add_clause([v, negate(lit)])
+                        self._emit_clause([v, negate(lit)])
             case DeclKind.IMPLIES:
                 la, lb = lits
                 if emit_pos:
-                    self._sat.add_clause([nv, negate(la), lb])
+                    self._emit_clause([nv, negate(la), lb])
                 if emit_neg:
-                    self._sat.add_clause([v, la])
-                    self._sat.add_clause([v, negate(lb)])
+                    self._emit_clause([v, la])
+                    self._emit_clause([v, negate(lb)])
             case DeclKind.XOR | DeclKind.DISTINCT:
                 la, lb = lits
                 if emit_pos:
-                    self._sat.add_clause([nv, la, lb])
-                    self._sat.add_clause([nv, negate(la), negate(lb)])
+                    self._emit_clause([nv, la, lb])
+                    self._emit_clause([nv, negate(la), negate(lb)])
                 if emit_neg:
-                    self._sat.add_clause([v, negate(la), lb])
-                    self._sat.add_clause([v, la, negate(lb)])
+                    self._emit_clause([v, negate(la), lb])
+                    self._emit_clause([v, la, negate(lb)])
             case DeclKind.EQ:
                 la, lb = lits
                 if emit_pos:
-                    self._sat.add_clause([nv, negate(la), lb])
-                    self._sat.add_clause([nv, la, negate(lb)])
+                    self._emit_clause([nv, negate(la), lb])
+                    self._emit_clause([nv, la, negate(lb)])
                 if emit_neg:
-                    self._sat.add_clause([v, la, lb])
-                    self._sat.add_clause([v, negate(la), negate(lb)])
+                    self._emit_clause([v, la, lb])
+                    self._emit_clause([v, negate(la), negate(lb)])
             case DeclKind.ITE:
                 lc, lt, le = lits
                 if emit_pos:
-                    self._sat.add_clause([nv, negate(lc), lt])
-                    self._sat.add_clause([nv, lc, le])
+                    self._emit_clause([nv, negate(lc), lt])
+                    self._emit_clause([nv, lc, le])
                 if emit_neg:
-                    self._sat.add_clause([v, negate(lc), negate(lt)])
-                    self._sat.add_clause([v, lc, negate(le)])
+                    self._emit_clause([v, negate(lc), negate(lt)])
+                    self._emit_clause([v, lc, negate(le)])
             case _:
                 msg = f"Unsupported Boolean operator in Tseitin encoder: {node.decl}"
                 raise TypeError(msg)
@@ -676,6 +923,7 @@ class _PlaistedGreenbaumEncoder:
         root_base, root_flip = _strip_nots(expr)
         root_pol = -polarity if (root_flip and polarity != 0) else polarity
         stack: list[tuple[Expr, int, bool]] = [(root_base, root_pol, False)]
+        catch_up = self._clause_sink is None
 
         while stack:
             node, pol, expanded = stack.pop()
@@ -703,7 +951,20 @@ class _PlaistedGreenbaumEncoder:
                 self._register_term(node.args[1], in_euf=False)
                 self._lra.register_atom(node)
                 var = self.ensure_expr_var(node)
-                self._prop.bind_lra(pos_lit(var), node)
+                self._prop.bind_lra(pos_lit(var), node, catch_up=catch_up)
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
+            if kind in _BV_CMP_KINDS:
+                self._register_term(node.args[0], in_euf=False)
+                self._register_term(node.args[1], in_euf=False)
+                self._bitblaster.register_reserved(node)
+                blasted = self._bitblaster.blast_bool(node)
+                lit_blast = self.encode(blasted, polarity=0)
+                lit_v = pos_lit(self.ensure_expr_var(node))
+                self._emit_clause([negate(lit_v), lit_blast])
+                self._emit_clause([lit_v, negate(lit_blast)])
                 self._pos_encoded.add(node)
                 self._neg_encoded.add(node)
                 continue
@@ -716,17 +977,37 @@ class _PlaistedGreenbaumEncoder:
                     lit_le = self.encode(le, polarity=0)
                     lit_ge = self.encode(ge, polarity=0)
                     lit_eq = pos_lit(self.ensure_expr_var(node))
-                    self._sat.add_clause([negate(lit_eq), lit_le])
-                    self._sat.add_clause([negate(lit_eq), lit_ge])
-                    self._sat.add_clause([lit_eq, negate(lit_le), negate(lit_ge)])
+                    self._emit_clause([negate(lit_eq), lit_le])
+                    self._emit_clause([negate(lit_eq), lit_ge])
+                    self._emit_clause([lit_eq, negate(lit_le), negate(lit_ge)])
                     self._euf.register_eq(node)
-                    self._prop.bind_euf(lit_eq, node)
+                    self._prop.bind_euf(lit_eq, node, catch_up=catch_up)
+                elif lhs.is_bv:
+                    self._register_term(lhs, in_euf=False)
+                    self._register_term(rhs, in_euf=False)
+                    self._bitblaster.register_reserved(node)
+                    blasted = self._bitblaster.blast_eq(lhs, rhs)
+                    lit_blast = self.encode(blasted, polarity=0)
+                    lit_eq = pos_lit(self.ensure_expr_var(node))
+                    self._emit_clause([negate(lit_eq), lit_blast])
+                    self._emit_clause([lit_eq, negate(lit_blast)])
+                    self._euf.register_eq(node)
+                    self._prop.bind_euf(lit_eq, node, catch_up=catch_up)
                 else:
                     self._register_term(lhs, in_euf=True)
                     self._register_term(rhs, in_euf=True)
                     self._euf.register_eq(node)
                     var = self.ensure_expr_var(node)
-                    self._prop.bind_euf(pos_lit(var), node)
+                    self._prop.bind_euf(pos_lit(var), node, catch_up=catch_up)
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
+            if kind is DeclKind.SELECT:
+                self._register_term(node, in_euf=True)
+                self._euf.register_bool_term(node)
+                var = self.ensure_expr_var(node)
+                self._prop.bind_euf(pos_lit(var), node, catch_up=catch_up)
                 self._pos_encoded.add(node)
                 self._neg_encoded.add(node)
                 continue
@@ -735,7 +1016,7 @@ class _PlaistedGreenbaumEncoder:
                 self._register_term(node, in_euf=True)
                 self._euf.register_bool_term(node)
                 var = self.ensure_expr_var(node)
-                self._prop.bind_euf(pos_lit(var), node)
+                self._prop.bind_euf(pos_lit(var), node, catch_up=catch_up)
                 self._pos_encoded.add(node)
                 self._neg_encoded.add(node)
                 continue
@@ -768,10 +1049,20 @@ class SMTSolver:
     def _init_backend(self) -> None:
         self._euf = EUFSolver(self._ctx)
         self._lra = LRASolver(self._ctx)
-        self._propagator = _CombinedPropagator(self._ctx, self._euf, self._lra)
+        self._arrays = ArraySolver(self._ctx)
+        self._bitblaster = BitBlaster(self._ctx)
+        self._propagator = _CombinedPropagator(
+            self._ctx, self._euf, self._lra, self._arrays, self._bitblaster
+        )
         self._sat = SATSolver(propagator=self._propagator)
         self._encoder = _PlaistedGreenbaumEncoder(
-            self._ctx, self._sat, self._euf, self._lra, self._propagator
+            self._ctx,
+            self._sat,
+            self._euf,
+            self._lra,
+            self._arrays,
+            self._bitblaster,
+            self._propagator,
         )
         self._propagator.attach(self._sat, self._encoder)
 
@@ -808,7 +1099,7 @@ class SMTSolver:
         for formula in formulas:
             self._validate_bool_expr(formula)
             self._assertions_by_scope[-1].append(formula)
-            simplified = simplify(formula)
+            simplified = bv_simplify(simplify(formula))
             conjuncts = (
                 simplified.args
                 if isinstance(simplified, App) and simplified.decl.kind is DeclKind.AND
@@ -867,7 +1158,7 @@ class SMTSolver:
 
         for assumption in assumptions:
             self._validate_bool_expr(assumption)
-            simplified = simplify(assumption)
+            simplified = bv_simplify(simplify(assumption))
             lit = self._encoder.encode(simplified, polarity=1)
             sat_assumptions.append(lit)
             lit_to_exprs.setdefault(lit, []).append(assumption)
@@ -891,20 +1182,44 @@ class SMTSolver:
             msg = "Model is only available after check() returns SolveResult.SAT"
             raise ValueError(msg)
         sat_model = self._sat.model()
+        internal_decls = self._bitblaster.internal_decls | self._arrays.internal_decls
         lra_conc = self._lra.concrete_values()
         shared_terms = self._propagator.all_shared_arith_terms()
         shared_conc = self._lra.term_values(shared_terms) if shared_terms else {}
 
-        external_const_vals: dict[Expr, Const] = {}
+        external_vals: dict[Expr, Expr] = {}
         for expr, frac in {**lra_conc, **shared_conc}.items():
             if expr.is_int:
                 assert frac.denominator == 1
-                external_const_vals[expr] = self._ctx.mk_int_val(frac.numerator)
+                external_vals[expr] = self._ctx.mk_int_val(frac.numerator)
             elif expr.is_real:
-                external_const_vals[expr] = self._ctx.mk_real_val(frac)
+                external_vals[expr] = self._ctx.mk_real_val(frac)
 
-        euf_model = self._euf.build_model(external_values=external_const_vals)
-        values: dict[FuncDecl, Value] = dict(euf_model.items())
+        def _bit_lookup(node: Expr) -> bool:
+            var = self._encoder.expr_var_or_none(node)
+            return sat_model[var] if var is not None else False
+
+        bv_decl_vals: dict[FuncDecl, int] = {}
+        for bv_decl, bits in self._bitblaster.bv_const_bits.items():
+            if bv_decl not in internal_decls:
+                bv_decl_vals[bv_decl] = self._bitblaster.eval_bits(bits, _bit_lookup)
+        for bv_term in self._propagator.all_shared_bv_terms():
+            bv_int = self._bitblaster.eval_term_bits(bv_term, _bit_lookup)
+            external_vals[bv_term] = self._ctx.mk_bv_val(bv_int, bv_term.bv_size)
+
+        for decl, var in self._encoder.decl_to_var.items():
+            if decl not in internal_decls:
+                external_vals[decl()] = self._ctx.mk_bool_val(sat_model[var])
+
+        scalar_vals = self._euf.resolve_scalar_values(external_values=external_vals)
+        array_input = {**scalar_vals, **external_vals}
+        array_vals = self._arrays.build_array_values(self._euf, array_input)
+        all_external = {**external_vals, **array_vals}
+
+        euf_model = self._euf.build_model(external_values=all_external)
+        values: dict[FuncDecl, Value] = {
+            decl: val for decl, val in euf_model.items() if decl not in internal_decls
+        }
         for expr, frac in lra_conc.items():
             if isinstance(expr, App) and expr.is_const_symbol:
                 if expr.is_int:
@@ -912,10 +1227,22 @@ class SMTSolver:
                     values[expr.decl] = frac.numerator
                 elif expr.is_real:
                     values[expr.decl] = frac
+        values.update(bv_decl_vals)
         for decl, var in self._encoder.decl_to_var.items():
-            values[decl] = sat_model[var]
+            if decl not in internal_decls:
+                values[decl] = sat_model[var]
+        for term, arr_val in array_vals.items():
+            if (
+                isinstance(term, App)
+                and term.is_const_symbol
+                and term.decl not in internal_decls
+            ):
+                values[term.decl] = arr_val
+
         functions = {
-            decl: euf_model.func_interp(decl) for decl in euf_model.func_decls()
+            decl: euf_model.func_interp(decl)
+            for decl in euf_model.func_decls()
+            if decl not in internal_decls
         }
         universes = {sort: euf_model.universe(sort) for sort in euf_model.sorts()}
         return Model(self._ctx, values, functions=functions, universes=universes)
@@ -929,12 +1256,13 @@ class SMTSolver:
         return [formula for scope in self._assertions_by_scope for formula in scope]
 
     def statistics(self) -> dict[str, int]:
-        """Return merged SAT, EUF, and LRA/LIA search counters."""
+        """Return merged SAT, EUF, LRA/LIA, and Array search counters."""
         stats: dict[str, int] = {
             k: v for k, v in self._sat.statistics().items() if isinstance(v, int)
         }
         stats.update(self._euf.stats.to_dict())
         stats.update(self._lra.stats.to_dict())
+        stats.update(self._arrays.stats.to_dict())
         return stats
 
 

@@ -60,6 +60,46 @@ def _flatten_expr_args(
     return tuple(flat)
 
 
+def _bv_coerce_pair(a: Expr | int, b: Expr | int, op_name: str) -> tuple[Expr, Expr]:
+    if isinstance(a, Expr) and isinstance(b, Expr):
+        return a, b
+    if (
+        isinstance(a, Expr)
+        and a.is_bv
+        and isinstance(b, int)
+        and not isinstance(b, bool)
+    ):
+        return a, a.ctx.mk_bv_val(b, a.bv_size)
+    if (
+        isinstance(b, Expr)
+        and b.is_bv
+        and isinstance(a, int)
+        and not isinstance(a, bool)
+    ):
+        return b.ctx.mk_bv_val(a, b.bv_size), b
+    msg = f"{op_name} requires BitVec expressions"
+    raise TypeError(msg)
+
+
+def _coerce_arg_for_sort(sort: Sort, value: Expr | bool | int | Fraction) -> Expr:
+    if isinstance(value, Expr):
+        return value
+    if sort.is_bool and isinstance(value, bool):
+        return sort.ctx.mk_bool_val(value)
+    if sort.is_int and isinstance(value, int) and not isinstance(value, bool):
+        return sort.ctx.mk_int_val(value)
+    if (
+        sort.is_real
+        and not isinstance(value, bool)
+        and isinstance(value, (int, Fraction))
+    ):
+        return sort.ctx.mk_real_val(value)
+    if sort.is_bv and isinstance(value, int) and not isinstance(value, bool):
+        return sort.ctx.mk_bv_val(value, sort.size)
+    msg = f"Cannot coerce value {value!r} to sort '{sort}'"
+    raise TypeError(msg)
+
+
 def BoolSort(ctx: Context | None = None) -> Sort:
     """Return the ``Bool`` sort in ``ctx`` (or the default context)."""
     return _resolve_ctx(ctx).mk_bool_sort()
@@ -73,6 +113,19 @@ def IntSort(ctx: Context | None = None) -> Sort:
 def RealSort(ctx: Context | None = None) -> Sort:
     """Return the ``Real`` sort in ``ctx`` (or the default context)."""
     return _resolve_ctx(ctx).mk_real_sort()
+
+
+def BitVecSort(size: int, ctx: Context | None = None) -> Sort:
+    """Return the fixed-width ``(_ BitVec size)`` sort."""
+    return _resolve_ctx(ctx).mk_bv_sort(size)
+
+
+def ArraySort(domain: Sort, range_sort: Sort) -> Sort:
+    """Return the ``(Array domain range_sort)`` sort."""
+    if domain.ctx is not range_sort.ctx:
+        msg = "ArraySort domain and range belong to different Contexts"
+        raise ValueError(msg)
+    return domain.ctx.mk_array_sort(domain, range_sort)
 
 
 def DeclareSort(name: str, ctx: Context | None = None) -> Sort:
@@ -116,6 +169,32 @@ def Reals(names: str | Sequence[str], ctx: Context | None = None) -> list[App]:
     return [resolved.mk_real(name) for name in name_list]
 
 
+def BitVec(name: str, bv: int | Sort, ctx: Context | None = None) -> App:
+    """Create a fixed-width ``BitVec`` symbolic constant named ``name``."""
+    if isinstance(bv, Sort):
+        if not bv.is_bv:
+            msg = f"Expected BitVec sort, got '{bv}'"
+            raise TypeError(msg)
+        return bv.ctx.mk_const(name, bv)
+    return _resolve_ctx(ctx).mk_bv(name, bv)
+
+
+def BitVecs(
+    names: str | Sequence[str], bv: int | Sort, ctx: Context | None = None
+) -> list[App]:
+    """Create multiple ``BitVec`` constants from whitespace-separated names."""
+    name_list = names.split() if isinstance(names, str) else list(names)
+    return [BitVec(name, bv, ctx) for name in name_list]
+
+
+def Array(name: str, index_sort: Sort, element_sort: Sort) -> App:
+    """Create an ``Array`` symbolic constant over ``index_sort -> element_sort``."""
+    if index_sort.ctx is not element_sort.ctx:
+        msg = "Array index and element sorts belong to different Contexts"
+        raise ValueError(msg)
+    return index_sort.ctx.mk_array(name, index_sort, element_sort)
+
+
 def Constant(name: str, sort: Sort) -> App:
     """Create a 0-arity symbolic constant named ``name`` of ``sort``."""
     return sort.ctx.mk_const(name, sort)
@@ -152,9 +231,155 @@ def RealVal(value: int | Fraction | str, ctx: Context | None = None) -> Const:
     return _resolve_ctx(ctx).mk_real_val(value)
 
 
+def BitVecVal(val: int, bv: int | Sort, ctx: Context | None = None) -> Const:
+    """Create a fixed-width ``BitVec`` constant literal."""
+    if isinstance(bv, Sort):
+        if not bv.is_bv:
+            msg = f"Expected BitVec sort, got '{bv}'"
+            raise TypeError(msg)
+        return bv.ctx.mk_bv_val(val, bv.size)
+    return _resolve_ctx(ctx).mk_bv_val(val, bv)
+
+
 def ToReal(expr: Expr) -> Expr:
     """Convert an ``Int`` expression to ``Real``."""
     return expr.ctx.mk_to_real(expr)
+
+
+def UDiv(a: Expr | int, b: Expr | int) -> Expr:
+    """Unsigned bit-vector division ``bvudiv(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "UDiv")
+    return lhs.ctx.mk_bv_udiv(lhs, rhs)
+
+
+def URem(a: Expr | int, b: Expr | int) -> Expr:
+    """Unsigned bit-vector remainder ``bvurem(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "URem")
+    return lhs.ctx.mk_bv_urem(lhs, rhs)
+
+
+def SDiv(a: Expr | int, b: Expr | int) -> Expr:
+    """Signed bit-vector division ``bvsdiv(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "SDiv")
+    return lhs.ctx.mk_bv_sdiv(lhs, rhs)
+
+
+def SRem(a: Expr | int, b: Expr | int) -> Expr:
+    """Signed bit-vector remainder ``bvsrem(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "SRem")
+    return lhs.ctx.mk_bv_srem(lhs, rhs)
+
+
+def SMod(a: Expr | int, b: Expr | int) -> Expr:
+    """Signed bit-vector modulo ``bvsmod(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "SMod")
+    return lhs.ctx.mk_bv_smod(lhs, rhs)
+
+
+def LShR(a: Expr | int, b: Expr | int) -> Expr:
+    """Logical right shift ``bvlshr(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "LShR")
+    return lhs.ctx.mk_bv_lshr(lhs, rhs)
+
+
+def ULT(a: Expr | int, b: Expr | int) -> Expr:
+    """Unsigned bit-vector less-than ``bvult(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "ULT")
+    return lhs.ctx.mk_bv_ult(lhs, rhs)
+
+
+def ULE(a: Expr | int, b: Expr | int) -> Expr:
+    """Unsigned bit-vector less-or-equal ``bvule(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "ULE")
+    return lhs.ctx.mk_bv_ule(lhs, rhs)
+
+
+def UGT(a: Expr | int, b: Expr | int) -> Expr:
+    """Unsigned bit-vector greater-than ``bvugt(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "UGT")
+    return lhs.ctx.mk_bv_ugt(lhs, rhs)
+
+
+def UGE(a: Expr | int, b: Expr | int) -> Expr:
+    """Unsigned bit-vector greater-or-equal ``bvuge(a, b)``."""
+    lhs, rhs = _bv_coerce_pair(a, b, "UGE")
+    return lhs.ctx.mk_bv_uge(lhs, rhs)
+
+
+def Concat(*args: Expr | Sequence[Expr]) -> Expr:
+    """Concatenate bit-vectors from most-significant to least-significant."""
+    flat = _flatten_expr_args(args)
+    if not flat:
+        msg = "Concat requires at least one BitVec expression"
+        raise ValueError(msg)
+    return flat[0].ctx.mk_concat(*flat)
+
+
+def Extract(high: int, low: int, a: Expr) -> Expr:
+    """Extract bit slice ``a[high:low]`` (inclusive, 0 = LSB)."""
+    return a.ctx.mk_extract(high, low, a)
+
+
+def ZeroExt(n: int, a: Expr) -> Expr:
+    """Zero-extend bit-vector ``a`` by ``n`` bits."""
+    return a.ctx.mk_zero_ext(n, a)
+
+
+def SignExt(n: int, a: Expr) -> Expr:
+    """Sign-extend bit-vector ``a`` by ``n`` bits."""
+    return a.ctx.mk_sign_ext(n, a)
+
+
+def RotateLeft(a: Expr, n: int) -> Expr:
+    """Rotate bit-vector ``a`` left by ``n`` bits."""
+    return a.ctx.mk_rotate_left(n, a)
+
+
+def RotateRight(a: Expr, n: int) -> Expr:
+    """Rotate bit-vector ``a`` right by ``n`` bits."""
+    return a.ctx.mk_rotate_right(n, a)
+
+
+def Repeat(n: int, a: Expr) -> Expr:
+    """Concatenate ``n`` copies of bit-vector ``a``."""
+    return a.ctx.mk_repeat(n, a)
+
+
+def Select(array: Expr, index: Expr | bool | int | Fraction) -> Expr:
+    """Read the element at ``index`` in ``array``."""
+    if not array.is_array:
+        msg = f"Expected Array expression in Select, got '{array.sort}'"
+        raise TypeError(msg)
+    idx_expr = _coerce_arg_for_sort(array.sort.index_sort, index)
+    return array.ctx.mk_select(array, idx_expr)
+
+
+def Store(
+    array: Expr,
+    index: Expr | bool | int | Fraction,
+    value: Expr | bool | int | Fraction,
+) -> Expr:
+    """Store ``value`` at ``index`` in ``array``, returning the updated array."""
+    if not array.is_array:
+        msg = f"Expected Array expression in Store, got '{array.sort}'"
+        raise TypeError(msg)
+    idx_expr = _coerce_arg_for_sort(array.sort.index_sort, index)
+    val_expr = _coerce_arg_for_sort(array.sort.element_sort, value)
+    return array.ctx.mk_store(array, idx_expr, val_expr)
+
+
+def K(domain: Sort, value: Expr | bool | int | Fraction) -> App:
+    """Construct a constant array mapping every key in ``domain`` to ``value``."""
+    if isinstance(value, Expr):
+        return domain.ctx.mk_const_array(domain, value)
+    if isinstance(value, bool):
+        return domain.ctx.mk_const_array(domain, domain.ctx.mk_bool_val(value))
+    if isinstance(value, int):
+        return domain.ctx.mk_const_array(domain, domain.ctx.mk_int_val(value))
+    if isinstance(value, Fraction):
+        return domain.ctx.mk_const_array(domain, domain.ctx.mk_real_val(value))
+    msg = f"Unsupported constant array value: {value!r}"
+    raise TypeError(msg)
 
 
 def Sum(*args: Expr | Sequence[Expr]) -> Expr:
@@ -265,14 +490,25 @@ class Solver:
 
 __all__ = [
     "SAT",
+    "UGE",
+    "UGT",
+    "ULE",
+    "ULT",
     "UNKNOWN",
     "UNSAT",
     "And",
     "App",
+    "Array",
+    "ArraySort",
+    "BitVec",
+    "BitVecSort",
+    "BitVecVal",
+    "BitVecs",
     "Bool",
     "BoolSort",
     "BoolVal",
     "Bools",
+    "Concat",
     "Const",
     "Constant",
     "Constants",
@@ -281,6 +517,7 @@ __all__ = [
     "Distinct",
     "Eq",
     "Expr",
+    "Extract",
     "FuncDecl",
     "FuncInterp",
     "Function",
@@ -290,6 +527,8 @@ __all__ = [
     "IntSort",
     "IntVal",
     "Ints",
+    "K",
+    "LShR",
     "Model",
     "Not",
     "Or",
@@ -297,12 +536,24 @@ __all__ = [
     "RealSort",
     "RealVal",
     "Reals",
+    "Repeat",
+    "RotateLeft",
+    "RotateRight",
+    "SDiv",
+    "SMod",
+    "SRem",
+    "Select",
+    "SignExt",
     "SolveResult",
     "Solver",
     "Sort",
+    "Store",
     "Sum",
     "ToReal",
+    "UDiv",
+    "URem",
     "Xor",
+    "ZeroExt",
     "default_context",
     "reset_default_context",
     "set_default_context",

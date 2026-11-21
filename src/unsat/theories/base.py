@@ -71,6 +71,27 @@ class LRAStats:
         }
 
 
+@dataclass(slots=True)
+class ArrayStats:
+    """Instrumentation counters collected by an ``ArraySolver``."""
+
+    row1_lemmas: int = 0
+    row2_lemmas: int = 0
+    const_lemmas: int = 0
+    ext_lemmas: int = 0
+    checks: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Return counters as a plain dictionary."""
+        return {
+            "theory_array_row1_lemmas": self.row1_lemmas,
+            "theory_array_row2_lemmas": self.row2_lemmas,
+            "theory_array_const_lemmas": self.const_lemmas,
+            "theory_array_ext_lemmas": self.ext_lemmas,
+            "theory_array_checks": self.checks,
+        }
+
+
 class TheorySolver(Protocol):
     """Protocol implemented by incremental congruence / background theory solvers."""
 

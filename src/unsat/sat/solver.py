@@ -699,10 +699,15 @@ class SATSolver:
             best2 = best1
         deduped[1], deduped[best2] = deduped[best2], deduped[1]
 
-        lbd = self._compute_lbd(deduped)
-        clause = Clause(deduped, learned=True, lbd=lbd)
-        self._learned.append(clause)
-        self._stats["learned_clauses"] += 1
+        has_undef = any(self._trail.eval_lit(lit) == L_UNDEF for lit in deduped)
+        if has_undef:
+            clause = Clause(deduped, learned=False)
+            self._clauses.append(clause)
+        else:
+            lbd = self._compute_lbd(deduped)
+            clause = Clause(deduped, learned=True, lbd=lbd)
+            self._learned.append(clause)
+            self._stats["learned_clauses"] += 1
         self._attach_clause(clause)
 
         v0 = self._trail.eval_lit(deduped[0])
@@ -715,7 +720,7 @@ class SATSolver:
                 self._backtrack(target_lvl)
             self._trail.assign(deduped[0], reason=clause)
             return None, True
-        return None, v0 == L_UNDEF
+        return None, has_undef
 
     def _compute_lbd(self, lits: Sequence[Lit]) -> int:
         lbd = 0

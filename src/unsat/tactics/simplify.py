@@ -109,6 +109,55 @@ def simplify(expr: Expr) -> Expr:
                 memo[node] = ctx.mk_ge(args[0], args[1])
             case DeclKind.TO_REAL:
                 memo[node] = ctx.mk_to_real(args[0])
+            case DeclKind.SELECT:
+                memo[node] = ctx.mk_select(args[0], args[1])
+            case DeclKind.STORE:
+                arr_a, idx_a, val_a = args
+                if (
+                    isinstance(val_a, App)
+                    and val_a.decl.kind is DeclKind.SELECT
+                    and val_a.args[0] is arr_a
+                    and val_a.args[1] is idx_a
+                ):
+                    memo[node] = arr_a
+                else:
+                    memo[node] = ctx.mk_store(arr_a, idx_a, val_a)
+            case DeclKind.CONST_ARRAY:
+                memo[node] = ctx.mk_const_array(node.sort.index_sort, args[0])
+            case (
+                DeclKind.BV_NOT
+                | DeclKind.BV_AND
+                | DeclKind.BV_OR
+                | DeclKind.BV_XOR
+                | DeclKind.BV_NEG
+                | DeclKind.BV_ADD
+                | DeclKind.BV_SUB
+                | DeclKind.BV_MUL
+                | DeclKind.BV_UDIV
+                | DeclKind.BV_UREM
+                | DeclKind.BV_SDIV
+                | DeclKind.BV_SREM
+                | DeclKind.BV_SMOD
+                | DeclKind.BV_SHL
+                | DeclKind.BV_LSHR
+                | DeclKind.BV_ASHR
+                | DeclKind.BV_ULT
+                | DeclKind.BV_ULE
+                | DeclKind.BV_UGT
+                | DeclKind.BV_UGE
+                | DeclKind.BV_SLT
+                | DeclKind.BV_SLE
+                | DeclKind.BV_SGT
+                | DeclKind.BV_SGE
+                | DeclKind.BV_CONCAT
+                | DeclKind.BV_EXTRACT
+                | DeclKind.BV_ZERO_EXT
+                | DeclKind.BV_SIGN_EXT
+                | DeclKind.BV_ROTATE_LEFT
+                | DeclKind.BV_ROTATE_RIGHT
+                | DeclKind.BV_REPEAT
+            ):
+                memo[node] = ctx.mk_app(node.decl, *args)
             case DeclKind.UNINTERPRETED:
                 memo[node] = ctx.mk_app(node.decl, *args)
 
