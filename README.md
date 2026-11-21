@@ -5,6 +5,7 @@ A Z3-inspired SMT solver in Python.
 ## Documentation
 
 - [Architecture & Module Layout](docs/architecture.md)
+- [Design & Roadmap](docs/roadmap.md)
 
 ## Development
 

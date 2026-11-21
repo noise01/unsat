@@ -1,6 +1,11 @@
-"""Allow running the CLI via ``python -m unsat``."""
+"""Allow running the CLI via ``python -m unsat``.
+
+Delegates exclusively to ``unsat.cli:main``.
+
+Depends on: ``cli``.
+"""
 
 from unsat.cli import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,7 +1,7 @@
 [project]
 name = "unsat"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Z3-inspired SMT solver in Python"
 readme = "README.md"
 authors = [
     { name = "noise01", email = "noisecode.01@gmail.com" }
@@ -25,10 +25,17 @@ dev = [
     "ruff>=0.17.6",
     "rumdl>=0.3.5",
     "ty>=0.0.107",
+    "z3-solver>=4.13",
 ]
 
 [tool.pytest.ini_options]
 timeout = 30
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT"]
 
 [tool.importlinter]
 root_package = "unsat"
@@ -41,8 +48,7 @@ exhaustive = true
 layers = [
     "__main__",
     "cli",
-    "parser",
-    "api",
+    "parser | api",
     "smt",
     "quantifiers",
     "theories | tactics",
@@ -68,26 +74,52 @@ ignore_imports = ["unsat -> unsat.api"]
 unmatched_ignore_imports_alerting = "none"
 
 [[tool.importlinter.contracts]]
+name = "Main entry point delegates exclusively to cli"
+type = "forbidden"
+source_modules = ["unsat.__main__"]
+forbidden_modules = [
+    "unsat.parser",
+    "unsat.api",
+    "unsat.smt",
+    "unsat.quantifiers",
+    "unsat.theories",
+    "unsat.tactics",
+    "unsat.model",
+    "unsat.syntax",
+    "unsat.sat",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "CLI accesses solver internals through parser, smt and sat"
+type = "forbidden"
+source_modules = ["unsat.cli"]
+forbidden_modules = [
+    "unsat.api",
+    "unsat.quantifiers",
+    "unsat.theories",
+    "unsat.tactics",
+    "unsat.model",
+    "unsat.syntax",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Parser accesses solver internals through smt, sat, model and syntax"
+type = "forbidden"
+source_modules = ["unsat.parser"]
+forbidden_modules = [
+    "unsat.quantifiers",
+    "unsat.theories",
+    "unsat.tactics",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
 name = "API accesses solver internals through smt"
 type = "forbidden"
 source_modules = ["unsat.api"]
 forbidden_modules = ["unsat.sat", "unsat.quantifiers", "unsat.theories", "unsat.tactics"]
-allow_indirect_imports = true
-
-[[tool.importlinter.contracts]]
-name = "Parser accesses model and theory internals through its frontends"
-type = "forbidden"
-source_modules = ["unsat.parser"]
-forbidden_modules = ["unsat.model", "unsat.quantifiers", "unsat.theories", "unsat.tactics"]
-allow_indirect_imports = true
-
-[[tool.importlinter.contracts]]
-name = "CLI entry points access solver internals through parser, smt and sat"
-type = "forbidden"
-source_modules = ["unsat.cli", "unsat.__main__"]
-forbidden_modules = [
-    "unsat.api", "unsat.syntax", "unsat.model", "unsat.quantifiers", "unsat.theories", "unsat.tactics",
-]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
