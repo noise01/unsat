@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 
 from unsat.model import IdentityModelConverter
-from unsat.syntax import App, Const, DeclKind, Expr, iter_subexprs
+from unsat.syntax import App, BoundVar, Const, DeclKind, Expr, Quantifier, iter_subexprs
 from unsat.tactics.base import TacticResult
 
 
@@ -21,7 +21,18 @@ def simplify(expr: Expr) -> Expr:
     memo: dict[Expr, Expr] = {}
 
     for node in iter_subexprs(expr):
-        if isinstance(node, Const) or not isinstance(node, App):
+        if isinstance(node, Quantifier):
+            new_body = memo[node.body]
+            new_pats = tuple(tuple(memo[term] for term in pat) for pat in node.patterns)
+            memo[node] = ctx.mk_quantifier(
+                node.is_forall,
+                node.var_names,
+                node.var_sorts,
+                new_body,
+                patterns=new_pats,
+            )
+            continue
+        if isinstance(node, (Const, BoundVar)) or not isinstance(node, App):
             memo[node] = node
             continue
 

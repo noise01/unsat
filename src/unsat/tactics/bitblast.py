@@ -11,11 +11,13 @@ from collections.abc import Callable, Sequence
 from unsat.model import IdentityModelConverter, Model
 from unsat.syntax import (
     App,
+    BoundVar,
     Const,
     Context,
     DeclKind,
     Expr,
     FuncDecl,
+    Quantifier,
     collect_func_decls,
     iter_subexprs,
 )
@@ -345,7 +347,22 @@ def bv_simplify(expr: Expr) -> Expr:
     memo: dict[Expr, Expr] = {}
 
     for node in iter_subexprs(expr):
-        if isinstance(node, Const) or not isinstance(node, App) or node.is_const_symbol:
+        if isinstance(node, Quantifier):
+            new_body = memo[node.body]
+            new_pats = tuple(tuple(memo[term] for term in pat) for pat in node.patterns)
+            memo[node] = ctx.mk_quantifier(
+                node.is_forall,
+                node.var_names,
+                node.var_sorts,
+                new_body,
+                patterns=new_pats,
+            )
+            continue
+        if (
+            isinstance(node, (Const, BoundVar))
+            or not isinstance(node, App)
+            or node.is_const_symbol
+        ):
             memo[node] = node
             continue
 

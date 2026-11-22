@@ -420,6 +420,49 @@ class EUFSolver:
             raise ValueError(msg)
         return self._explain_eq(lhs_id, rhs_id)
 
+    def eclasses(self) -> list[Expr]:
+        """Return the canonical representative ``Expr`` of each current E-class."""
+        self._drain()
+        return [
+            self._id_to_expr[nid]
+            for nid in range(len(self._id_to_expr))
+            if self._rep[nid] == nid
+        ]
+
+    def eclass_members(self, term: Expr) -> tuple[Expr, ...]:
+        """Return all registered members in ``term``'s current E-class."""
+        self._check_expr(term)
+        self._drain()
+        nid = self._expr_to_id.get(term)
+        if nid is None:
+            return (term,)
+        root = self._rep[nid]
+        return tuple(self._id_to_expr[mid] for mid in self._class_members[root])
+
+    def apps_by_decl(self, decl: FuncDecl) -> list[App]:
+        """Return all registered ``App`` terms whose declaration is ``decl``."""
+        if decl.ctx is not self._ctx:
+            msg = f"FuncDecl '{decl}' belongs to a different Context"
+            raise ValueError(msg)
+        self._drain()
+        return [
+            expr
+            for expr in self._id_to_expr
+            if isinstance(expr, App) and expr.decl is decl
+        ]
+
+    def terms_of_sort(self, sort: Sort) -> list[Expr]:
+        """Return canonical E-class representatives of sort ``sort``."""
+        if sort.ctx is not self._ctx:
+            msg = f"Sort '{sort}' belongs to a different Context"
+            raise ValueError(msg)
+        self._drain()
+        return [
+            self._id_to_expr[nid]
+            for nid in range(len(self._id_to_expr))
+            if self._rep[nid] == nid and self._id_to_expr[nid].sort is sort
+        ]
+
     def _assign_root_values(
         self,
         external_values: Mapping[Expr, Expr] | None = None,

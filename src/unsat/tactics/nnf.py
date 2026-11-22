@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 
 from unsat.model import IdentityModelConverter
-from unsat.syntax import App, Const, DeclKind, Expr
+from unsat.syntax import App, BoundVar, Const, DeclKind, Expr, Quantifier
 from unsat.tactics.base import TacticResult
 
 
@@ -26,6 +26,33 @@ def to_nnf(expr: Expr) -> Expr:
         if isinstance(node, Const):
             val = bool(node.value)
             memo[key] = ctx.mk_bool_val((not val) if neg else val)
+            continue
+
+        if isinstance(node, BoundVar):
+            memo[key] = ctx.mk_not(node) if neg else node
+            continue
+
+        if isinstance(node, Quantifier):
+            if not expanded:
+                if (node.body, neg) in memo:
+                    memo[key] = ctx.mk_quantifier(
+                        node.is_forall ^ neg,
+                        node.var_names,
+                        node.var_sorts,
+                        memo[(node.body, neg)],
+                        patterns=node.patterns,
+                    )
+                else:
+                    stack.append((node, neg, True))
+                    stack.append((node.body, neg, False))
+            else:
+                memo[key] = ctx.mk_quantifier(
+                    node.is_forall ^ neg,
+                    node.var_names,
+                    node.var_sorts,
+                    memo[(node.body, neg)],
+                    patterns=node.patterns,
+                )
             continue
 
         if not isinstance(node, App):

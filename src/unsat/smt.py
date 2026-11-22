@@ -11,7 +11,14 @@ Depends on: ``syntax``, ``sat``, ``theories``, ``tactics``, ``quantifiers``, ``m
 
 from collections.abc import Callable, Sequence
 
-from unsat.model import Model, Value
+from unsat.model import Model, ProjectionModelConverter, Value
+from unsat.quantifiers import (
+    EMatcher,
+    MBQIEngine,
+    QuantifierBudget,
+    QuantifierStats,
+    SubSolverStatus,
+)
 from unsat.sat import (
     Lit,
     SATSolver,
@@ -20,8 +27,20 @@ from unsat.sat import (
     negate,
     pos_lit,
 )
-from unsat.syntax import App, Const, Context, DeclKind, Expr, FuncDecl, Sort
-from unsat.tactics import BitBlaster, bv_simplify, simplify
+from unsat.syntax import (
+    App,
+    Const,
+    Context,
+    DeclKind,
+    Expr,
+    FuncDecl,
+    Quantifier,
+    Sort,
+    collect_func_decls,
+    instantiate_quantifier,
+    iter_subexprs,
+)
+from unsat.tactics import BitBlaster, bv_simplify, simplify, skolemize
 from unsat.theories import (
     ArraySolver,
     EUFSolver,
@@ -561,6 +580,123 @@ class _PlaistedGreenbaumEncoder:
         self._true_lit: Lit | None = None
         self._first_lit: Lit | None = None
         self._clause_sink: list[list[Lit]] | None = None
+        self._reserved_names: set[str] = set()
+        self._skolem_decls: set[FuncDecl] = set()
+        self._skolem_seq: int = 0
+        self._universal_entries: list[tuple[Lit, Quantifier, set[Lit | None]]] = []
+        self._encoding_quant_stack: list[Quantifier] = []
+        self._quant_to_entry_indices: dict[Quantifier, list[int]] = {}
+
+    @property
+    def internal_decls(self) -> frozenset[FuncDecl]:
+        """Skolem declarations synthesized during quantifier encoding."""
+        return frozenset(self._skolem_decls)
+
+    @property
+    def universal_entries(
+        self,
+    ) -> tuple[tuple[Lit, Quantifier, set[Lit | None]], ...]:
+        """Guarded universal quantifiers ``(active_lit, norm_q, owner_lits)``."""
+        return tuple(self._universal_entries)
+
+    def mark_quantifier_owners(self, expr: Expr, owner: Lit | None) -> None:
+        """Associate ``owner`` (``None`` for top-level) with quantifiers in ``expr``."""
+        for node in iter_subexprs(expr):
+            if isinstance(node, Quantifier):
+                for idx in self._quant_to_entry_indices.get(node, ()):
+                    self._universal_entries[idx][2].add(owner)
+
+    def record_reserved(self, expr: Expr) -> None:
+        """Record user declaration names in ``expr`` to avoid Skolem collisions."""
+        for decl in collect_func_decls(expr):
+            self._reserved_names.add(decl.name)
+
+    def _alloc_skolem_const(self, sort: Sort) -> App:
+        while True:
+            name = f"__sk!{self._skolem_seq}"
+            self._skolem_seq += 1
+            if name not in self._reserved_names:
+                self._reserved_names.add(name)
+                app = self._ctx.mk_const(name, sort)
+                self._skolem_decls.add(app.decl)
+                return app
+
+    def _emit_existential_witness(
+        self, guard_cond_lit: Lit, node: Quantifier, *, negate_body: bool
+    ) -> None:
+        sk_consts = tuple(self._alloc_skolem_const(s) for s in node.var_sorts)
+        inst = instantiate_quantifier(node, sk_consts)
+        target = self._ctx.mk_not(inst) if negate_body else inst
+        simp = bv_simplify(simplify(target))
+        if simp is self._ctx.true_expr:
+            return
+        if simp is self._ctx.false_expr:
+            self._emit_clause([guard_cond_lit])
+            return
+        lit_w = self.encode(simp, polarity=1)
+        self._emit_clause([guard_cond_lit, lit_w])
+
+    def _register_universal_branch(self, active_lit: Lit, u_q: Quantifier) -> None:
+        sk_expr, sk_decls = skolemize(u_q, reserved_names=self._reserved_names)
+        for decl in sk_decls:
+            self._skolem_decls.add(decl)
+            self._reserved_names.add(decl.name)
+        conjuncts = (
+            sk_expr.args
+            if isinstance(sk_expr, App) and sk_expr.decl.kind is DeclKind.AND
+            else (sk_expr,)
+        )
+        for conj in conjuncts:
+            if isinstance(conj, Quantifier) and conj.is_forall:
+                idx = len(self._universal_entries)
+                self._universal_entries.append((active_lit, conj, set()))
+                for anc in self._encoding_quant_stack:
+                    self._quant_to_entry_indices.setdefault(anc, []).append(idx)
+            elif conj is self._ctx.true_expr:
+                continue
+            elif conj is self._ctx.false_expr:
+                self._emit_clause([negate(active_lit)])
+            else:
+                lit_c = self.encode(conj, polarity=1)
+                self._emit_clause([negate(active_lit), lit_c])
+
+    def _encode_quantifier(self, node: Quantifier, pol: int) -> None:
+        emit_pos = pol >= 0 and node not in self._pos_encoded
+        emit_neg = pol <= 0 and node not in self._neg_encoded
+        if not emit_pos and not emit_neg:
+            return
+        if pol >= 0:
+            self._pos_encoded.add(node)
+        if pol <= 0:
+            self._neg_encoded.add(node)
+
+        q_lit = pos_lit(self.ensure_expr_var(node))
+        self._encoding_quant_stack.append(node)
+        try:
+            if emit_pos:
+                if node.is_forall:
+                    self._register_universal_branch(q_lit, node)
+                else:
+                    self._emit_existential_witness(
+                        negate(q_lit), node, negate_body=False
+                    )
+            if emit_neg:
+                if node.is_forall:
+                    self._emit_existential_witness(q_lit, node, negate_body=True)
+                else:
+                    u_q = self._ctx.mk_quantifier(
+                        True,
+                        node.var_names,
+                        node.var_sorts,
+                        self._ctx.mk_not(node.body),
+                        patterns=node.patterns,
+                    )
+                    if isinstance(u_q, Quantifier):
+                        self._register_universal_branch(negate(q_lit), u_q)
+                    elif u_q is self._ctx.false_expr:
+                        self._emit_clause([q_lit])
+        finally:
+            self._encoding_quant_stack.pop()
 
     @property
     def decl_to_var(self) -> dict[FuncDecl, Var]:
@@ -642,6 +778,11 @@ class _PlaistedGreenbaumEncoder:
                         self._prop.add_shared_bv_term(node)
                 else:
                     self._terms_non_euf.add(node)
+                continue
+
+            if isinstance(node, Quantifier):
+                self._terms_euf.add(node)
+                bool_args.append(node)
                 continue
 
             if not isinstance(node, App):
@@ -935,6 +1076,10 @@ class _PlaistedGreenbaumEncoder:
                 self._neg_encoded.add(node)
                 continue
 
+            if isinstance(node, Quantifier):
+                self._encode_quantifier(node, pol)
+                continue
+
             if not isinstance(node, App):
                 msg = f"Unsupported AST node in Tseitin encoder: {node!r}"
                 raise TypeError(msg)
@@ -1035,16 +1180,59 @@ class _PlaistedGreenbaumEncoder:
         return self._get_lit(expr)
 
 
-class SMTSolver:
-    """Incremental CDCL(T) SMT solver over a specific :class:`Context`."""
+class _GroundSubSolver:
+    """Injected quantifier-free sub-solver callback for MBQI verification."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+
+    def check_formula(
+        self, formulas: Sequence[Expr]
+    ) -> tuple[SubSolverStatus, Model | None]:
+        solver = SMTSolver(self._ctx)
+        solver.add(*formulas)
+        res = solver.check()
+        if res is SolveResult.SAT:
+            return SubSolverStatus.SAT, solver.model()
+        if res is SolveResult.UNSAT:
+            return SubSolverStatus.UNSAT, None
+        return SubSolverStatus.UNKNOWN, None
+
+
+class SMTSolver:
+    """Incremental CDCL(T) SMT solver over a specific :class:`Context`."""
+
+    def __init__(
+        self,
+        ctx: Context,
+        *,
+        quantifier_budget: QuantifierBudget | None = None,
+        max_quantifier_rounds: int | None = None,
+        max_quantifier_matches: int | None = None,
+    ) -> None:
+        self._ctx = ctx
+        if quantifier_budget is not None:
+            self._quant_budget = quantifier_budget
+        else:
+            default_b = QuantifierBudget()
+            self._quant_budget = QuantifierBudget(
+                max_rounds=(
+                    default_b.max_rounds
+                    if max_quantifier_rounds is None
+                    else max_quantifier_rounds
+                ),
+                max_matches=(
+                    default_b.max_matches
+                    if max_quantifier_matches is None
+                    else max_quantifier_matches
+                ),
+            )
         self._init_backend()
         self._scope_lits: list[Lit] = []
         self._assertions_by_scope: list[list[Expr]] = [[]]
         self._last_result: SolveResult | None = None
         self._unsat_core: list[Expr] = []
+        self._verified_model: Model | None = None
 
     def _init_backend(self) -> None:
         self._euf = EUFSolver(self._ctx)
@@ -1065,6 +1253,11 @@ class SMTSolver:
             self._propagator,
         )
         self._propagator.attach(self._sat, self._encoder)
+        self._quant_stats = QuantifierStats()
+        self._ematcher = EMatcher()
+        self._mbqi = MBQIEngine()
+        self._encoded_insts: set[tuple[Lit, Expr]] = set()
+        self._verified_model = None
 
     @property
     def ctx(self) -> Context:
@@ -1096,9 +1289,11 @@ class SMTSolver:
     def add(self, *formulas: Expr) -> None:
         """Assert one or more Boolean formulas into the current scope."""
         self._ensure_base_level()
+        self._verified_model = None
         for formula in formulas:
             self._validate_bool_expr(formula)
             self._assertions_by_scope[-1].append(formula)
+            self._encoder.record_reserved(formula)
             simplified = bv_simplify(simplify(formula))
             conjuncts = (
                 simplified.args
@@ -1115,6 +1310,8 @@ class SMTSolver:
                         self._sat.add_clause([negate(self._scope_lits[-1])])
                     continue
                 lit = self._encoder.encode(conjunct, polarity=1)
+                owner = self._scope_lits[-1] if self._scope_lits else None
+                self._encoder.mark_quantifier_owners(conjunct, owner)
                 if not self._scope_lits:
                     self._sat.add_clause([lit])
                 else:
@@ -1128,6 +1325,7 @@ class SMTSolver:
         self._scope_lits.append(act_lit)
         self._assertions_by_scope.append([])
         self._last_result = None
+        self._verified_model = None
 
     def pop(self, levels: int = 1) -> None:
         """Pop ``levels`` incremental scopes, retracting their assertions."""
@@ -1139,7 +1337,9 @@ class SMTSolver:
             act_lit = self._scope_lits.pop()
             self._sat.add_clause([negate(act_lit)])
             self._assertions_by_scope.pop()
+        self._ematcher.clear_emitted()
         self._last_result = None
+        self._verified_model = None
 
     def reset(self) -> None:
         """Reset all assertions, scopes, and learned state."""
@@ -1149,40 +1349,163 @@ class SMTSolver:
         self._last_result = None
         self._unsat_core = []
 
+    def _add_guarded_instantiation(self, guard_lit: Lit, inst_expr: Expr) -> None:
+        simp = bv_simplify(simplify(inst_expr))
+        key = (guard_lit, simp)
+        if key in self._encoded_insts:
+            return
+        self._encoded_insts.add(key)
+        conjuncts = (
+            simp.args
+            if isinstance(simp, App) and simp.decl.kind is DeclKind.AND
+            else (simp,)
+        )
+        for conj in conjuncts:
+            if conj is self._ctx.true_expr:
+                continue
+            if conj is self._ctx.false_expr:
+                self._sat.add_clause([negate(guard_lit)])
+                continue
+            self._encoder.record_reserved(conj)
+            lit_inst = self._encoder.encode(conj, polarity=1)
+            self._encoder.mark_quantifier_owners(conj, None)
+            self._sat.add_clause([negate(guard_lit), lit_inst])
+
     def check(self, *assumptions: Expr) -> SolveResult:
         """Check satisfiability of asserted formulas under ``assumptions``."""
         self._ensure_base_level()
-        self._propagator.reset_check_state()
+        self._verified_model = None
         sat_assumptions = list(self._scope_lits)
         lit_to_exprs: dict[Lit, list[Expr]] = {}
 
         for assumption in assumptions:
             self._validate_bool_expr(assumption)
+            self._encoder.record_reserved(assumption)
             simplified = bv_simplify(simplify(assumption))
             lit = self._encoder.encode(simplified, polarity=1)
+            self._encoder.mark_quantifier_owners(simplified, lit)
             sat_assumptions.append(lit)
             lit_to_exprs.setdefault(lit, []).append(assumption)
 
-        result = self._sat.solve(sat_assumptions)
-        self._last_result = result
-        if result is SolveResult.UNSAT:
-            core: list[Expr] = []
-            for lit in self._sat.unsat_core():
-                mapped = lit_to_exprs.get(lit)
-                if mapped:
-                    core.append(mapped[0])
-            self._unsat_core = list(dict.fromkeys(core))
-        else:
-            self._unsat_core = []
-        return result
+        live_owner_lits: set[Lit | None] = {None, *sat_assumptions}
+        sub_solver = _GroundSubSolver(self._ctx)
+        total_rounds = 0
+        mbqi_rounds = 0
 
-    def model(self) -> Model:
-        """Return a satisfying :class:`Model` from the latest ``check()`` call."""
-        if self._last_result is not SolveResult.SAT:
-            msg = "Model is only available after check() returns SolveResult.SAT"
-            raise ValueError(msg)
+        while True:
+            self._propagator.reset_check_state()
+            result = self._sat.solve(sat_assumptions)
+            if result is SolveResult.UNSAT:
+                self._last_result = SolveResult.UNSAT
+                core: list[Expr] = []
+                for lit in self._sat.unsat_core():
+                    mapped = lit_to_exprs.get(lit)
+                    if mapped:
+                        core.append(mapped[0])
+                self._unsat_core = list(dict.fromkeys(core))
+                return SolveResult.UNSAT
+            if result is SolveResult.UNKNOWN:
+                self._last_result = SolveResult.UNKNOWN
+                self._unsat_core = []
+                return SolveResult.UNKNOWN
+
+            self._unsat_core = []
+            entries = self._encoder.universal_entries
+            if not entries:
+                self._last_result = SolveResult.SAT
+                return SolveResult.SAT
+
+            active_pairs = [
+                (u_lit, norm_q)
+                for u_lit, norm_q, owners in entries
+                if any(ol in live_owner_lits for ol in owners)
+                and self._sat.value(u_lit) is True
+            ]
+            if not active_pairs:
+                self._last_result = SolveResult.SAT
+                return SolveResult.SAT
+
+            q_to_guards: dict[Quantifier, list[Lit]] = {}
+            for u_lit, norm_q in active_pairs:
+                q_to_guards.setdefault(norm_q, []).append(u_lit)
+            active_quants = list(q_to_guards)
+
+            if total_rounds >= self._quant_budget.max_rounds:
+                self._quant_stats.budget_exhausted += 1
+                self._last_result = SolveResult.UNKNOWN
+                return SolveResult.UNKNOWN
+
+            ematch_res = self._ematcher.match_round(
+                self._euf, active_quants, self._quant_budget, self._quant_stats
+            )
+            if ematch_res.instantiations:
+                to_encode: list[tuple[Lit, Expr]] = []
+                for q, _, inst_expr in ematch_res.instantiations:
+                    for guard_lit in q_to_guards[q]:
+                        to_encode.append((guard_lit, inst_expr))
+                self._last_result = SolveResult.SAT
+                self._ensure_base_level()
+                for guard_lit, inst_expr in to_encode:
+                    self._add_guarded_instantiation(guard_lit, inst_expr)
+                total_rounds += 1
+                continue
+
+            if mbqi_rounds >= self._quant_budget.max_mbqi_rounds:
+                self._quant_stats.budget_exhausted += 1
+                self._last_result = SolveResult.UNKNOWN
+                return SolveResult.UNKNOWN
+
+            ground_model = self._build_model(strip_internal=False)
+            mbqi_res = self._mbqi.check_and_refine(
+                active_quants,
+                ground_model,
+                self._euf,
+                sub_solver,
+                self._quant_budget,
+                self._quant_stats,
+                already_emitted=self._ematcher.emitted,
+            )
+            if mbqi_res.verified:
+                if mbqi_res.model is not None:
+                    projector = ProjectionModelConverter(self._all_internal_decls())
+                    self._verified_model = projector.convert(mbqi_res.model)
+                else:
+                    self._verified_model = self._build_model(strip_internal=True)
+                self._last_result = SolveResult.SAT
+                return SolveResult.SAT
+
+            if mbqi_res.instantiations:
+                mbqi_to_encode: list[tuple[Lit, Expr]] = []
+                for q, args, inst_expr in mbqi_res.instantiations:
+                    self._ematcher.record_emitted(q, self._euf, args)
+                    for guard_lit in q_to_guards[q]:
+                        mbqi_to_encode.append((guard_lit, inst_expr))
+                self._last_result = SolveResult.SAT
+                self._ensure_base_level()
+                for guard_lit, inst_expr in mbqi_to_encode:
+                    self._add_guarded_instantiation(guard_lit, inst_expr)
+                mbqi_rounds += 1
+                total_rounds += 1
+                continue
+
+            self._last_result = SolveResult.UNKNOWN
+            return SolveResult.UNKNOWN
+
+    def _all_internal_decls(self) -> frozenset[FuncDecl]:
+        return frozenset(
+            self._bitblaster.internal_decls
+            | self._arrays.internal_decls
+            | self._encoder.internal_decls
+            | self._mbqi.internal_decls
+        )
+
+    def _build_model(self, *, strip_internal: bool) -> Model:
         sat_model = self._sat.model()
-        internal_decls = self._bitblaster.internal_decls | self._arrays.internal_decls
+        internal_decls = (
+            self._all_internal_decls()
+            if strip_internal
+            else (self._bitblaster.internal_decls | self._arrays.internal_decls)
+        )
         lra_conc = self._lra.concrete_values()
         shared_terms = self._propagator.all_shared_arith_terms()
         shared_conc = self._lra.term_values(shared_terms) if shared_terms else {}
@@ -1221,7 +1544,11 @@ class SMTSolver:
             decl: val for decl, val in euf_model.items() if decl not in internal_decls
         }
         for expr, frac in lra_conc.items():
-            if isinstance(expr, App) and expr.is_const_symbol:
+            if (
+                isinstance(expr, App)
+                and expr.is_const_symbol
+                and expr.decl not in internal_decls
+            ):
                 if expr.is_int:
                     assert frac.denominator == 1
                     values[expr.decl] = frac.numerator
@@ -1247,6 +1574,15 @@ class SMTSolver:
         universes = {sort: euf_model.universe(sort) for sort in euf_model.sorts()}
         return Model(self._ctx, values, functions=functions, universes=universes)
 
+    def model(self) -> Model:
+        """Return a satisfying :class:`Model` from the latest ``check()`` call."""
+        if self._last_result is not SolveResult.SAT:
+            msg = "Model is only available after check() returns SolveResult.SAT"
+            raise ValueError(msg)
+        if self._verified_model is not None:
+            return self._verified_model
+        return self._build_model(strip_internal=True)
+
     def unsat_core(self) -> list[Expr]:
         """Return the assumption subset responsible for the last ``UNSAT``."""
         return list(self._unsat_core)
@@ -1256,13 +1592,14 @@ class SMTSolver:
         return [formula for scope in self._assertions_by_scope for formula in scope]
 
     def statistics(self) -> dict[str, int]:
-        """Return merged SAT, EUF, LRA/LIA, and Array search counters."""
+        """Return merged SAT, EUF, LRA/LIA, Array, and Quantifier counters."""
         stats: dict[str, int] = {
             k: v for k, v in self._sat.statistics().items() if isinstance(v, int)
         }
         stats.update(self._euf.stats.to_dict())
         stats.update(self._lra.stats.to_dict())
         stats.update(self._arrays.stats.to_dict())
+        stats.update(self._quant_stats.to_dict())
         return stats
 
 

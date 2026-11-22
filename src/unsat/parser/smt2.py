@@ -9,12 +9,14 @@ from unsat.model import Model, Value
 from unsat.sat import SolveResult
 from unsat.smt import SMTSolver
 from unsat.syntax import (
+    App,
     Const,
     Context,
     Expr,
     FuncDecl,
     Sort,
     SortKind,
+    abstract_vars,
     format_expr,
     format_sort,
     quote_smt2_symbol,
@@ -278,6 +280,23 @@ _SUPPORTED_LOGICS = frozenset(
         "QF_AUFLIA",
         "QF_AUFLRA",
         "QF_AUFLIRA",
+        "UF",
+        "LIA",
+        "LRA",
+        "LIRA",
+        "UFLIA",
+        "UFLRA",
+        "UFLIRA",
+        "BV",
+        "UFBV",
+        "AX",
+        "ABV",
+        "AUFBV",
+        "ALIA",
+        "ALRA",
+        "AUFLIA",
+        "AUFLRA",
+        "AUFLIRA",
         "ALL",
     }
 )
@@ -384,6 +403,7 @@ class SMT2Runner:
         self._defs_stack: list[dict[str, Expr]] = [{}]
         self._declared_order: list[list[FuncDecl]] = [[]]
         self._logic: str | None = None
+        self._qvar_seq = 0
 
     def declared_decls(self) -> list[FuncDecl]:
         """Return currently active declarations in declaration order."""
@@ -707,7 +727,16 @@ class SMT2Runner:
                 if sexpr.name == "false":
                     return self.ctx.mk_false()
                 if sexpr.name.isdigit():
-                    if self._logic in ("QF_LRA", "QF_UFLRA", "QF_ALRA", "QF_AUFLRA"):
+                    if self._logic in (
+                        "QF_LRA",
+                        "QF_UFLRA",
+                        "QF_ALRA",
+                        "QF_AUFLRA",
+                        "LRA",
+                        "UFLRA",
+                        "ALRA",
+                        "AUFLRA",
+                    ):
                         return self.ctx.mk_real_val(sexpr.name)
                     return self.ctx.mk_int_val(int(sexpr.name))
                 if _is_decimal_token(sexpr.name):
@@ -793,6 +822,78 @@ class SMT2Runner:
                 bound[var_sym.name] = self._parse_term(binding[1], local_env)
             merged_env = {**local_env, **bound}
             return self._parse_term(args[1], merged_env)
+
+        if op in ("forall", "exists"):
+            if len(args) != 2 or not isinstance(args[0], tuple) or not args[0]:
+                msg = f"{op} expects ((<var> <sort>)+) <term>"
+                raise ValueError(msg)
+            q_bound: dict[str, Expr] = {}
+            var_names: list[str] = []
+            var_sorts: list[Sort] = []
+            placeholders: list[App] = []
+            for binding in args[0]:
+                if not isinstance(binding, tuple) or len(binding) != 2:
+                    msg = f"Malformed {op} binder {binding!r}"
+                    raise ValueError(msg)
+                var_sym = self._expect_symbol(binding[0], f"{op} binder variable")
+                if var_sym.name in q_bound:
+                    msg = f"Duplicate bound variable {var_sym.name!r} in {op}"
+                    raise ValueError(msg)
+                sort = self._resolve_sort(binding[1], f"{op} binder sort")
+                while True:
+                    self._qvar_seq += 1
+                    ph_name = f"__smt2_qvar!{self._qvar_seq}"
+                    if self._lookup_decl(ph_name) is None:
+                        break
+                placeholder = self.ctx.mk_const(ph_name, sort)
+                q_bound[var_sym.name] = placeholder
+                var_names.append(var_sym.name)
+                var_sorts.append(sort)
+                placeholders.append(placeholder)
+
+            body_sexpr: SExpr = args[1]
+            raw_patterns: list[tuple[SExpr, ...]] = []
+            while (
+                isinstance(body_sexpr, tuple)
+                and body_sexpr
+                and isinstance(body_sexpr[0], _Symbol)
+                and not body_sexpr[0].quoted
+                and body_sexpr[0].name == "!"
+            ):
+                ann_args = body_sexpr[1:]
+                if len(ann_args) < 3 or len(ann_args) % 2 == 0:
+                    msg = "Attribute term '(! <term> :kw <val> ...)' is malformed"
+                    raise ValueError(msg)
+                for idx in range(1, len(ann_args), 2):
+                    kw = ann_args[idx]
+                    if not isinstance(kw, _Keyword):
+                        msg = f"Expected attribute keyword in '!', got {kw!r}"
+                        raise ValueError(msg)
+                    if kw.name == ":pattern":
+                        pat_val = ann_args[idx + 1]
+                        if not isinstance(pat_val, tuple) or not pat_val:
+                            msg = "Expected non-empty term list after :pattern"
+                            raise ValueError(msg)
+                        raw_patterns.append(pat_val)
+                body_sexpr = ann_args[0]
+
+            merged_env = {**local_env, **q_bound}
+            raw_body = self._parse_term(body_sexpr, merged_env)
+            abs_body = abstract_vars(raw_body, placeholders)
+            abs_patterns = tuple(
+                tuple(
+                    abstract_vars(self._parse_term(t, merged_env), placeholders)
+                    for t in pat
+                )
+                for pat in raw_patterns
+            )
+            return self.ctx.mk_quantifier(
+                op == "forall",
+                var_names,
+                var_sorts,
+                abs_body,
+                patterns=abs_patterns,
+            )
 
         parsed = [self._parse_term(arg, local_env) for arg in args]
         match op:

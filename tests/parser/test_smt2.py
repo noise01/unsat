@@ -329,3 +329,49 @@ def test_smt2_qf_bv_qf_ax_and_qf_auflia() -> None:
     (check-sat)
     """
     assert run_smt2(auflia_script) == ["unsat"]
+
+
+def test_smt2_quantifiers_uf_lia_patterns_and_let_capture() -> None:
+    uf_script = """
+    (set-logic UF)
+    (declare-sort U 0)
+    (declare-fun f (U) U)
+    (declare-fun g (U) U)
+    (declare-fun P (U) Bool)
+    (declare-const a U)
+    (declare-const c U)
+    (declare-const d U)
+    (assert (forall ((x U)) (! (P (f (g x))) :pattern ((f (g x))))))
+    (assert (= (g a) c))
+    (assert (= (f c) d))
+    (assert (not (P d)))
+    (check-sat)
+    """
+    assert run_smt2(uf_script) == ["unsat"]
+
+    lia_script = """
+    (set-logic LIA)
+    (assert (exists ((x Int)) (forall ((y Int)) (=> (>= y 0) (>= y x)))))
+    (check-sat)
+    (get-model)
+    (reset)
+    (set-logic UFLIA)
+    (declare-fun f (Int) Int)
+    (assert (forall ((x Int)) (= (f x) (+ x 1))))
+    (check-sat)
+    """
+    lia_out = run_smt2(lia_script)
+    assert lia_out[0] == "sat"
+    assert lia_out[1] == "()"
+    assert lia_out[2] == "unknown"
+
+    capture_script = """
+    (set-logic LIA)
+    (declare-const x Int)
+    (assert (= x 5))
+    (assert (not (let ((t x)) (forall ((x Int)) (= t x)))))
+    (check-sat)
+    (assert (let ((t x)) (forall ((x Int)) (= t x))))
+    (check-sat)
+    """
+    assert run_smt2(capture_script) == ["sat", "unsat"]

@@ -69,6 +69,7 @@ def test_expected_m2_modules_are_covered() -> None:
         "unsat.api",
         "unsat.model",
         "unsat.parser",
+        "unsat.quantifiers",
         "unsat.sat",
         "unsat.smt",
         "unsat.syntax",

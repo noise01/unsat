@@ -590,6 +590,134 @@ class App(Expr):
         return f"({self.decl.name} {args_str})"
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class BoundVar(Expr):
+    """De Bruijn indexed bound variable inside a :class:`Quantifier`."""
+
+    index: int
+
+    def __str__(self) -> str:
+        return f"(:var {self.index})"
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Quantifier(Expr):
+    """Universally (``forall``) or existentially (``exists``) quantified formula."""
+
+    is_forall: bool
+    var_names: tuple[str, ...]
+    var_sorts: tuple[Sort, ...]
+    body: Expr
+    patterns: tuple[tuple[Expr, ...], ...] = ()
+
+    @property
+    def is_exists(self) -> bool:
+        """Whether this quantifier is an existential (``exists``) binder."""
+        return not self.is_forall
+
+    @property
+    def num_vars(self) -> int:
+        """Number of variables bound by this quantifier."""
+        return len(self.var_sorts)
+
+    @property
+    def children(self) -> tuple[Expr, ...]:
+        """Body followed by all pattern terms referenced by this quantifier."""
+        return (self.body, *(term for pat in self.patterns for term in pat))
+
+    def __str__(self) -> str:
+        kw = "ForAll" if self.is_forall else "Exists"
+        binders = ", ".join(
+            f"{name}: {sort}"
+            for name, sort in zip(self.var_names, self.var_sorts, strict=True)
+        )
+        if not self.patterns:
+            return f"{kw}([{binders}], {self.body})"
+        pats = ", ".join(
+            f"({', '.join(str(t) for t in pat)})" if len(pat) > 1 else str(pat[0])
+            for pat in self.patterns
+        )
+        return f"{kw}([{binders}], {self.body}, patterns=[{pats}])"
+
+
+def _abstract_vars_impl(
+    ctx: Context,
+    expr: Expr,
+    vars_to_bind: Sequence[App],
+) -> Expr:
+    if not vars_to_bind:
+        return expr
+    k = len(vars_to_bind)
+    slot_map: dict[Expr, int] = {v: k - 1 - i for i, v in enumerate(vars_to_bind)}
+    memo: dict[tuple[Expr, int], Expr] = {}
+    stack: list[tuple[Expr, int, bool]] = [(expr, 0, False)]
+
+    while stack:
+        node, depth, expanded = stack.pop()
+        key = (node, depth)
+        if key in memo:
+            continue
+        if isinstance(node, Const):
+            memo[key] = node
+            continue
+        if isinstance(node, BoundVar):
+            memo[key] = (
+                node
+                if node.index < depth
+                else ctx.mk_bound_var(node.index + k, node.sort)
+            )
+            continue
+        if isinstance(node, App):
+            slot = slot_map.get(node)
+            if slot is not None:
+                memo[key] = ctx.mk_bound_var(depth + slot, node.sort)
+                continue
+            if not node.args:
+                memo[key] = node
+                continue
+            if not expanded:
+                stack.append((node, depth, True))
+                for arg in reversed(node.args):
+                    if (arg, depth) not in memo:
+                        stack.append((arg, depth, False))
+                continue
+            new_args = [memo[(arg, depth)] for arg in node.args]
+            if all(n is o for n, o in zip(new_args, node.args, strict=True)):
+                memo[key] = node
+            else:
+                memo[key] = ctx.mk_app(node.decl, *new_args)
+            continue
+        if isinstance(node, Quantifier):
+            cdepth = depth + node.num_vars
+            if not expanded:
+                stack.append((node, depth, True))
+                for pat in reversed(node.patterns):
+                    for term in reversed(pat):
+                        if (term, cdepth) not in memo:
+                            stack.append((term, cdepth, False))
+                if (node.body, cdepth) not in memo:
+                    stack.append((node.body, cdepth, False))
+                continue
+            new_body = memo[(node.body, cdepth)]
+            new_pats = tuple(
+                tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns
+            )
+            if new_body is node.body and new_pats == node.patterns:
+                memo[key] = node
+            else:
+                memo[key] = ctx.mk_quantifier(
+                    node.is_forall,
+                    node.var_names,
+                    node.var_sorts,
+                    new_body,
+                    patterns=new_pats,
+                )
+            continue
+        memo[key] = node
+
+    return memo[(expr, 0)]
+
+
 def _is_not_of(candidate: Expr, target: Expr) -> bool:
     return (
         isinstance(candidate, App)
@@ -613,6 +741,19 @@ class Context:
         self._exprs: weakref.WeakValueDictionary[tuple[object, ...], Expr] = (
             weakref.WeakValueDictionary()
         )
+        self._bound_vars: weakref.WeakValueDictionary[tuple[int, int], BoundVar] = (
+            weakref.WeakValueDictionary()
+        )
+        self._quantifiers: weakref.WeakValueDictionary[
+            tuple[
+                bool,
+                tuple[str, ...],
+                tuple[int, ...],
+                int,
+                tuple[tuple[int, ...], ...],
+            ],
+            Quantifier,
+        ] = weakref.WeakValueDictionary()
 
         # Keep strong references to built-in sorts & Boolean singletons.
         self.bool_sort = self._intern_sort(SortKind.BOOL, "Bool")
@@ -2095,3 +2236,161 @@ class Context:
             arr_sort,
         )
         return self._intern_app(decl, (value,))
+
+    # ------------------------------------------------------------------
+    # Quantifier constructors
+    # ------------------------------------------------------------------
+
+    def mk_bound_var(self, index: int, sort: Sort) -> BoundVar:
+        """Create or retrieve a hash-consed De Bruijn bound variable."""
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            msg = f"BoundVar index must be a non-negative int, got {index!r}"
+            raise ValueError(msg)
+        self._check_sort(sort)
+        key = (index, sort.id)
+        existing = self._bound_vars.get(key)
+        if existing is not None:
+            return existing
+        bvar = BoundVar(self._alloc_id(), self, sort, index)
+        self._bound_vars[key] = bvar
+        return bvar
+
+    def mk_quantifier(
+        self,
+        is_forall: bool,
+        var_names: Sequence[str],
+        var_sorts: Sequence[Sort],
+        body: Expr,
+        *,
+        patterns: Sequence[Sequence[Expr]] = (),
+    ) -> Expr:
+        """Create or retrieve a hash-consed quantifier with explicit De Bruijn body."""
+        if not var_sorts:
+            msg = "Quantifier must bind at least one variable"
+            raise ValueError(msg)
+        if len(var_names) != len(var_sorts):
+            msg = (
+                f"Quantifier name/sort count mismatch: "
+                f"{len(var_names)} names vs {len(var_sorts)} sorts"
+            )
+            raise ValueError(msg)
+        for name in var_names:
+            if not name:
+                msg = "Bound variable name cannot be empty"
+                raise ValueError(msg)
+        for sort in var_sorts:
+            self._check_sort(sort)
+        self._check_bool(body)
+
+        norm_patterns: list[tuple[Expr, ...]] = []
+        for pat in patterns:
+            if not pat:
+                msg = "Quantifier pattern cannot be empty"
+                raise ValueError(msg)
+            for term in pat:
+                self._check_expr(term)
+            norm_patterns.append(tuple(pat))
+
+        if isinstance(body, Const):
+            return body
+
+        names_t = tuple(var_names)
+        sorts_t = tuple(var_sorts)
+        pats_t = tuple(norm_patterns)
+        key = (
+            is_forall,
+            names_t,
+            tuple(sort.id for sort in sorts_t),
+            body.id,
+            tuple(tuple(term.id for term in pat) for pat in pats_t),
+        )
+        existing = self._quantifiers.get(key)
+        if existing is not None:
+            return existing
+        quant = Quantifier(
+            self._alloc_id(),
+            self,
+            self.bool_sort,
+            is_forall,
+            names_t,
+            sorts_t,
+            body,
+            pats_t,
+        )
+        self._quantifiers[key] = quant
+        return quant
+
+    def _mk_binder(
+        self,
+        is_forall: bool,
+        bound_vars: Sequence[Expr],
+        body: Expr,
+        patterns: Sequence[Expr | Sequence[Expr]] = (),
+    ) -> Expr:
+        if not bound_vars:
+            msg = "Quantifier must bind at least one variable"
+            raise ValueError(msg)
+        seen_decls: set[FuncDecl] = set()
+        bound_apps: list[App] = []
+        var_names: list[str] = []
+        var_sorts: list[Sort] = []
+        for var in bound_vars:
+            self._check_expr(var)
+            if not isinstance(var, App) or not var.is_const_symbol:
+                msg = (
+                    f"Bound quantifier variable must be a 0-arity constant, got '{var}'"
+                )
+                raise TypeError(msg)
+            if var.decl in seen_decls:
+                msg = f"Duplicate bound variable '{var.name}' in quantifier binder"
+                raise ValueError(msg)
+            seen_decls.add(var.decl)
+            bound_apps.append(var)
+            var_names.append(var.name)
+            var_sorts.append(var.sort)
+
+        self._check_bool(body)
+        norm_pats: list[tuple[Expr, ...]] = []
+        for item in patterns:
+            if isinstance(item, Expr):
+                self._check_expr(item)
+                norm_pats.append((item,))
+            else:
+                if not item:
+                    msg = "Quantifier pattern cannot be empty"
+                    raise ValueError(msg)
+                for term in item:
+                    self._check_expr(term)
+                norm_pats.append(tuple(item))
+
+        if isinstance(body, Const):
+            return body
+
+        abs_body = _abstract_vars_impl(self, body, bound_apps)
+        abs_pats = tuple(
+            tuple(_abstract_vars_impl(self, term, bound_apps) for term in pat)
+            for pat in norm_pats
+        )
+        return self.mk_quantifier(
+            is_forall, var_names, var_sorts, abs_body, patterns=abs_pats
+        )
+
+    def mk_forall(
+        self,
+        bound_vars: Sequence[Expr],
+        body: Expr,
+        *,
+        patterns: Sequence[Expr | Sequence[Expr]] = (),
+    ) -> Expr:
+        """Bind ``bound_vars`` universally across ``body`` and optional ``patterns``."""
+        return self._mk_binder(True, bound_vars, body, patterns)
+
+    def mk_exists(
+        self,
+        bound_vars: Sequence[Expr],
+        body: Expr,
+        *,
+        patterns: Sequence[Expr | Sequence[Expr]] = (),
+    ) -> Expr:
+        """Bind ``bound_vars`` existentially across ``body`` and ``patterns``."""
+        return self._mk_binder(False, bound_vars, body, patterns)

@@ -11,7 +11,7 @@ from fractions import Fraction
 
 from unsat.model import FuncInterp, Model
 from unsat.smt import SMTSolver, SolveResult
-from unsat.syntax import App, Const, Context, Expr, FuncDecl, Sort
+from unsat.syntax import App, BoundVar, Const, Context, Expr, FuncDecl, Quantifier, Sort
 
 _default_ctx = Context()
 
@@ -439,11 +439,60 @@ def If(cond: Expr, then_branch: Expr, else_branch: Expr) -> Expr:
     return cond.ctx.mk_ite(cond, then_branch, else_branch)
 
 
+def ForAll(
+    vs: Expr | Sequence[Expr],
+    body: Expr,
+    *,
+    patterns: Sequence[Expr | Sequence[Expr]] = (),
+) -> Expr:
+    """Build a universally quantified formula ``ForAll(vs, body)``."""
+    bound = (vs,) if isinstance(vs, Expr) else tuple(vs)
+    if not bound:
+        return _default_ctx.mk_forall(bound, body, patterns=patterns)
+    return bound[0].ctx.mk_forall(bound, body, patterns=patterns)
+
+
+def Exists(
+    vs: Expr | Sequence[Expr],
+    body: Expr,
+    *,
+    patterns: Sequence[Expr | Sequence[Expr]] = (),
+) -> Expr:
+    """Build an existentially quantified formula ``Exists(vs, body)``."""
+    bound = (vs,) if isinstance(vs, Expr) else tuple(vs)
+    if not bound:
+        return _default_ctx.mk_exists(bound, body, patterns=patterns)
+    return bound[0].ctx.mk_exists(bound, body, patterns=patterns)
+
+
+def MultiPattern(*terms: Expr) -> tuple[Expr, ...]:
+    """Group multiple trigger expressions into one multi-pattern tuple."""
+    if not terms:
+        msg = "MultiPattern requires at least one trigger expression"
+        raise ValueError(msg)
+    ctx = terms[0].ctx
+    for term in terms[1:]:
+        if term.ctx is not ctx:
+            msg = f"Expr '{term}' belongs to a different Context"
+            raise ValueError(msg)
+    return tuple(terms)
+
+
 class Solver:
     """User-facing incremental SMT solver facade."""
 
-    def __init__(self, ctx: Context | None = None) -> None:
-        self._solver = SMTSolver(_resolve_ctx(ctx))
+    def __init__(
+        self,
+        ctx: Context | None = None,
+        *,
+        max_quantifier_rounds: int | None = None,
+        max_quantifier_matches: int | None = None,
+    ) -> None:
+        self._solver = SMTSolver(
+            _resolve_ctx(ctx),
+            max_quantifier_rounds=max_quantifier_rounds,
+            max_quantifier_matches=max_quantifier_matches,
+        )
 
     @property
     def ctx(self) -> Context:
@@ -508,6 +557,7 @@ __all__ = [
     "BoolSort",
     "BoolVal",
     "Bools",
+    "BoundVar",
     "Concat",
     "Const",
     "Constant",
@@ -516,8 +566,10 @@ __all__ = [
     "DeclareSort",
     "Distinct",
     "Eq",
+    "Exists",
     "Expr",
     "Extract",
+    "ForAll",
     "FuncDecl",
     "FuncInterp",
     "Function",
@@ -530,8 +582,10 @@ __all__ = [
     "K",
     "LShR",
     "Model",
+    "MultiPattern",
     "Not",
     "Or",
+    "Quantifier",
     "Real",
     "RealSort",
     "RealVal",

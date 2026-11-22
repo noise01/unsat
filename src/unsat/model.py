@@ -5,19 +5,23 @@ Will promote to a ``model/`` subpackage as implementation grows.
 Depends on: ``syntax``.
 """
 
-from collections.abc import Mapping, Sequence
+import itertools
+from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
 from typing import Protocol
 
 from unsat.syntax import (
     App,
+    BoundVar,
     Const,
     Context,
     DeclKind,
     Expr,
     FuncDecl,
+    Quantifier,
     Sort,
     SortKind,
+    instantiate_quantifier,
     iter_subexprs,
 )
 
@@ -502,6 +506,71 @@ class Model:
         decl = self._resolve_decl(key)
         return self._values.get(decl, default)
 
+    def _finite_domain_elements(
+        self, sort: Sort, *, model_completion: bool
+    ) -> tuple[Expr, ...] | None:
+        kind = sort.kind
+        if kind is SortKind.BOOL:
+            return (self._ctx.false_expr, self._ctx.true_expr)
+        if kind is SortKind.UNINTERPRETED:
+            univ = self._universes.get(sort)
+            if univ:
+                return univ
+            if model_completion:
+                return (self._ctx.mk_domain_val(sort, 0),)
+            return None
+        if kind is SortKind.BITVEC and sort.size <= 6:
+            return tuple(
+                self._ctx.mk_bv_val(i, sort.size) for i in range(1 << sort.size)
+            )
+        return None
+
+    def _eval_quantifier(
+        self,
+        node: Quantifier,
+        memo: dict[Expr, Expr],
+        *,
+        model_completion: bool,
+    ) -> Expr:
+        domains: list[tuple[Expr, ...]] = []
+        total = 1
+        enumerable = True
+        for sort in node.var_sorts:
+            dom = self._finite_domain_elements(sort, model_completion=model_completion)
+            if dom is None or total * len(dom) > 1024:
+                enumerable = False
+                break
+            domains.append(dom)
+            total *= len(dom)
+
+        if enumerable:
+            all_reduced = True
+            for combo in itertools.product(*domains):
+                inst = instantiate_quantifier(node, combo)
+                ev = self.eval(inst, model_completion=model_completion)
+                if node.is_forall:
+                    if ev is self._ctx.false_expr:
+                        return self._ctx.false_expr
+                    if ev is not self._ctx.true_expr:
+                        all_reduced = False
+                else:
+                    if ev is self._ctx.true_expr:
+                        return self._ctx.true_expr
+                    if ev is not self._ctx.false_expr:
+                        all_reduced = False
+            if all_reduced:
+                return self._ctx.mk_bool_val(node.is_forall)
+
+        new_body = memo[node.body]
+        new_pats = tuple(tuple(memo[term] for term in pat) for pat in node.patterns)
+        return self._ctx.mk_quantifier(
+            node.is_forall,
+            node.var_names,
+            node.var_sorts,
+            new_body,
+            patterns=new_pats,
+        )
+
     def eval(self, expr: Expr, *, model_completion: bool = False) -> Expr:
         """Evaluate ``expr`` under this model, returning a simplified ``Expr``."""
         if expr.ctx is not self._ctx:
@@ -510,8 +579,13 @@ class Model:
 
         memo: dict[Expr, Expr] = {}
         for node in iter_subexprs(expr):
-            if isinstance(node, Const):
+            if isinstance(node, (Const, BoundVar)):
                 memo[node] = node
+                continue
+            if isinstance(node, Quantifier):
+                memo[node] = self._eval_quantifier(
+                    node, memo, model_completion=model_completion
+                )
                 continue
             if not isinstance(node, App):
                 memo[node] = node
@@ -743,8 +817,11 @@ class SubstitutionModelConverter:
             if not decl.is_uninterpreted or decl.arity != 0:
                 msg = f"Substituted key must be a 0-arity constant, got '{decl}'"
                 raise ValueError(msg)
-            if not rhs.is_bool:
-                msg = f"Substitution RHS must have Bool sort, got '{rhs.sort}'"
+            if rhs.sort is not decl.range_sort:
+                msg = (
+                    f"Substitution RHS sort '{rhs.sort}' does not match "
+                    f"declaration sort '{decl.range_sort}'"
+                )
                 raise TypeError(msg)
             self._substitutions.append((decl, rhs))
 
@@ -755,7 +832,41 @@ class SubstitutionModelConverter:
         universes = {sort: model.universe(sort) for sort in model.sorts()}
         for decl, rhs in self._substitutions:
             current = Model(model.ctx, values, functions=functions, universes=universes)
-            values[decl] = current.eval_bool(rhs, model_completion=True)
+            val_expr = current.eval(rhs, model_completion=True)
+            if isinstance(val_expr, Const):
+                if decl.range_sort.is_bool:
+                    values[decl] = bool(val_expr.value)
+                elif decl.range_sort.is_int or decl.range_sort.is_bv:
+                    assert isinstance(val_expr.value, int)
+                    assert not isinstance(val_expr.value, bool)
+                    values[decl] = val_expr.value
+                elif decl.range_sort.is_real:
+                    assert isinstance(val_expr.value, Fraction)
+                    values[decl] = val_expr.value
+                else:
+                    values[decl] = val_expr
+            else:
+                values[decl] = val_expr
+        return Model(model.ctx, values, functions=functions, universes=universes)
+
+
+class ProjectionModelConverter:
+    """Removes solver/tactic-introduced internal declarations from a model."""
+
+    def __init__(self, hidden_decls: Iterable[FuncDecl]) -> None:
+        self._hidden = frozenset(hidden_decls)
+
+    def convert(self, model: Model) -> Model:
+        """Return a copy of ``model`` with internal declarations omitted."""
+        if not self._hidden:
+            return model
+        values = {decl: val for decl, val in model.items() if decl not in self._hidden}
+        functions = {
+            decl: model.func_interp(decl)
+            for decl in model.func_decls()
+            if decl not in self._hidden
+        }
+        universes = {sort: model.universe(sort) for sort in model.sorts()}
         return Model(model.ctx, values, functions=functions, universes=universes)
 
 
@@ -779,6 +890,7 @@ __all__ = [
     "IdentityModelConverter",
     "Model",
     "ModelConverter",
+    "ProjectionModelConverter",
     "SubstitutionModelConverter",
     "Value",
 ]
