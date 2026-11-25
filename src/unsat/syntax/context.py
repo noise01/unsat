@@ -7,12 +7,18 @@ from fractions import Fraction
 import unsat.syntax.expr as _expr_mod
 from unsat.syntax.bv_eval import _bv_mask
 from unsat.syntax.context_arith import (
+    build_abs,
     build_add,
     build_arith_cmp,
     build_div,
+    build_divisible,
+    build_idiv,
+    build_is_int,
+    build_mod,
     build_mul,
     build_neg,
     build_sub,
+    build_to_int,
     build_to_real,
 )
 from unsat.syntax.context_bv import (
@@ -395,6 +401,12 @@ class Context:
                 return self.mk_mul(*args)
             case DeclKind.DIV:
                 return self.mk_div(args[0], args[1])
+            case DeclKind.IDIV:
+                return self.mk_idiv(args[0], args[1])
+            case DeclKind.MOD:
+                return self.mk_mod(args[0], args[1])
+            case DeclKind.ABS:
+                return self.mk_abs(args[0])
             case DeclKind.LT:
                 return self.mk_lt(args[0], args[1])
             case DeclKind.LE:
@@ -405,6 +417,12 @@ class Context:
                 return self.mk_ge(args[0], args[1])
             case DeclKind.TO_REAL:
                 return self.mk_to_real(args[0])
+            case DeclKind.TO_INT:
+                return self.mk_to_int(args[0])
+            case DeclKind.IS_INT:
+                return self.mk_is_int(args[0])
+            case DeclKind.DIVISIBLE:
+                return self.mk_divisible(decl.params[0], args[0])
             case DeclKind.BV_NOT:
                 return self.mk_bv_not(args[0])
             case DeclKind.BV_AND:
@@ -690,6 +708,30 @@ class Context:
     def mk_to_real(self, arg: Expr) -> Expr:
         """Convert an ``Int`` expression to ``Real`` via ``to_real``."""
         return build_to_real(self, arg)
+
+    def mk_to_int(self, arg: Expr) -> Expr:
+        """Convert a ``Real`` expression to ``Int`` via ``to_int``."""
+        return build_to_int(self, arg)
+
+    def mk_is_int(self, arg: Expr) -> Expr:
+        """Build integrality predicate ``(is_int arg)``."""
+        return build_is_int(self, arg)
+
+    def mk_abs(self, arg: Expr) -> Expr:
+        """Build integer absolute value ``(abs arg)``."""
+        return build_abs(self, arg)
+
+    def mk_idiv(self, lhs: Expr, rhs: Expr) -> Expr:
+        """Build Euclidean integer division ``(div lhs rhs)``."""
+        return build_idiv(self, lhs, rhs)
+
+    def mk_mod(self, lhs: Expr, rhs: Expr) -> Expr:
+        """Build Euclidean integer remainder ``(mod lhs rhs)``."""
+        return build_mod(self, lhs, rhs)
+
+    def mk_divisible(self, n: int, arg: Expr) -> Expr:
+        """Build divisibility predicate ``((_ divisible n) arg)``."""
+        return build_divisible(self, n, arg)
 
     def mk_neg(self, arg: Expr) -> Expr:
         """Build a normalized arithmetic negation."""

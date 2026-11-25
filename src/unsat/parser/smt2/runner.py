@@ -38,6 +38,12 @@ _SUPPORTED_LOGICS = frozenset(
         "QF_UFLRA",
         "QF_UFLIA",
         "QF_LIRA",
+        "QF_NRA",
+        "QF_NIA",
+        "QF_NIRA",
+        "QF_UFNRA",
+        "QF_UFNIA",
+        "QF_UFNIRA",
         "QF_BV",
         "QF_UFBV",
         "QF_AX",
@@ -45,16 +51,27 @@ _SUPPORTED_LOGICS = frozenset(
         "QF_AUFBV",
         "QF_ALIA",
         "QF_ALRA",
+        "QF_ANRA",
+        "QF_ANIA",
         "QF_AUFLIA",
         "QF_AUFLRA",
         "QF_AUFLIRA",
+        "QF_AUFNRA",
+        "QF_AUFNIA",
+        "QF_AUFNIRA",
         "UF",
         "LIA",
         "LRA",
         "LIRA",
+        "NRA",
+        "NIA",
+        "NIRA",
         "UFLIA",
         "UFLRA",
         "UFLIRA",
+        "UFNRA",
+        "UFNIA",
+        "UFNIRA",
         "BV",
         "UFBV",
         "AX",
@@ -65,6 +82,9 @@ _SUPPORTED_LOGICS = frozenset(
         "AUFLIA",
         "AUFLRA",
         "AUFLIRA",
+        "AUFNRA",
+        "AUFNIA",
+        "AUFNIRA",
         "ALL",
     }
 )
@@ -1028,6 +1048,44 @@ class SMT2Runner:
                     msg = "'to_real' expects 1 argument"
                     raise ValueError(msg)
                 return self.ctx.mk_to_real(parsed[0])
+            case "to_int":
+                if len(parsed) != 1:
+                    msg = "'to_int' expects 1 argument"
+                    raise ValueError(msg)
+                arg = (
+                    self.ctx.mk_to_real(parsed[0])
+                    if isinstance(parsed[0], Const) and parsed[0].is_int
+                    else parsed[0]
+                )
+                return self.ctx.mk_to_int(arg)
+            case "is_int":
+                if len(parsed) != 1:
+                    msg = "'is_int' expects 1 argument"
+                    raise ValueError(msg)
+                arg = (
+                    self.ctx.mk_to_real(parsed[0])
+                    if isinstance(parsed[0], Const) and parsed[0].is_int
+                    else parsed[0]
+                )
+                return self.ctx.mk_is_int(arg)
+            case "abs":
+                if len(parsed) != 1:
+                    msg = "'abs' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_abs(parsed[0])
+            case "div":
+                if len(parsed) < 2:
+                    msg = "'div' expects at least 2 arguments"
+                    raise ValueError(msg)
+                acc = parsed[0]
+                for item in parsed[1:]:
+                    acc = self.ctx.mk_idiv(acc, item)
+                return acc
+            case "mod":
+                if len(parsed) != 2:
+                    msg = "'mod' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_mod(parsed[0], parsed[1])
             case "bvnot":
                 if len(parsed) != 1:
                     msg = "'bvnot' expects 1 argument"
@@ -1270,6 +1328,8 @@ class SMT2Runner:
                 raise ValueError(msg)
             param = self._parse_nonneg_int(head_tuple[2], op_name)
             match op_name:
+                case "divisible":
+                    return self.ctx.mk_divisible(param, arg)
                 case "zero_extend":
                     return self.ctx.mk_zero_ext(param, arg)
                 case "sign_extend":

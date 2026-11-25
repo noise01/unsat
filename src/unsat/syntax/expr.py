@@ -367,12 +367,33 @@ class Expr:
             return NotImplemented
         return self.ctx.mk_div(lhs, self)
 
+    def __floordiv__(self, other: object) -> Expr:
+        if not self.is_int:
+            return NotImplemented
+        rhs = self._coerce_arith(other)
+        if rhs is None:
+            return NotImplemented
+        return self.ctx.mk_idiv(self, rhs)
+
+    def __rfloordiv__(self, other: object) -> Expr:
+        if not self.is_int:
+            return NotImplemented
+        lhs = self._coerce_arith(other)
+        if lhs is None:
+            return NotImplemented
+        return self.ctx.mk_idiv(lhs, self)
+
     def __mod__(self, other: object) -> Expr:
         if self.is_bv:
             rhs = self._coerce_bv(other)
             if rhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_smod(self, rhs)
+        if self.is_int:
+            rhs = self._coerce_arith(other)
+            if rhs is None:
+                return NotImplemented
+            return self.ctx.mk_mod(self, rhs)
         return NotImplemented
 
     def __rmod__(self, other: object) -> Expr:
@@ -381,7 +402,34 @@ class Expr:
             if lhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_smod(lhs, self)
+        if self.is_int:
+            lhs = self._coerce_arith(other)
+            if lhs is None:
+                return NotImplemented
+            return self.ctx.mk_mod(lhs, self)
         return NotImplemented
+
+    def __abs__(self) -> Expr:
+        if self.is_int:
+            return self.ctx.mk_abs(self)
+        msg = f"bad operand type for abs(): '{self.sort}'"
+        raise TypeError(msg)
+
+    def __pow__(self, other: object) -> Expr:
+        if not self.is_arith:
+            return NotImplemented
+        if isinstance(other, bool) or not isinstance(other, int):
+            return NotImplemented
+        if other < 0:
+            msg = (
+                f"Negative exponent is not supported on arithmetic expressions: {other}"
+            )
+            raise ValueError(msg)
+        if other == 0:
+            return self.ctx.mk_int_val(1) if self.is_int else self.ctx.mk_real_val(1)
+        if other == 1:
+            return self
+        return self.ctx.mk_mul(*(self,) * other)
 
     def __lshift__(self, other: object) -> Expr:
         if self.is_bv:

@@ -20,7 +20,7 @@ def test_smt2_lexing_and_parse_errors() -> None:
         '(set-info :note "unterminated)',
         "(assert :",
         "(assert \\)",
-        "(set-logic QF_NRA)",
+        "(set-logic QF_FP)",
         "(declare-sort Foo 1)",
         "(declare-sort Bool 0)",
         "(declare-sort Int 0)",

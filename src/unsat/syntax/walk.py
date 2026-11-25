@@ -69,11 +69,16 @@ _BUILTIN_SMT2_NAMES: dict[DeclKind, str] = {
     DeclKind.SUB: "-",
     DeclKind.MUL: "*",
     DeclKind.DIV: "/",
+    DeclKind.IDIV: "div",
+    DeclKind.MOD: "mod",
+    DeclKind.ABS: "abs",
     DeclKind.LT: "<",
     DeclKind.LE: "<=",
     DeclKind.GT: ">",
     DeclKind.GE: ">=",
     DeclKind.TO_REAL: "to_real",
+    DeclKind.TO_INT: "to_int",
+    DeclKind.IS_INT: "is_int",
     DeclKind.BV_NOT: "bvnot",
     DeclKind.BV_AND: "bvand",
     DeclKind.BV_OR: "bvor",
@@ -266,6 +271,7 @@ def format_expr(expr: Expr) -> str:
                 hi, lo = node.decl.params
                 head = f"(_ extract {hi} {lo})"
             elif kind in (
+                DeclKind.DIVISIBLE,
                 DeclKind.BV_ZERO_EXT,
                 DeclKind.BV_SIGN_EXT,
                 DeclKind.BV_ROTATE_LEFT,

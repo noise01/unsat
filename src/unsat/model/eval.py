@@ -37,11 +37,15 @@ class Model:
         *,
         functions: Mapping[FuncDecl, FuncInterp] | None = None,
         universes: Mapping[Sort, Sequence[Const]] | None = None,
+        div_zero: Mapping[tuple[DeclKind, Const], Const] | None = None,
     ) -> None:
         self._ctx = ctx
         self._values: dict[FuncDecl, Value] = {}
         self._functions: dict[FuncDecl, FuncInterp] = {}
         self._universes: dict[Sort, tuple[Const, ...]] = {}
+        self._div_zero: dict[tuple[DeclKind, Const], Const] = (
+            dict(div_zero) if div_zero is not None else {}
+        )
 
         if values is not None:
             for decl, val in values.items():
@@ -437,8 +441,24 @@ class Model:
                     memo[node] = self._ctx.mk_sub(eval_args[0], eval_args[1])
                 case DeclKind.MUL:
                     memo[node] = self._ctx.mk_mul(*eval_args)
-                case DeclKind.DIV:
-                    memo[node] = self._ctx.mk_div(eval_args[0], eval_args[1])
+                case DeclKind.DIV | DeclKind.IDIV | DeclKind.MOD:
+                    if isinstance(eval_args[1], Const) and eval_args[1].value == 0:
+                        if isinstance(eval_args[0], Const) and _is_concrete_value(
+                            eval_args[0]
+                        ):
+                            mapped = self._div_zero.get((node.decl.kind, eval_args[0]))
+                            if mapped is not None:
+                                memo[node] = mapped
+                            elif model_completion:
+                                memo[node] = self._default_value_expr(node.sort)
+                            else:
+                                memo[node] = self._ctx.mk_app(node.decl, *eval_args)
+                        else:
+                            memo[node] = self._ctx.mk_app(node.decl, *eval_args)
+                    else:
+                        memo[node] = self._ctx.mk_app(node.decl, *eval_args)
+                case DeclKind.ABS:
+                    memo[node] = self._ctx.mk_abs(eval_args[0])
                 case DeclKind.LT:
                     memo[node] = self._ctx.mk_lt(eval_args[0], eval_args[1])
                 case DeclKind.LE:
@@ -449,6 +469,14 @@ class Model:
                     memo[node] = self._ctx.mk_ge(eval_args[0], eval_args[1])
                 case DeclKind.TO_REAL:
                     memo[node] = self._ctx.mk_to_real(eval_args[0])
+                case DeclKind.TO_INT:
+                    memo[node] = self._ctx.mk_to_int(eval_args[0])
+                case DeclKind.IS_INT:
+                    memo[node] = self._ctx.mk_is_int(eval_args[0])
+                case DeclKind.DIVISIBLE:
+                    memo[node] = self._ctx.mk_divisible(
+                        node.decl.params[0], eval_args[0]
+                    )
                 case DeclKind.SELECT:
                     arr_e, idx_e = eval_args
                     if _is_concrete_value(arr_e) and _is_concrete_value(idx_e):

@@ -110,6 +110,12 @@ def simplify(expr: Expr) -> Expr:
                 memo[node] = ctx.mk_mul(*args)
             case DeclKind.DIV:
                 memo[node] = ctx.mk_div(args[0], args[1])
+            case DeclKind.IDIV:
+                memo[node] = ctx.mk_idiv(args[0], args[1])
+            case DeclKind.MOD:
+                memo[node] = ctx.mk_mod(args[0], args[1])
+            case DeclKind.ABS:
+                memo[node] = ctx.mk_abs(args[0])
             case DeclKind.LT:
                 memo[node] = ctx.mk_lt(args[0], args[1])
             case DeclKind.LE:
@@ -120,6 +126,12 @@ def simplify(expr: Expr) -> Expr:
                 memo[node] = ctx.mk_ge(args[0], args[1])
             case DeclKind.TO_REAL:
                 memo[node] = ctx.mk_to_real(args[0])
+            case DeclKind.TO_INT:
+                memo[node] = ctx.mk_to_int(args[0])
+            case DeclKind.IS_INT:
+                memo[node] = ctx.mk_is_int(args[0])
+            case DeclKind.DIVISIBLE:
+                memo[node] = ctx.mk_divisible(node.decl.params[0], args[0])
             case DeclKind.SELECT:
                 memo[node] = ctx.mk_select(args[0], args[1])
             case DeclKind.STORE:

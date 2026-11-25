@@ -1,5 +1,6 @@
 """Arithmetic expression normalization helpers for :class:`Context`."""
 
+import math
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,13 @@ def check_arith_pair(ctx: Context, lhs: Expr, rhs: Expr, op_name: str) -> Sort:
     return sort
 
 
+def _int_div_mod(a: int, b: int) -> tuple[int, int]:
+    """Return SMT-LIB2 Euclidean ``(a div b, a mod b)`` with ``0 <= r < |b|``."""
+    r = a % abs(b)
+    q = (a - r) // b
+    return q, r
+
+
 def build_to_real(ctx: Context, arg: Expr) -> Expr:
     """Convert an ``Int`` expression to ``Real`` via ``to_real``."""
     ctx._check_int(arg)
@@ -37,6 +45,110 @@ def build_to_real(ctx: Context, arg: Expr) -> Expr:
         assert not isinstance(arg.value, bool)
         return ctx.mk_real_val(arg.value)
     decl = ctx._intern_decl(DeclKind.TO_REAL, "to_real", (ctx.int_sort,), ctx.real_sort)
+    return ctx._intern_app(decl, (arg,))
+
+
+def build_to_int(ctx: Context, arg: Expr) -> Expr:
+    """Convert a ``Real`` expression to ``Int`` via ``to_int`` (floor)."""
+    ctx._check_real(arg)
+    if isinstance(arg, Const):
+        assert isinstance(arg.value, Fraction)
+        return ctx.mk_int_val(math.floor(arg.value))
+    if isinstance(arg, App) and arg.decl.kind is DeclKind.TO_REAL:
+        return arg.args[0]
+    decl = ctx._intern_decl(DeclKind.TO_INT, "to_int", (ctx.real_sort,), ctx.int_sort)
+    return ctx._intern_app(decl, (arg,))
+
+
+def build_is_int(ctx: Context, arg: Expr) -> Expr:
+    """Build integrality predicate ``(is_int arg)`` on a ``Real`` expression."""
+    ctx._check_real(arg)
+    if isinstance(arg, Const):
+        assert isinstance(arg.value, Fraction)
+        return ctx.mk_bool_val(arg.value.denominator == 1)
+    if isinstance(arg, App) and arg.decl.kind is DeclKind.TO_REAL:
+        return ctx.true_expr
+    decl = ctx._intern_decl(DeclKind.IS_INT, "is_int", (ctx.real_sort,), ctx.bool_sort)
+    return ctx._intern_app(decl, (arg,))
+
+
+def build_abs(ctx: Context, arg: Expr) -> Expr:
+    """Build absolute value ``(abs arg)`` on an ``Int`` expression."""
+    ctx._check_int(arg)
+    if isinstance(arg, Const):
+        assert isinstance(arg.value, int)
+        assert not isinstance(arg.value, bool)
+        return ctx.mk_int_val(abs(arg.value))
+    if isinstance(arg, App) and arg.decl.kind in (DeclKind.ABS, DeclKind.NEG):
+        inner = arg.args[0]
+        if arg.decl.kind is DeclKind.ABS:
+            return arg
+        return build_abs(ctx, inner)
+    decl = ctx._intern_decl(DeclKind.ABS, "abs", (ctx.int_sort,), ctx.int_sort)
+    return ctx._intern_app(decl, (arg,))
+
+
+def build_idiv(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
+    """Build Euclidean integer division ``(div lhs rhs)``."""
+    ctx._check_int(lhs)
+    ctx._check_int(rhs)
+    if isinstance(rhs, Const):
+        assert isinstance(rhs.value, int)
+        assert not isinstance(rhs.value, bool)
+        if rhs.value == 1:
+            return lhs
+        if rhs.value == -1:
+            return ctx.mk_neg(lhs)
+        if isinstance(lhs, Const) and rhs.value != 0:
+            assert isinstance(lhs.value, int)
+            assert not isinstance(lhs.value, bool)
+            q, _ = _int_div_mod(lhs.value, rhs.value)
+            return ctx.mk_int_val(q)
+    decl = ctx._intern_decl(
+        DeclKind.IDIV, "div", (ctx.int_sort, ctx.int_sort), ctx.int_sort
+    )
+    return ctx._intern_app(decl, (lhs, rhs))
+
+
+def build_mod(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
+    """Build Euclidean integer remainder ``(mod lhs rhs)``."""
+    ctx._check_int(lhs)
+    ctx._check_int(rhs)
+    if isinstance(rhs, Const):
+        assert isinstance(rhs.value, int)
+        assert not isinstance(rhs.value, bool)
+        if rhs.value in (1, -1):
+            return ctx.mk_int_val(0)
+        if isinstance(lhs, Const) and rhs.value != 0:
+            assert isinstance(lhs.value, int)
+            assert not isinstance(lhs.value, bool)
+            _, r = _int_div_mod(lhs.value, rhs.value)
+            return ctx.mk_int_val(r)
+    decl = ctx._intern_decl(
+        DeclKind.MOD, "mod", (ctx.int_sort, ctx.int_sort), ctx.int_sort
+    )
+    return ctx._intern_app(decl, (lhs, rhs))
+
+
+def build_divisible(ctx: Context, n: int, arg: Expr) -> Expr:
+    """Build divisibility predicate ``((_ divisible n) arg)`` for ``n > 0``."""
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+        msg = f"divisible modulus must be a positive int, got {n!r}"
+        raise ValueError(msg)
+    ctx._check_int(arg)
+    if n == 1:
+        return ctx.true_expr
+    if isinstance(arg, Const):
+        assert isinstance(arg.value, int)
+        assert not isinstance(arg.value, bool)
+        return ctx.mk_bool_val(arg.value % n == 0)
+    decl = ctx._intern_decl(
+        DeclKind.DIVISIBLE,
+        f"(_ divisible {n})",
+        (ctx.int_sort,),
+        ctx.bool_sort,
+        params=(n,),
+    )
     return ctx._intern_app(decl, (arg,))
 
 

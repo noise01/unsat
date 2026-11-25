@@ -283,9 +283,85 @@ def BitVecVal(val: int, bv: int | Sort, ctx: Context | None = None) -> Const:
     return _resolve_ctx(ctx).mk_bv_val(val, bv)
 
 
-def ToReal(expr: Expr) -> Expr:
+def _coerce_int_pair(a: Expr | int, b: Expr | int, op_name: str) -> tuple[Expr, Expr]:
+    if isinstance(a, bool) or isinstance(b, bool):
+        msg = f"{op_name} does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(a, Expr) and isinstance(b, Expr):
+        return a, b
+    if isinstance(a, Expr) and isinstance(b, int):
+        return a, a.ctx.mk_int_val(b)
+    if isinstance(b, Expr) and isinstance(a, int):
+        return b.ctx.mk_int_val(a), b
+    if isinstance(a, int) and isinstance(b, int):
+        ctx = _default_ctx
+        return ctx.mk_int_val(a), ctx.mk_int_val(b)
+    msg = (
+        f"{op_name} requires Int expressions or ints, "
+        f"got {type(a).__name__} and {type(b).__name__}"
+    )
+    raise TypeError(msg)
+
+
+def ToReal(expr: Expr | int) -> Expr:
     """Convert an ``Int`` expression to ``Real``."""
+    if isinstance(expr, bool):
+        msg = "ToReal does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(expr, int):
+        return _default_ctx.mk_to_real(_default_ctx.mk_int_val(expr))
     return expr.ctx.mk_to_real(expr)
+
+
+def ToInt(expr: Expr | int | Fraction) -> Expr:
+    """Convert a ``Real`` expression to ``Int`` via ``to_int`` (floor)."""
+    if isinstance(expr, bool):
+        msg = "ToInt does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(expr, (int, Fraction)):
+        return _default_ctx.mk_to_int(_default_ctx.mk_real_val(expr))
+    return expr.ctx.mk_to_int(expr)
+
+
+def IsInt(expr: Expr | int | Fraction) -> Expr:
+    """Build integrality predicate ``(is_int expr)`` on a ``Real`` expression."""
+    if isinstance(expr, bool):
+        msg = "IsInt does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(expr, (int, Fraction)):
+        return _default_ctx.mk_is_int(_default_ctx.mk_real_val(expr))
+    return expr.ctx.mk_is_int(expr)
+
+
+def Abs(expr: Expr | int) -> Expr:
+    """Build integer absolute value ``(abs expr)``."""
+    if isinstance(expr, bool):
+        msg = "Abs does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(expr, int):
+        return _default_ctx.mk_abs(_default_ctx.mk_int_val(expr))
+    return expr.ctx.mk_abs(expr)
+
+
+def IDiv(a: Expr | int, b: Expr | int) -> Expr:
+    """Euclidean integer division ``(div a b)``."""
+    lhs, rhs = _coerce_int_pair(a, b, "IDiv")
+    return lhs.ctx.mk_idiv(lhs, rhs)
+
+
+def Mod(a: Expr | int, b: Expr | int) -> Expr:
+    """Euclidean integer remainder ``(mod a b)``."""
+    lhs, rhs = _coerce_int_pair(a, b, "Mod")
+    return lhs.ctx.mk_mod(lhs, rhs)
+
+
+def Divisible(n: int, expr: Expr | int) -> Expr:
+    """Build divisibility predicate ``((_ divisible n) expr)``."""
+    if isinstance(expr, bool):
+        msg = "Divisible does not accept Bool operands"
+        raise TypeError(msg)
+    target = _default_ctx.mk_int_val(expr) if isinstance(expr, int) else expr
+    return target.ctx.mk_divisible(n, target)
 
 
 def UDiv(a: Expr | int, b: Expr | int) -> Expr:
@@ -629,6 +705,7 @@ __all__ = [
     "ULT",
     "UNKNOWN",
     "UNSAT",
+    "Abs",
     "And",
     "App",
     "Array",
@@ -649,6 +726,7 @@ __all__ = [
     "Context",
     "DeclareSort",
     "Distinct",
+    "Divisible",
     "Eq",
     "Exists",
     "Expr",
@@ -657,14 +735,17 @@ __all__ = [
     "FuncDecl",
     "FuncInterp",
     "Function",
+    "IDiv",
     "If",
     "Implies",
     "Int",
     "IntSort",
     "IntVal",
     "Ints",
+    "IsInt",
     "K",
     "LShR",
+    "Mod",
     "Model",
     "MultiPattern",
     "Not",
@@ -687,6 +768,7 @@ __all__ = [
     "Sort",
     "Store",
     "Sum",
+    "ToInt",
     "ToReal",
     "UDiv",
     "URem",
