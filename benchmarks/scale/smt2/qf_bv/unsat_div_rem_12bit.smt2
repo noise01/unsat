@@ -1,0 +1,11 @@
+(set-logic QF_BV)
+(set-info :status unsat)
+(declare-const x (_ BitVec 12))
+(declare-const y (_ BitVec 12))
+(define-fun d () (_ BitVec 12) (bvor (bvand y #x003) #x002))
+(assert (bvult x #x100))
+(assert (or
+  (distinct (bvadd (bvmul d (bvsdiv x d)) (bvsrem x d)) x)
+  (distinct (bvadd (bvmul d (bvudiv x d)) (bvurem x d)) x)
+))
+(check-sat)

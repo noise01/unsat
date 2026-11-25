@@ -17,11 +17,14 @@ _SMT2_STATUS_RE = re.compile(r"\(set-info\s+:status\s+(sat|unsat)\s*\)", re.IGNO
 
 
 def test_benchmark_inventory_covers_dimacs_and_smt2_logics() -> None:
-    assert any(path.suffix == ".cnf" for path in _ALL_BENCHMARKS)
+    core_dimacs = [
+        p for p in _ALL_BENCHMARKS if p.relative_to(_BENCH_ROOT).parts[0] == "dimacs"
+    ]
+    assert core_dimacs
     smt2_groups = {
-        path.relative_to(_BENCH_ROOT).parts[1]
-        for path in _ALL_BENCHMARKS
-        if path.suffix == ".smt2"
+        p.relative_to(_BENCH_ROOT).parts[1]
+        for p in _ALL_BENCHMARKS
+        if p.relative_to(_BENCH_ROOT).parts[0] == "smt2" and p.suffix == ".smt2"
     }
     assert {
         "qf_bool",
@@ -37,6 +40,11 @@ def test_benchmark_inventory_covers_dimacs_and_smt2_logics() -> None:
         "lia",
         "smt2_features",
     } <= smt2_groups
+    scale_paths = [
+        p for p in _ALL_BENCHMARKS if p.relative_to(_BENCH_ROOT).parts[0] == "scale"
+    ]
+    assert any(p.suffix == ".cnf" for p in scale_paths)
+    assert any(p.suffix == ".smt2" for p in scale_paths)
 
 
 @pytest.mark.parametrize(
