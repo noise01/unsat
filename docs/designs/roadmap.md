@@ -2,7 +2,7 @@
 
 This document tracks detailed milestone scopes and exit criteria for `unsat`. For the summary table, see [Solver Designs & Roadmap](README.md).
 
-## Completed Milestones (M1–M8)
+## Completed Milestones (M1–M9)
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -92,16 +92,17 @@ This document tracks detailed milestone scopes and exit criteria for `unsat`. Fo
 - **Exit criteria**:
   - Mixed `QF_BV` / `QF_UFBV` / `QF_ABV` / `QF_AUFBV` instances solve with fewer upfront SAT variables (including 0-blast resolution on word-level solvable constraints and `theory_bv_blasted_atoms` telemetry), match Z3 across Hypothesis differential tests, and pass curated `qf_ufbv` benchmarks.
 
-## Planned Milestones (M9–M10)
-
 ### M9 — Nonlinear Arithmetic (`QF_NRA`, `QF_NIA`) & Complete Integer Operators
 
 - **Primary modules**: `syntax`, `theories`, `parser`, `model`
 - **Scope**:
-  - Add complete SMT-LIB2 integer arithmetic operators (`div`, `mod`, `abs`, `to_int`, `is_int`, `divisible`) across AST, simplification, `LIA`, evaluator, and parser.
-  - Implement nonlinear real arithmetic (`QF_NRA`) via interval constraint propagation and NLSAT-style model-constructing cell projection over univariate polynomials, alongside incremental linearization and bounded branching for nonlinear integer arithmetic (`QF_NIA`).
+  - Added complete SMT-LIB2 integer operators (`div`, `mod`, `abs`, `to_int`, `is_int`, `(_ divisible n)`) and Python DSL builders/overloads (`IDiv`, `Mod`, `Abs`, `ToInt`, `IsInt`, `Divisible`, `//`, `%`, `abs()`, `**`) across `syntax`, `model`, `tactics`, `smt`, `api`, and `parser` with exact Euclidean semantics, defining axioms in `_PlaistedGreenbaumEncoder`, `EUFSolver` congruence for division-by-zero, and `Model` `div_zero` evaluation support.
+  - Added optional nonlinear monomial/divisor tracking (`allow_nonlinear=True`) to `LRASolver` and implemented [`NLASolver`](../../src/unsat/theories/nla.py) + [`NLAStats`](../../src/unsat/theories/base.py) combining rational/strict Interval Constraint Propagation (ICP), exact univariate rational polynomial Sturm real-root isolation with 2-variable linear substitution, incremental linearization lemmas (squares, zero/sign, McCormick envelopes, tangent planes, integer point slicing), budgeted case splitting, and conservative `NLAUnknown` handling (including irrational-only `Real` roots).
+  - Registered `QF_NRA`/`QF_NIA`/`QF_NIRA` logic families in SMT-LIB2 and added representative `benchmarks/smt2/{qf_nra,qf_nia}/` benchmarks.
 - **Exit criteria**:
-  - Sound `SAT`/`UNSAT`/`UNKNOWN` handling and model evaluation checks across representative `QF_NRA`/`QF_NIA` benchmarks matching Z3 on decidable test cases.
+  - Sound `SAT`/`UNSAT`/`UNKNOWN` handling, `model.eval_bool(...)` validation on `SAT`, and Z3 differential agreement across complete integer operator suites and decidable `QF_NRA`/`QF_NIA` test cases and benchmarks.
+
+## Planned Milestones (M10)
 
 ### M10 — Theory of Strings & Regular Expressions (`QF_S`, `QF_SLIA`)
 

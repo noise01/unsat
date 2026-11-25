@@ -50,6 +50,7 @@ This document describes the repository layout and module organization convention
 │   │   ├── euf.py                   # Congruence closure with signature table & proof forest
 │   │   ├── lra.py                   # Exact rational Simplex with infinitesimals
 │   │   ├── lia.py                   # Branch-and-bound and Gomory cuts over LRA
+│   │   ├── nla.py                   # Nonlinear ICP, Sturm real-root isolation & linearization
 │   │   ├── bv.py                    # Word-level known-bits/interval BV solver & blast requests
 │   │   └── arrays.py                # Lazy Read-over-Write and extensionality solver
 │   ├── tactics/
