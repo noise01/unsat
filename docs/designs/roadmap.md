@@ -2,7 +2,7 @@
 
 This document tracks detailed milestone scopes and exit criteria for `unsat`. For the summary table, see [Solver Designs & Roadmap](README.md).
 
-## Completed Milestones (M1–M7)
+## Completed Milestones (M1–M8)
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -83,16 +83,16 @@ This document tracks detailed milestone scopes and exit criteria for `unsat`. Fo
 - **Exit criteria**:
   - All 44 core and scale benchmarks pass with Z3 differential agreement, achieving measurable end-to-end speedups (`6756.71 ms` -> `4214.25 ms`, `1.60x` overall with `--alloc`) and reduced peak allocations across division and arithmetic workloads.
 
-## Planned Milestones (M8–M10)
-
 ### M8 — Lazy Bit-Vector Theory Solver (`unsat.theories.bv`)
 
 - **Primary modules**: `theories`, `smt`, `tactics`
 - **Scope**:
-  - Implement a native `BV` `TheorySolver` integrated into CDCL(T) and `MBTC`, replacing eager upfront full-circuit encoding when mixed theories are present.
-  - Combine word-level interval and known-bit propagation, lazy on-demand bit-blasting for unsolved constraints, and direct bit-vector interface equality/disequality generation with `EUF` and `Arrays`.
+  - Implemented `BVDomain` (known zero/one bit masks synchronized with unsigned/signed intervals) and incremental word-level `BVSolver` in [`theories/bv.py`](../../src/unsat/theories/bv.py) with `BVStats` in [`theories/base.py`](../../src/unsat/theories/base.py), keeping `unsat.theories` decoupled from `unsat.tactics` and `unsat.sat`.
+  - Integrated lazy BV solving into `unsat.smt` (`_PlaistedGreenbaumEncoder`, `_CombinedPropagator`, `SMTSolver`, and `SATSolver` unassigned-lemma continuation), propagating word-level domains/conflicts online, synthesizing candidate word-level BV models coordinated with `EUF`/`Arrays` via `MBTC`, and escalating only violated atoms to on-demand `BitBlaster` encoding (`BVBlastRequest`) while keeping `BitBlastTactic`/`bitblast()` intact for explicit preprocessing.
 - **Exit criteria**:
-  - Mixed `QF_UFBV` / `QF_ABV` / `QF_AUFBV` instances solve with fewer upfront SAT variables and match Z3 across differential tests and models.
+  - Mixed `QF_BV` / `QF_UFBV` / `QF_ABV` / `QF_AUFBV` instances solve with fewer upfront SAT variables (including 0-blast resolution on word-level solvable constraints and `theory_bv_blasted_atoms` telemetry), match Z3 across Hypothesis differential tests, and pass curated `qf_ufbv` benchmarks.
+
+## Planned Milestones (M9–M10)
 
 ### M9 — Nonlinear Arithmetic (`QF_NRA`, `QF_NIA`) & Complete Integer Operators
 

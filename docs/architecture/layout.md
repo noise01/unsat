@@ -46,10 +46,11 @@ This document describes the repository layout and module organization convention
 │   │   └── converters.py            # ModelConverter implementations for tactic reconstruction
 │   ├── theories/
 │   │   ├── __init__.py              # Theory solver exports
-│   │   ├── base.py                  # TheorySolver interface
+│   │   ├── base.py                  # TheorySolver interface and theory stats counters
 │   │   ├── euf.py                   # Congruence closure with signature table & proof forest
 │   │   ├── lra.py                   # Exact rational Simplex with infinitesimals
 │   │   ├── lia.py                   # Branch-and-bound and Gomory cuts over LRA
+│   │   ├── bv.py                    # Word-level known-bits/interval BV solver & blast requests
 │   │   └── arrays.py                # Lazy Read-over-Write and extensionality solver
 │   ├── tactics/
 │   │   ├── __init__.py              # Tactic exports

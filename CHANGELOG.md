@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Lazy word-level bit-vector theory solver (`unsat.theories.bv` with `BVSolver`, `BVDomain`, `BVBlastRequest`, and `BVStats` in `unsat.theories.base`) integrated into [`unsat.smt`](src/unsat/smt/solver.py) for `QF_BV`, `QF_UFBV`, `QF_ABV`, and `QF_AUFBV`, with online known-bit/interval propagation, word-level model synthesis, MBTC interface sharing, and on-demand `BitBlaster` escalation alongside representative [`benchmarks/smt2/qf_ufbv/`](benchmarks/smt2/qf_ufbv/sat_congruence_bv.smt2) benchmarks.
 - Large-scale M7 benchmark corpus under [`benchmarks/scale/`](benchmarks/scale/) (17 DIMACS and SMT-LIB2 instances) plus suite selection (`--suite {core,scale,all}`), `cProfile` profiling (`--profile`, `--profile-top`), `tracemalloc` allocation metrics (`--alloc`), and baseline comparison (`--save-baseline`, `--compare`) in [`benchmarks/run.py`](benchmarks/run.py).
 - Automatic Python scalar coercion (`bool`, `int`, `Fraction`) in `Eq`, `Distinct`, and `If` builders in [`unsat.api`](src/unsat/api.py).
 - Reserved [`packages/unsat-legacy/`](packages/unsat-legacy/README.md) `uv` workspace package slot for future archived/legacy solver implementations.

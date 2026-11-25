@@ -6,7 +6,7 @@ Design documentation and phased milestones for `unsat`. See [Architecture](../ar
 
 - [Core Solver Design](core.md) — SAT core, hash-consed AST & Python DSL, CDCL(T), theories, tactics, and quantifiers
 - [Verification & Soundness Strategy](verification.md) — differential Z3 fuzzing, model checking, and packaging invariants
-- [Milestones & Roadmap](roadmap.md) — completed M1–M7 scopes and planned M8–M10 work
+- [Milestones & Roadmap](roadmap.md) — completed M1–M8 scopes and planned M9–M10 work
 
 ## Milestone Overview
 
@@ -19,6 +19,6 @@ Design documentation and phased milestones for `unsat`. See [Architecture](../ar
 | M5 | Completed | Bit-Vectors & Arrays (`QF_BV`, `QF_AX`, `QF_AUFBV`, `QF_AUFLIA`) | `tactics`, `theories`, `syntax`, `model`, `api`, `parser` |
 | M6 | Completed | Quantifiers & Advanced Tactics (`UF`, quantified arithmetic) | `quantifiers`, `tactics`, `smt`, `api`, `parser` |
 | M7 | Completed | Large-Scale Benchmarking & Profiling Optimization | `sat`, `theories`, `tactics`, `smt`, `benchmarks` |
-| M8 | Planned | Lazy Bit-Vector Theory Solver (`unsat.theories.bv`) | `theories`, `smt`, `tactics` |
+| M8 | Completed | Lazy Bit-Vector Theory Solver (`unsat.theories.bv`) | `theories`, `smt`, `tactics` |
 | M9 | Planned | Nonlinear Arithmetic (`QF_NRA`, `QF_NIA`) & Complete Integer Ops | `syntax`, `theories`, `parser`, `model` |
 | M10 | Planned | Theory of Strings & Regular Expressions (`QF_S`, `QF_SLIA`) | `syntax`, `theories`, `parser`, `model` |
