@@ -1,0 +1,6 @@
+(set-logic LIA)
+(set-info :status unsat)
+(declare-const c Int)
+(assert (forall ((x Int)) (=> (and (<= 1 x) (<= x 3)) (>= c x))))
+(assert (<= c 2))
+(check-sat)

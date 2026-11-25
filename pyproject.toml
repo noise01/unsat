@@ -3,11 +3,35 @@ name = "unsat"
 version = "0.1.0"
 description = "A Z3-inspired SMT solver in Python"
 readme = "README.md"
+license = "Apache-2.0"
 authors = [
     { name = "noise01", email = "noisecode.01@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = []
+keywords = [
+    "smt",
+    "sat",
+    "solver",
+    "cdcl",
+    "theorem-proving",
+    "formal-verification",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/noise01/unsat"
+Repository = "https://github.com/noise01/unsat"
+Issues = "https://github.com/noise01/unsat/issues"
 
 [project.scripts]
 unsat = "unsat.cli:main"

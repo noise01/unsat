@@ -1,0 +1,6 @@
+(set-logic LIA)
+(set-info :status sat)
+(declare-const x Int)
+(assert (exists ((y Int)) (and (>= y x) (<= y (+ x 1)) (> y 3))))
+(assert (<= x 5))
+(check-sat)

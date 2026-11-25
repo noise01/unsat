@@ -9,29 +9,69 @@ src/unsat/
 ├── __init__.py          # Public API façade (__all__ re-exports from api.py; no CLI main)
 ├── __main__.py          # `python -m unsat` entry point delegating exclusively to cli.main
 ├── py.typed             # PEP 561 typed package marker
-├── api.py               # Thin user-facing Z3Py-style Python DSL / builder layer (no duplicate AST wrappers)
+├── api.py               # Thin user-facing Z3Py-style Python DSL / builder layer
 ├── cli.py               # CLI entry point (`unsat = "unsat.cli:main"`)
-├── smt.py               # CDCL(T) orchestrator & Tseitin clausification (promotes to smt/ when it grows)
-├── model.py             # Model representation, evaluation & reconstruction (promotes to model/ when it grows)
 ├── syntax/
-│   └── __init__.py      # Stateless sorts, declarations, terms, formulas, and explicit contexts
+│   ├── __init__.py      # Public syntax exports
+│   ├── kinds.py         # SortKind / DeclKind enums
+│   ├── bv_eval.py       # Pure bit-vector concrete evaluation helpers
+│   ├── expr.py          # Immutable hash-consed Sort, FuncDecl, Expr, Quantifier nodes
+│   ├── context_arith.py # Arithmetic builder helpers mixed into Context
+│   ├── context_bv.py    # Bit-vector builder helpers mixed into Context
+│   ├── context.py       # WeakValueDictionary-backed AST Context
+│   └── walk.py          # Iterative traversal, substitution, de Bruijn, SMT-LIB2 formatting
 ├── sat/
-│   └── __init__.py      # Standalone propositional CDCL SAT solver core
+│   ├── __init__.py      # Standalone SAT exports
+│   ├── types.py         # Lit, Var, Clause, SolveResult, TheoryPropagator protocol
+│   ├── heap.py          # EVSIDS variable activity heap
+│   ├── trail.py         # Assignment trail and decision levels
+│   └── solver.py        # CDCL SAT solver core with restarts, LBD reduction, budgets
+├── model/
+│   ├── __init__.py      # Model exports
+│   ├── values.py        # Concrete values and FuncInterp tables
+│   ├── eval.py          # Model container and recursive formula evaluator
+│   └── converters.py    # ModelConverter implementations for tactic reconstruction
 ├── theories/
-│   └── __init__.py      # Theory solver implementations (EUF, LRA, LIA, BV, Arrays, ...)
+│   ├── __init__.py      # Theory solver exports
+│   ├── base.py          # TheorySolver interface
+│   ├── euf.py           # Congruence closure with signature table & proof forest
+│   ├── lra.py           # Exact rational Simplex with infinitesimals
+│   ├── lia.py           # Branch-and-bound and Gomory cuts over LRA
+│   └── arrays.py        # Lazy Read-over-Write and extensionality solver
 ├── tactics/
-│   └── __init__.py      # Pure AST-to-AST preprocessing, simplification, and reduction tactics
+│   ├── __init__.py      # Tactic exports
+│   ├── base.py          # Tactic, TacticResult, Then combinator
+│   ├── simplify.py      # Algebraic / Boolean AST normalization tactic
+│   ├── nnf.py           # Negation normal form conversion
+│   ├── bitblast.py      # Eager BV simplification and CNF bit-blasting
+│   ├── skolem.py        # Existential Skolemization with ProjectionModelConverter
+│   ├── ctx_simplify.py  # Contextual unit simplification
+│   └── elim.py          # Gaussian elimination and bound propagation tactics
 ├── quantifiers/
-│   └── __init__.py      # Quantifier reasoning (E-matching, MBQI, ...)
+│   ├── __init__.py      # Quantifier exports
+│   ├── base.py          # QuantifierBudget, QuantifierStats, SubSolver protocol
+│   ├── ematch.py        # E-matching over the EUF E-graph
+│   └── mbqi.py          # Model-Based Quantifier Instantiation
+├── smt/
+│   ├── __init__.py      # CDCL(T) exports (`SMTSolver`, `SolveResult`, `solve_with_tactic`)
+│   ├── propagator.py    # Combined EUF / LRA / Array / shared-BV TheoryPropagator
+│   ├── encoder.py       # Incremental Plaisted-Greenbaum Tseitin encoder
+│   └── solver.py        # SMTSolver, MBTC loop, quantifier orchestration, solve_with_tactic
 └── parser/
-    └── __init__.py      # Input/output parsers, formatters, and command runners (SMT-LIB2, DIMACS, ...)
+    ├── __init__.py      # Parser and runner exports
+    ├── dimacs.py        # DIMACS CNF parser, solver helper, formatter
+    └── smt2/
+        ├── __init__.py  # SMT-LIB2 parser/runner exports
+        ├── lexer.py     # Lexer and S-expression parser
+        ├── format.py    # SMT-LIB2 model formatter
+        └── runner.py    # Stateful SMT2Runner and script helpers
 ```
 
 Tests under `tests/` mirror `src/unsat/` incrementally as modules are implemented (for example, `tests/sat/`, `tests/syntax/`, `tests/theories/`) without pre-creating empty test directories.
 
 ## Design Conventions
 
-- **Hybrid granularity**: Multi-module domains (`syntax/`, `sat/`, `theories/`, `tactics/`, `quantifiers/`, `parser/`) start as subpackages with only `__init__.py`; internal module files are added as each subsystem is built. Single-file entry modules (`api.py`, `cli.py`, `smt.py`, `model.py`) promote seamlessly to packages (`smt/`, `model/`, etc.) without breaking imports when they outgrow one file. Shared exceptions (`errors.py`) are introduced only when exceptions need to be shared across multiple modules.
+- **Hybrid granularity**: Subsystems are organized as subpackages (`syntax/`, `sat/`, `model/`, `theories/`, `tactics/`, `quantifiers/`, `smt/`, `parser/`), promoting single files to multi-file subpackages cleanly without breaking package imports. Shared exceptions (`errors.py`) are introduced only when exceptions need to be shared across multiple top-level packages.
 - **Naming rules**:
   - Singular for single cohesive subsystems: `syntax`, `sat`, `parser`, `smt`, `model`.
   - Plural for collections of pluggable implementations: `theories`, `tactics`, `quantifiers`.
@@ -50,7 +90,7 @@ Tests under `tests/` mirror `src/unsat/` incrementally as modules are implemente
 | `unsat.theories` | Theory solver implementations (EUF, LRA, LIA, BV, Arrays, etc.) | `syntax`, `model` |
 | `unsat.tactics` | Pure AST-to-AST preprocessing, simplification, reduction tactics, and model converters (excludes SAT clausification) | `syntax`, `model` |
 | `unsat.quantifiers` | Quantifier instantiation and reasoning (E-matching, MBQI via injected sub-solver protocols) | `syntax`, `theories`, `model` |
-| `unsat.smt` | CDCL(T) orchestrator bridging `syntax` and `sat`, Tseitin clausification, push/pop, theory combination, and callback injection | `syntax`, `sat`, `theories`, `tactics`, `quantifiers`, `model` |
+| `unsat.smt` | CDCL(T) orchestrator bridging `syntax` and `sat`, Tseitin clausification, push/pop, theory combination, callback injection, and `solve_with_tactic` | `syntax`, `sat`, `theories`, `tactics`, `quantifiers`, `model` |
 | `unsat.api` | Thin Z3Py-style Python DSL builders, syntactic sugar, and default context (`Solver`, `Int`, `Bool`, `And`, ...) without duplicate AST wrappers | `syntax`, `smt`, `model` |
 | `unsat.parser` | SMT-LIB2 and DIMACS parsers, formatters, and command execution frontends | `syntax`, `sat`, `smt`, `model` |
 | `unsat.cli` | Command-line executable | `parser`, `smt`, `sat` |

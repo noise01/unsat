@@ -34,7 +34,7 @@ This document records the core design decisions, supported logics, verification 
 
 - **EUF (`unsat.theories`)**: Congruence Closure backed by a Signature Table for `O(1)` congruence lookup, a copy-free trail-length undo log (avoiding per-merge list copies), and a proof forest for minimal conflict explanations. Predicate congruence is handled uniformly by registering Boolean predicate applications `P(t)` as `Eq(P(t), true)`.
 - **Linear arithmetic (`LRA`, `LIA`)**: Exact rational arithmetic built on `fractions.Fraction` paired with infinitesimal `a + b * delta` values (Dutertre & de Moura Simplex) handles strict inequalities with zero floating-point precision errors. `LIA` builds on `LRA` with branch-and-bound and cutting planes (e.g., Gomory cuts).
-- **Bit-Vectors (`BV`)**: Initial support uses word-level simplification and eager bit-blasting tactics in `unsat.tactics` paired with `ModelConverter` for clean, fast `QF_BV`. When mixed-theory logics (such as `QF_AUFBV`) require MBTC interaction, bit-vectors extend into a lazy `unsat.theories.bv` theory solver.
+- **Bit-Vectors (`BV`)**: Current support uses word-level simplification and eager bit-blasting tactics paired with shared-term bit-level propagation in `unsat.tactics` / `unsat.smt` and `ModelConverter` reconstruction for `QF_BV` and mixed `QF_AUFBV`/`BV` logics. Extending to a native lazy `unsat.theories.bv` theory solver is scheduled in M8.
 - **Arrays (`Arrays`)**: Lazy Read-over-Write (`select` / `store`) and extensionality axiom instantiation integrated with `EUF`.
 - **Quantifiers (`unsat.quantifiers`)**: Anytime resource budgets (`max_rounds` and `max_matches` candidate-binding caps) with conservative three-valued verdicts (`SAT`, `UNSAT`, `UNKNOWN`). Truncating quantifier search on a spent budget never claims `SAT` (downgrading to `UNKNOWN`), while ground-derived `UNSAT` remains sound. Extracted default triggers/patterns stay in matcher-owned tables rather than mutating immutable AST nodes.
 
@@ -52,14 +52,18 @@ This document records the core design decisions, supported logics, verification 
 
 ## Milestones
 
-| Milestone | Logics / Scope | Key Modules |
-| --- | --- | --- |
-| M1 | Standalone CDCL SAT & DIMACS | `sat`, `parser`, `cli` |
-| M2 | Propositional SMT End-to-End (`QF_BOOL`) | `syntax`, `model`, `tactics`, `smt`, `api`, `parser`, `cli` |
-| M3 | Congruence Closure & Online CDCL(T) (`QF_UF`) | `theories`, `smt`, `syntax`, `model`, `api`, `parser` |
-| M4 | Linear Arithmetic & Theory Combination (`QF_LRA`, `QF_LIA`, `QF_UFLRA`, `QF_UFLIA`) | `theories`, `smt`, `syntax`, `model`, `api`, `parser` |
-| M5 | Bit-Vectors & Arrays (`QF_BV`, `QF_AX`, `QF_AUFLIA`) | `tactics`, `theories`, `syntax`, `model`, `api`, `parser` |
-| M6 | Quantifiers & Advanced Tactics (`UF`, quantified arithmetic) | `quantifiers`, `tactics`, `smt`, `api`, `parser` |
+| Milestone | Status | Logics / Scope | Key Modules |
+| --- | --- | --- | --- |
+| M1 | Completed | Standalone CDCL SAT & DIMACS | `sat`, `parser`, `cli` |
+| M2 | Completed | Propositional SMT End-to-End (`QF_BOOL`) | `syntax`, `model`, `tactics`, `smt`, `api`, `parser`, `cli` |
+| M3 | Completed | Congruence Closure & Online CDCL(T) (`QF_UF`) | `theories`, `smt`, `syntax`, `model`, `api`, `parser` |
+| M4 | Completed | Linear Arithmetic & Theory Combination (`QF_LRA`, `QF_LIA`, `QF_UFLRA`, `QF_UFLIA`) | `theories`, `smt`, `syntax`, `model`, `api`, `parser` |
+| M5 | Completed | Bit-Vectors & Arrays (`QF_BV`, `QF_AX`, `QF_AUFBV`, `QF_AUFLIA`) | `tactics`, `theories`, `syntax`, `model`, `api`, `parser` |
+| M6 | Completed | Quantifiers & Advanced Tactics (`UF`, quantified arithmetic) | `quantifiers`, `tactics`, `smt`, `api`, `parser` |
+| M7 | Planned | Large-Scale Benchmarking & Profiling Optimization | `sat`, `theories`, `tactics`, `smt`, `benchmarks` |
+| M8 | Planned | Lazy Bit-Vector Theory Solver (`unsat.theories.bv`) | `theories`, `smt`, `tactics` |
+| M9 | Planned | Nonlinear Arithmetic (`QF_NRA`, `QF_NIA`) & Complete Integer Ops | `syntax`, `theories`, `parser`, `model` |
+| M10 | Planned | Theory of Strings & Regular Expressions (`QF_S`, `QF_SLIA`) | `syntax`, `theories`, `parser`, `model` |
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -126,6 +130,42 @@ This document records the core design decisions, supported logics, verification 
 - **Scope**:
   - Add `ForAll` and `Exists` binders, pattern annotations, and variable scoping across `syntax`, `model`, `api`, and `parser`.
   - Implement `E-matching` over the `EUF` E-graph and `MBQI` in `unsat.quantifiers`, using injected sub-solver `Protocol` callbacks provided by `unsat.smt`, matcher-owned pattern tables (preserving AST immutability), and anytime `max_rounds`/`max_matches` budgets with conservative `UNKNOWN` handling.
-  - Expand `unsat.tactics` with stronger formula preprocessing (e.g., Skolemization, contextual simplification, Gaussian elimination / bound propagation).
+  - Expand `unsat.tactics` with stronger formula preprocessing (e.g., Skolemization, contextual simplification, Gaussian elimination / bound propagation) and expose `solve_with_tactic`, timeout/conflict resource limits, and practical SMT-LIB2 commands (`define-sort`, parameterized `define-fun`, `:named` + `get-unsat-core`, `get-assertions`, `echo`).
 - **Exit criteria**:
   - Representative quantified benchmarks produce sound `SAT`, `UNSAT`, and budget-bounded `UNKNOWN` results verified against test suites and Z3 checks.
+
+### M7 — Large-Scale Benchmarking & Profiling Optimization
+
+- **Primary modules**: `sat`, `theories`, `tactics`, `smt`, `benchmarks`
+- **Scope**:
+  - Expand `benchmarks/` with larger SATLIB and SMT-COMP style benchmark corpora and add profiling/comparison telemetry (`cProfile`, allocation tracking, conflict/lemma rate reports) in `benchmarks/run.py`.
+  - Optimize CDCL hot loops (watcher traversal, conflict minimization, binary-clause propagation), `EUF` congruence lookup & explanation extraction, `LRA` simplex tableau pivoting, and bit-blasting CNF compaction (e.g. AIG structural hashing and sub-circuit sharing).
+- **Exit criteria**:
+  - Measurable wall-clock speedups and reduced Python allocation counts across M7 benchmark suites without relaxing Z3 differential checks.
+
+### M8 — Lazy Bit-Vector Theory Solver (`unsat.theories.bv`)
+
+- **Primary modules**: `theories`, `smt`, `tactics`
+- **Scope**:
+  - Implement a native `BV` `TheorySolver` integrated into CDCL(T) and `MBTC`, replacing eager upfront full-circuit encoding when mixed theories are present.
+  - Combine word-level interval and known-bit propagation, lazy on-demand bit-blasting for unsolved constraints, and direct bit-vector interface equality/disequality generation with `EUF` and `Arrays`.
+- **Exit criteria**:
+  - Mixed `QF_UFBV` / `QF_ABV` / `QF_AUFBV` instances solve with fewer upfront SAT variables and match Z3 across differential tests and models.
+
+### M9 — Nonlinear Arithmetic (`QF_NRA`, `QF_NIA`) & Complete Integer Operators
+
+- **Primary modules**: `syntax`, `theories`, `parser`, `model`
+- **Scope**:
+  - Add complete SMT-LIB2 integer arithmetic operators (`div`, `mod`, `abs`, `to_int`, `is_int`, `divisible`) across AST, simplification, `LIA`, evaluator, and parser.
+  - Implement nonlinear real arithmetic (`QF_NRA`) via interval constraint propagation and NLSAT-style model-constructing cell projection over univariate polynomials, alongside incremental linearization and bounded branching for nonlinear integer arithmetic (`QF_NIA`).
+- **Exit criteria**:
+  - Sound `SAT`/`UNSAT`/`UNKNOWN` handling and model evaluation checks across representative `QF_NRA`/`QF_NIA` benchmarks matching Z3 on decidable test cases.
+
+### M10 — Theory of Strings & Regular Expressions (`QF_S`, `QF_SLIA`)
+
+- **Primary modules**: `syntax`, `theories`, `parser`, `model`
+- **Scope**:
+  - Add `String` and `RegLan` sorts and SMT-LIB2 string/regex operators (`str.++`, `str.len`, `str.at`, `str.substr`, `str.indexof`, `str.replace`, `str.contains`, `str.in_re`, `str.to_re`, regex combinators).
+  - Implement a word-equation and regular-expression derivative solver coupled with `LIA` length constraints and `EUF`.
+- **Exit criteria**:
+  - Representative `QF_S` and `QF_SLIA` benchmarks solve with concrete `str` model evaluation checks and Z3 differential agreement.
