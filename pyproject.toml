@@ -32,6 +32,7 @@ classifiers = [
 Homepage = "https://github.com/noise01/unsat"
 Repository = "https://github.com/noise01/unsat"
 Issues = "https://github.com/noise01/unsat/issues"
+Changelog = "https://github.com/noise01/unsat/blob/main/CHANGELOG.md"
 
 [project.scripts]
 unsat = "unsat.cli:main"
@@ -39,6 +40,9 @@ unsat = "unsat.cli:main"
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv.workspace]
+members = ["packages/*"]
 
 [dependency-groups]
 dev = [

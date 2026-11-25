@@ -2,6 +2,12 @@ version = 1
 revision = 5
 requires-python = ">=3.14"
 
+[manifest]
+members = [
+    "unsat",
+    "unsat-legacy",
+]
+
 [[package]]
 name = "click"
 version = "8.5.1"
@@ -352,6 +358,11 @@ dev = [
     { name = "ty", specifier = ">=0.0.107" },
     { name = "z3-solver", specifier = ">=4.13" },
 ]
+
+[[package]]
+name = "unsat-legacy"
+version = "0.1.0"
+source = { editable = "packages/unsat-legacy" }
 
 [[package]]
 name = "z3-solver"
