@@ -8,11 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Large-scale M7 benchmark corpus under [`benchmarks/scale/`](benchmarks/scale/) (17 DIMACS and SMT-LIB2 instances) plus suite selection (`--suite {core,scale,all}`), `cProfile` profiling (`--profile`, `--profile-top`), `tracemalloc` allocation metrics (`--alloc`), and baseline comparison (`--save-baseline`, `--compare`) in [`benchmarks/run.py`](benchmarks/run.py).
 - Automatic Python scalar coercion (`bool`, `int`, `Fraction`) in `Eq`, `Distinct`, and `If` builders in [`unsat.api`](src/unsat/api.py).
 - Reserved [`packages/unsat-legacy/`](packages/unsat-legacy/README.md) `uv` workspace package slot for future archived/legacy solver implementations.
 - Repository [`AGENTS.md`](AGENTS.md) and restructured architecture/design documentation under [`docs/architecture/`](docs/architecture/README.md) and [`docs/designs/`](docs/designs/README.md).
 - Automated GitHub Release creation job in [`publish.yml`](.github/workflows/publish.yml) gated on PyPI publish success.
 - Isolated wheel smoke testing (`import unsat`, `py.typed`, `Solver`, `unsat --version`, stdin SMT-LIB2), `benchmarks/run.py --check` in CI, full commit SHA Action pinning, concurrency guards, and [`.github/dependabot.yml`](.github/dependabot.yml).
+
+### Changed
+
+- Optimized core solver and preprocessing hot paths for M7: inlined SAT propagation/conflict minimization/heap sifting (`unsat.sat`), specialized `EUF` congruence hashing and lockstep LCA explanations (`unsat.theories.euf`), precomputed atom bounds and allocation-free Bland Simplex pivoting (`unsat.theories.lra`), and structurally memoized bit-blasting gates with borrow-only `_ult_bits`, sparse `_mul_bits`, and shared `_sdiv_cache` (`unsat.tactics.bitblast`).
 
 ## [0.1.0] - 2026-11-25
 

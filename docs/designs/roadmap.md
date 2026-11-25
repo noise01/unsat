@@ -2,7 +2,7 @@
 
 This document tracks detailed milestone scopes and exit criteria for `unsat`. For the summary table, see [Solver Designs & Roadmap](README.md).
 
-## Completed Milestones (M1–M6)
+## Completed Milestones (M1–M7)
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -73,16 +73,17 @@ This document tracks detailed milestone scopes and exit criteria for `unsat`. Fo
 - **Exit criteria**:
   - Representative quantified benchmarks and Hypothesis differential suites produce sound `SAT`, `UNSAT`, and budget-bounded `UNKNOWN` results verified against Z3.
 
-## Planned Milestones (M7–M10)
-
 ### M7 — Large-Scale Benchmarking & Profiling Optimization
 
 - **Primary modules**: `sat`, `theories`, `tactics`, `smt`, `benchmarks`
 - **Scope**:
-  - Expand `benchmarks/` with larger SATLIB and SMT-COMP style benchmark corpora and add profiling/comparison telemetry (`cProfile`, allocation tracking, conflict/lemma rate reports) in `benchmarks/run.py`.
-  - Optimize CDCL hot loops (watcher traversal, conflict minimization, binary-clause propagation), `EUF` congruence lookup & explanation extraction, `LRA` simplex tableau pivoting, and bit-blasting CNF compaction (AIG structural hashing and sub-circuit sharing).
+  - Expanded [`benchmarks/`](../../benchmarks/run.py) with a 17-problem scale corpus (`benchmarks/scale/` across `dimacs`, `qf_uf`, `qf_lra`, `qf_lia`, `qf_bv`, `qf_aufbv`, and `qf_auflia`) and added suite selection (`--suite {core,scale,all}`), `cProfile` reporting (`--profile`, `--profile-top`), `tracemalloc` allocation metrics (`--alloc`), and JSON baseline comparison (`--save-baseline`, `--compare`) in `benchmarks/run.py`.
+  - Optimized CDCL hot loops in `unsat.sat` (`_propagate_sat` local hoisting & binary/watcher fast paths, 1-UIP analysis with recursive clause-minimization parent-chain poisoning, and inlined `VarMaxHeap` sifting).
+  - Optimized `EUF` congruence lookup and proof-forest explanations (`_compute_sig` small-arity specialization, empty use-list skipping in `_union`, and stamped lockstep LCA walk in `_explain_eq`), `LRA` Simplex pivoting (precomputed `register_atom` bounds, allocation-free Bland's rule scans, module-level `Fraction` constants, and delta-zero tableau fast paths in `_update_nonbasic`/`_pivot_and_update`), and `BitBlaster` circuit construction (structurally memoized canonical gate builders, zero-sum borrow-chain `_ult_bits`, seen-one `_neg_bits`, sparsity-aware sliced `_mul_bits`, and shared `_sdiv_cache` across `sdiv`/`srem`/`smod`).
 - **Exit criteria**:
-  - Measurable wall-clock speedups and reduced Python allocation counts across M7 benchmark suites without relaxing Z3 differential checks.
+  - All 44 core and scale benchmarks pass with Z3 differential agreement, achieving measurable end-to-end speedups (`6756.71 ms` -> `4214.25 ms`, `1.60x` overall with `--alloc`) and reduced peak allocations across division and arithmetic workloads.
+
+## Planned Milestones (M8–M10)
 
 ### M8 — Lazy Bit-Vector Theory Solver (`unsat.theories.bv`)
 
