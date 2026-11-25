@@ -42,6 +42,48 @@ def _resolve_ctx(ctx: Context | None) -> Context:
     return _default_ctx if ctx is None else ctx
 
 
+def _flatten_coercible_args(
+    args: tuple[
+        Expr | bool | int | Fraction | Sequence[Expr | bool | int | Fraction],
+        ...,
+    ],
+) -> tuple[Expr | bool | int | Fraction, ...]:
+    if (
+        len(args) == 1
+        and isinstance(args[0], Sequence)
+        and not isinstance(args[0], (Expr, str, bytes, bytearray))
+    ):
+        return tuple(args[0])
+    flat: list[Expr | bool | int | Fraction] = []
+    for item in args:
+        if isinstance(item, (str, bytes, bytearray)):
+            msg = f"Unsupported string/bytes argument: {item!r}"
+            raise TypeError(msg)
+        if isinstance(item, Sequence) and not isinstance(item, Expr):
+            flat.extend(item)
+        else:
+            flat.append(item)
+    return tuple(flat)
+
+
+def _coerce_literal_pair(
+    ctx: Context,
+    then_val: bool | int | Fraction,
+    else_val: bool | int | Fraction,
+) -> tuple[Expr, Expr]:
+    if isinstance(then_val, bool) and isinstance(else_val, bool):
+        return ctx.mk_bool_val(then_val), ctx.mk_bool_val(else_val)
+    if isinstance(then_val, bool) or isinstance(else_val, bool):
+        msg = f"Cannot unify If branches {then_val!r} and {else_val!r}"
+        raise TypeError(msg)
+    if isinstance(then_val, int) and isinstance(else_val, int):
+        return ctx.mk_int_val(then_val), ctx.mk_int_val(else_val)
+    if isinstance(then_val, (int, Fraction)) and isinstance(else_val, (int, Fraction)):
+        return ctx.mk_real_val(then_val), ctx.mk_real_val(else_val)
+    msg = f"Unsupported If branch literals: {then_val!r} and {else_val!r}"
+    raise TypeError(msg)
+
+
 def _flatten_expr_args(
     args: tuple[Expr | Sequence[Expr], ...],
 ) -> tuple[Expr, ...]:
@@ -421,22 +463,53 @@ def Xor(lhs: Expr, rhs: Expr) -> Expr:
     return lhs.ctx.mk_xor(lhs, rhs)
 
 
-def Eq(lhs: Expr, rhs: Expr) -> Expr:
+def Eq(
+    lhs: Expr | bool | int | Fraction,
+    rhs: Expr | bool | int | Fraction,
+) -> Expr:
     """Build the formula-level equality ``lhs = rhs``."""
-    return lhs.ctx.mk_eq(lhs, rhs)
+    if isinstance(lhs, Expr):
+        return lhs.ctx.mk_eq(lhs, _coerce_arg_for_sort(lhs.sort, rhs))
+    if isinstance(rhs, Expr):
+        return rhs.ctx.mk_eq(_coerce_arg_for_sort(rhs.sort, lhs), rhs)
+    msg = f"Eq requires at least one Expr argument, got {lhs!r} and {rhs!r}"
+    raise TypeError(msg)
 
 
-def Distinct(*args: Expr | Sequence[Expr]) -> Expr:
+def Distinct(
+    *args: Expr | bool | int | Fraction | Sequence[Expr | bool | int | Fraction],
+) -> Expr:
     """Build a pairwise-distinct constraint over ``args``."""
-    flat = _flatten_expr_args(args)
+    flat = _flatten_coercible_args(args)
     if not flat:
         return _default_ctx.mk_true()
-    return flat[0].ctx.mk_distinct(*flat)
+    anchor = next((item for item in flat if isinstance(item, Expr)), None)
+    if anchor is None:
+        msg = "Distinct requires at least one Expr argument when non-empty"
+        raise TypeError(msg)
+    coerced = [_coerce_arg_for_sort(anchor.sort, item) for item in flat]
+    return anchor.ctx.mk_distinct(*coerced)
 
 
-def If(cond: Expr, then_branch: Expr, else_branch: Expr) -> Expr:
+def If(
+    cond: Expr,
+    then_branch: Expr | bool | int | Fraction,
+    else_branch: Expr | bool | int | Fraction,
+) -> Expr:
     """Build an if-then-else expression ``ite(cond, then_branch, else_branch)``."""
-    return cond.ctx.mk_ite(cond, then_branch, else_branch)
+    if not isinstance(cond, Expr):
+        msg = f"If condition must be an Expr, got {cond!r}"
+        raise TypeError(msg)
+    if isinstance(then_branch, Expr):
+        return cond.ctx.mk_ite(
+            cond, then_branch, _coerce_arg_for_sort(then_branch.sort, else_branch)
+        )
+    if isinstance(else_branch, Expr):
+        return cond.ctx.mk_ite(
+            cond, _coerce_arg_for_sort(else_branch.sort, then_branch), else_branch
+        )
+    t_expr, e_expr = _coerce_literal_pair(cond.ctx, then_branch, else_branch)
+    return cond.ctx.mk_ite(cond, t_expr, e_expr)
 
 
 def ForAll(

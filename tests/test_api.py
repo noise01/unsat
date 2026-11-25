@@ -109,3 +109,54 @@ def test_solver_resource_limits() -> None:
     default_limited.add(*php.assertions())
     assert default_limited.check() is UNKNOWN
     assert default_limited.check(max_conflicts=200) is UNSAT
+
+
+def test_eq_distinct_if_literal_coercion() -> None:
+    from fractions import Fraction
+    from typing import Any
+
+    ctx = Context()
+    p = Bool("coerce_p", ctx=ctx)
+    ix = unsat.Int("coerce_ix", ctx=ctx)
+    rx = unsat.Real("coerce_rx", ctx=ctx)
+    bx = unsat.BitVec("coerce_bx", 4, ctx=ctx)
+
+    s = Solver(ctx)
+    s.add(
+        Eq(p, True),
+        Eq(ix, 10),
+        Eq(10, ix),
+        Eq(rx, Fraction(3, 2)),
+        Eq(Fraction(3, 2), rx),
+        Eq(bx, 5),
+        Eq(5, bx),
+        Distinct(ix, 0, 1),
+        Distinct([bx, 0, 1]),
+        Eq(If(p, 1, 0), 1),
+        Eq(If(p, Fraction(1, 2), 0), Fraction(1, 2)),
+        Eq(If(p, bx, 3), 5),
+        Eq(If(p, True, False), True),
+    )
+    assert s.check() is SAT
+    m = s.model()
+    assert m.eval_bool(p) is True
+    assert m.eval_int(ix) == 10
+    assert m.eval_real(rx) == Fraction(3, 2)
+    assert m.eval_bv(bx) == 5
+
+    bad_str: Any = "ab"
+    bad_cond: Any = True
+    for invalid in (
+        lambda: Eq(1, 2),
+        lambda: Eq(True, False),
+        lambda: Eq(ix, True),
+        lambda: Eq(True, ix),
+        lambda: Distinct(1, 2),
+        lambda: Distinct(ix, bad_str),
+        lambda: Distinct(ix, True),
+        lambda: If(p, True, 1),
+        lambda: If(p, 1, False),
+        lambda: If(bad_cond, 1, 0),
+    ):
+        with pytest.raises(TypeError, match=r".+"):
+            invalid()
