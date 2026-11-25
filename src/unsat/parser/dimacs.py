@@ -1,5 +1,7 @@
 """DIMACS CNF parser, solver helper, and result formatter."""
 
+import math
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,13 +106,23 @@ def parse_dimacs_file(path: str | Path) -> DimacsCNF:
 
 def solve_dimacs(
     cnf: DimacsCNF,
+    *,
+    timeout: float | None = None,
+    max_conflicts: int | None = None,
 ) -> tuple[SolveResult, dict[Var, bool] | None, SATStats]:
     """Solve a parsed :class:`DimacsCNF` with :class:`SATSolver`."""
+    if timeout is not None and (math.isnan(timeout) or timeout < 0):
+        msg = f"timeout must be non-negative, got {timeout}"
+        raise ValueError(msg)
+    if max_conflicts is not None and max_conflicts < 0:
+        msg = f"max_conflicts must be non-negative, got {max_conflicts}"
+        raise ValueError(msg)
     solver = SATSolver()
     solver.ensure_vars(cnf.num_vars)
     for clause in cnf.clauses:
         solver.add_clause(clause)
-    result = solver.solve()
+    deadline = None if timeout is None else time.monotonic() + timeout
+    result = solver.solve(max_conflicts=max_conflicts, deadline=deadline)
     model = solver.model() if result is SolveResult.SAT else None
     return result, model, solver.statistics()
 

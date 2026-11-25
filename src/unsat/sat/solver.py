@@ -1,5 +1,6 @@
 """Incremental CDCL SAT solver core with lazy-explanation theory hooks."""
 
+import time
 from collections.abc import Sequence
 
 from unsat.sat.heap import VarMaxHeap
@@ -33,6 +34,7 @@ class SATSolver:
         self._qhead = 0
         self._theory_qhead = 0
         self._ok = True
+        self._aborted = False
         self._last_result: SolveResult | None = None
         self._unsat_core: list[Lit] = []
 
@@ -155,27 +157,57 @@ class SATSolver:
         self._attach_clause(clause)
         return True
 
-    def solve(self, assumptions: Sequence[Lit] | None = None) -> SolveResult:
-        """Solve the current formula under optional ``assumptions``."""
+    def solve(
+        self,
+        assumptions: Sequence[Lit] | None = None,
+        *,
+        max_conflicts: int | None = None,
+        deadline: float | None = None,
+    ) -> SolveResult:
+        """Solve the current formula under optional ``assumptions`` and budgets."""
+        if max_conflicts is not None and max_conflicts < 0:
+            msg = f"max_conflicts must be non-negative, got {max_conflicts}"
+            raise ValueError(msg)
+
         assumption_list = list(assumptions) if assumptions is not None else []
         self._ensure_lits_vars(assumption_list)
 
         self._unsat_core = []
+        self._aborted = False
         if not self._ok:
             self._last_result = SolveResult.UNSAT
             return SolveResult.UNSAT
 
         self._backtrack(0)
+        if deadline is not None and time.monotonic() >= deadline:
+            return self._abort_unknown()
+
         assumption_set = set(assumption_list)
         pending_conflict: Clause | None = None
+        start_conflicts = self._conflicts
 
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                return self._abort_unknown()
+
             conflict = (
-                pending_conflict if pending_conflict is not None else self._propagate()
+                pending_conflict
+                if pending_conflict is not None
+                else self._propagate(deadline)
             )
             pending_conflict = None
 
+            if self._aborted:
+                return self._abort_unknown()
+
             if conflict is not None:
+                if deadline is not None and time.monotonic() >= deadline:
+                    return self._abort_unknown()
+                if (
+                    max_conflicts is not None
+                    and (self._conflicts - start_conflicts) >= max_conflicts
+                ):
+                    return self._abort_unknown()
                 if self._handle_conflict(conflict) is SolveResult.UNSAT:
                     self._ok = False
                     self._unsat_core = []
@@ -204,16 +236,10 @@ class SATSolver:
                     lemmas = self._propagator.check()
                     if lemmas:
                         self._stats["theory_lemmas"] += len(lemmas)
-                        progressed = False
-                        for raw_lemma in lemmas:
-                            lemma_conflict, added_progress = self._add_theory_lemma(
-                                raw_lemma
-                            )
-                            progressed = progressed or added_progress
-                            if lemma_conflict is not None:
-                                pending_conflict = lemma_conflict
-                                progressed = True
-                                break
+                        lemma_conflict, progressed = self._install_theory_lemmas(lemmas)
+                        if lemma_conflict is not None:
+                            pending_conflict = lemma_conflict
+                            continue
                         if progressed:
                             continue
 
@@ -226,6 +252,13 @@ class SATSolver:
             if self._propagator is not None:
                 self._propagator.push()
             self._trail.assign(decision_lit, reason=None)
+
+    def _abort_unknown(self) -> SolveResult:
+        self._aborted = False
+        self._backtrack(0)
+        self._unsat_core = []
+        self._last_result = SolveResult.UNKNOWN
+        return SolveResult.UNKNOWN
 
     def model(self) -> dict[Var, bool]:
         """Return the variable assignment from the most recent ``SAT`` result."""
@@ -361,13 +394,17 @@ class SATSolver:
 
         return None
 
-    def _propagate(self) -> Clause | None:
+    def _propagate(self, deadline: float | None = None) -> Clause | None:
         while True:
-            conflict = self._propagate_sat()
-            if conflict is not None:
+            conflict = self._propagate_sat(deadline)
+            if conflict is not None or self._aborted:
                 return conflict
 
             if self._propagator is None:
+                return None
+
+            if deadline is not None and time.monotonic() >= deadline:
+                self._aborted = True
                 return None
 
             stack = self._trail.stack
@@ -396,13 +433,22 @@ class SATSolver:
             if not propagated_any:
                 return None
 
-    def _propagate_sat(self) -> Clause | None:
+    def _propagate_sat(self, deadline: float | None = None) -> Clause | None:
         lit_eval = self._trail.lit_eval
         watches = self._watches
         bin_watches = self._bin_watches
         stack = self._trail.stack
+        propagations = 0
 
         while self._qhead < len(stack):
+            propagations += 1
+            if (
+                deadline is not None
+                and (propagations & 511) == 0
+                and time.monotonic() >= deadline
+            ):
+                self._aborted = True
+                return None
             self._stats["propagations"] += 1
             p = stack[self._qhead]
             self._qhead += 1
@@ -647,80 +693,110 @@ class SATSolver:
 
         return list(dict.fromkeys(core))
 
-    def _add_theory_lemma(self, raw_lits: Sequence[Lit]) -> tuple[Clause | None, bool]:
+    def _normalize_theory_lemma(self, raw_lits: Sequence[Lit]) -> list[Lit] | None:
         self._ensure_lits_vars(raw_lits)
         deduped: list[Lit] = []
         seen_lits: set[Lit] = set()
         for lit in raw_lits:
             if (lit ^ 1) in seen_lits:
-                return None, False  # Tautological lemma.
+                return None  # Tautological lemma.
             if lit not in seen_lits:
                 seen_lits.add(lit)
                 deduped.append(lit)
+        return deduped
 
-        if not deduped:
-            return Clause([], learned=True), True
+    def _install_theory_lemmas(
+        self, lemmas: Sequence[Sequence[Lit]]
+    ) -> tuple[Clause | None, bool]:
+        """Install every clause in ``lemmas`` permanently without dropping any."""
+        has_empty = False
+        unit_lits: list[Lit] = []
+        multi_clauses: list[list[Lit]] = []
 
-        if len(deduped) == 1:
-            lit = deduped[0]
-            val = self._trail.eval_lit(lit)
-            if val == L_FALSE:
-                return Clause([lit], learned=True), True
-            if val == L_UNDEF or self._trail.level[lit >> 1] > 0:
-                self._backtrack(0)
-                if self._trail.eval_lit(lit) == L_FALSE:
-                    return Clause([lit], learned=True), True
-                if self._trail.eval_lit(lit) == L_UNDEF:
-                    self._trail.assign(lit, reason=None)
-                return None, True
-            return None, False
+        for raw_lits in lemmas:
+            deduped = self._normalize_theory_lemma(raw_lits)
+            if deduped is None:
+                continue
+            if not deduped:
+                has_empty = True
+            elif len(deduped) == 1:
+                unit_lits.append(deduped[0])
+            else:
+                multi_clauses.append(deduped)
 
-        # Place the two best watched literals at indices 0 and 1.
-        def watch_rank(idx: int) -> tuple[int, int]:
-            lit = deduped[idx]
+        progressed = False
+        best_conflict: Clause | None = None
+        best_conflict_level = 1 << 30
+
+        if has_empty:
+            best_conflict = Clause([], learned=False)
+            best_conflict_level = 0
+            progressed = True
+
+        if unit_lits:
+            needs_level0 = any(
+                self._trail.eval_lit(lit) != L_TRUE or self._trail.level[lit >> 1] > 0
+                for lit in unit_lits
+            )
+            if needs_level0:
+                if self._trail.decision_level > 0:
+                    self._backtrack(0)
+                progressed = True
+                for lit in unit_lits:
+                    val = self._trail.eval_lit(lit)
+                    if val == L_FALSE and best_conflict is None:
+                        best_conflict = Clause([lit], learned=False)
+                        best_conflict_level = 0
+                    elif val == L_UNDEF:
+                        self._trail.assign(lit, reason=None)
+
+        def watch_rank(lits: list[Lit], idx: int) -> tuple[int, int]:
+            lit = lits[idx]
             val = self._trail.eval_lit(lit)
             lvl = self._trail.level[lit >> 1] if val == L_FALSE else 0
             return (val, lvl)
 
-        best1 = 0 if watch_rank(0) >= watch_rank(1) else 1
-        best2 = 1 - best1
-        rank1 = watch_rank(best1)
-        rank2 = watch_rank(best2)
-        for k in range(2, len(deduped)):
-            rk = watch_rank(k)
-            if rk > rank1:
-                best2, rank2 = best1, rank1
-                best1, rank1 = k, rk
-            elif rk > rank2:
-                best2, rank2 = k, rk
+        for deduped in multi_clauses:
+            best1 = 0 if watch_rank(deduped, 0) >= watch_rank(deduped, 1) else 1
+            best2 = 1 - best1
+            rank1 = watch_rank(deduped, best1)
+            rank2 = watch_rank(deduped, best2)
+            for k in range(2, len(deduped)):
+                rk = watch_rank(deduped, k)
+                if rk > rank1:
+                    best2, rank2 = best1, rank1
+                    best1, rank1 = k, rk
+                elif rk > rank2:
+                    best2, rank2 = k, rk
 
-        deduped[0], deduped[best1] = deduped[best1], deduped[0]
-        if best2 == 0:
-            best2 = best1
-        deduped[1], deduped[best2] = deduped[best2], deduped[1]
+            deduped[0], deduped[best1] = deduped[best1], deduped[0]
+            if best2 == 0:
+                best2 = best1
+            deduped[1], deduped[best2] = deduped[best2], deduped[1]
 
-        has_undef = any(self._trail.eval_lit(lit) == L_UNDEF for lit in deduped)
-        if has_undef:
+            has_undef = any(self._trail.eval_lit(lit) == L_UNDEF for lit in deduped)
             clause = Clause(deduped, learned=False)
             self._clauses.append(clause)
-        else:
-            lbd = self._compute_lbd(deduped)
-            clause = Clause(deduped, learned=True, lbd=lbd)
-            self._learned.append(clause)
-            self._stats["learned_clauses"] += 1
-        self._attach_clause(clause)
+            self._attach_clause(clause)
 
-        v0 = self._trail.eval_lit(deduped[0])
-        v1 = self._trail.eval_lit(deduped[1])
-        if v0 == L_FALSE:
-            return clause, True
-        if v0 == L_UNDEF and v1 == L_FALSE:
-            target_lvl = self._trail.level[deduped[1] >> 1]
-            if target_lvl < self._trail.decision_level:
-                self._backtrack(target_lvl)
-            self._trail.assign(deduped[0], reason=clause)
-            return None, True
-        return None, has_undef
+            v0 = self._trail.eval_lit(deduped[0])
+            v1 = self._trail.eval_lit(deduped[1])
+            if v0 == L_FALSE:
+                progressed = True
+                c_lvl = self._trail.level[deduped[0] >> 1]
+                if best_conflict is None or c_lvl < best_conflict_level:
+                    best_conflict = clause
+                    best_conflict_level = c_lvl
+            elif v0 == L_UNDEF and v1 == L_FALSE and best_conflict is None:
+                target_lvl = self._trail.level[deduped[1] >> 1]
+                if target_lvl < self._trail.decision_level:
+                    self._backtrack(target_lvl)
+                self._trail.assign(deduped[0], reason=clause)
+                progressed = True
+            elif has_undef:
+                progressed = True
+
+        return best_conflict, progressed
 
     def _compute_lbd(self, lits: Sequence[Lit]) -> int:
         lbd = 0

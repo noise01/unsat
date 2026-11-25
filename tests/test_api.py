@@ -4,6 +4,7 @@ import unsat
 import unsat.sat
 from unsat import (
     SAT,
+    UNKNOWN,
     UNSAT,
     And,
     Bool,
@@ -75,3 +76,36 @@ def test_explicit_context_and_operator_ergonomics() -> None:
             _ = bool(x)
     finally:
         reset_default_context()
+
+
+def test_solver_resource_limits() -> None:
+    ctx = Context()
+    with pytest.raises(ValueError, match="timeout"):
+        Solver(ctx, timeout=-0.1)
+    with pytest.raises(ValueError, match="max_conflicts"):
+        Solver(ctx, max_conflicts=-1)
+
+    p = Bool("res_p", ctx=ctx)
+    s = Solver(ctx)
+    s.add(p)
+    assert s.check(timeout=0.0) is UNKNOWN
+    assert s.check() is SAT
+    assert s.model().eval_bool(p) is True
+
+    # Pigeonhole(4, 3) cannot finish within 1 conflict, but finishes when relaxed.
+    php = Solver(ctx)
+    grid = [[Bool(f"ph_{i}_{j}", ctx=ctx) for j in range(3)] for i in range(4)]
+    for i in range(4):
+        php.add(Or(*grid[i]))
+    for j in range(3):
+        for i1 in range(4):
+            for i2 in range(i1 + 1, 4):
+                php.add(Or(Not(grid[i1][j]), Not(grid[i2][j])))
+
+    assert php.check(max_conflicts=1) is UNKNOWN
+    assert php.check() is UNSAT
+
+    default_limited = Solver(ctx, max_conflicts=1)
+    default_limited.add(*php.assertions())
+    assert default_limited.check() is UNKNOWN
+    assert default_limited.check(max_conflicts=200) is UNSAT

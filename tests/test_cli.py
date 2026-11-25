@@ -159,3 +159,71 @@ def test_unsat_error_returns_nonzero(tmp_path: Path) -> None:
     )
     assert invalid_smt.returncode == 1
     assert "error:" in invalid_smt.stderr
+
+
+def test_unsat_resource_limit_flags() -> None:
+    # PHP(4, 3) in DIMACS exceeds 1 conflict.
+    lines = ["p cnf 12 22"]
+    for i in range(4):
+        lines.append(" ".join(str(i * 3 + j + 1) for j in range(3)) + " 0")
+    for j in range(3):
+        for i1 in range(4):
+            for i2 in range(i1 + 1, 4):
+                lines.append(f"-{i1 * 3 + j + 1} -{i2 * 3 + j + 1} 0")
+    php_cnf = "\n".join(lines) + "\n"
+
+    dimacs_limited = subprocess.run(
+        [_cli_command(), "-", "--format", "dimacs", "--max-conflicts", "1"],
+        input=php_cnf,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert dimacs_limited.stdout.strip() == "s UNKNOWN"
+
+    smt_timeout = subprocess.run(
+        [_cli_command(), "-", "--format", "smt2", "--timeout", "0"],
+        input="(declare-const p Bool)\n(assert p)\n(check-sat)\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert smt_timeout.stdout.strip() == "unknown"
+
+    smt_quant_budget = subprocess.run(
+        [
+            _cli_command(),
+            "-",
+            "--format",
+            "smt2",
+            "--max-quantifier-rounds",
+            "0",
+            "--max-quantifier-matches",
+            "4",
+        ],
+        input=(
+            "(set-logic UF)\n"
+            "(declare-fun P (Int) Bool)\n"
+            "(assert (forall ((x Int)) (! (P x) :pattern ((P x)))))\n"
+            "(check-sat)\n"
+            "(reset)\n"
+            "(set-logic UF)\n"
+            "(declare-fun Q (Int) Bool)\n"
+            "(assert (forall ((x Int)) (! (Q x) :pattern ((Q x)))))\n"
+            "(check-sat)\n"
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert smt_quant_budget.stdout.strip().splitlines() == ["unknown", "unknown"]
+
+    bad_timeout = subprocess.run(
+        [_cli_command(), "-", "--format", "dimacs", "--timeout", "-1"],
+        input=SAT_CNF,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert bad_timeout.returncode == 1
+    assert "error:" in bad_timeout.stderr

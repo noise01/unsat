@@ -1,7 +1,8 @@
+import pytest
 import z3
 
 from unsat.model import ProjectionModelConverter
-from unsat.smt import SMTSolver, SolveResult
+from unsat.smt import SMTSolver, SolveResult, solve_with_tactic
 from unsat.syntax import Context, Quantifier, has_quantifiers
 from unsat.tactics import (
     CtxSimplifyTactic,
@@ -191,3 +192,30 @@ def test_gaussian_elim_and_propagate_bounds_with_model_reconstruction() -> None:
     assert propagate_bounds(
         (ctx.mk_gt(ix, ctx.mk_int_val(2)), ctx.mk_lt(ix, ctx.mk_int_val(3)))
     ).formulas == (ctx.false_expr,)
+
+    # solve_with_tactic end-to-end: SAT model conversion, UNSAT, and budgets.
+    res_sat, model_sat = solve_with_tactic(pin_goals, pipeline)
+    assert res_sat is SolveResult.SAT
+    assert model_sat is not None
+    assert model_sat.eval_int(ix) == 4
+    assert model_sat.eval_int(iy) >= 4
+    for item in pin_goals:
+        assert model_sat.eval_bool(item) is True
+
+    res_unsat, model_unsat = solve_with_tactic(
+        (ctx.mk_gt(ix, ctx.mk_int_val(2)), ctx.mk_lt(ix, ctx.mk_int_val(3))),
+        pipeline,
+    )
+    assert res_unsat is SolveResult.UNSAT
+    assert model_unsat is None
+
+    res_to, model_to = solve_with_tactic(pin_goals, pipeline, timeout=0.0)
+    assert res_to is SolveResult.UNKNOWN
+    assert model_to is None
+
+    res_empty, model_empty = solve_with_tactic((), SimplifyTactic(), ctx=ctx)
+    assert res_empty is SolveResult.SAT
+    assert model_empty is not None
+
+    with pytest.raises(ValueError, match="ctx"):
+        solve_with_tactic((), SimplifyTactic())

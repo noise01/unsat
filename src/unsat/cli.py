@@ -69,6 +69,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print solver search statistics as comment lines.",
     )
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-check wall-clock timeout in seconds.",
+    )
+    parser.add_argument(
+        "--max-conflicts",
+        type=int,
+        default=None,
+        help="Maximum SAT conflicts per check.",
+    )
+    parser.add_argument(
+        "--max-quantifier-rounds",
+        type=int,
+        default=None,
+        help="Maximum quantifier instantiation rounds per check (SMT-LIB2 only).",
+    )
+    parser.add_argument(
+        "--max-quantifier-matches",
+        type=int,
+        default=None,
+        help="Maximum E-matching instantiations per check (SMT-LIB2 only).",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"unsat {_package_version()}",
@@ -93,7 +117,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         fmt = _detect_format(args.input, text, args.format)
         if fmt == "smt2":
-            outputs, stats = execute_smt2(text)
+            outputs, stats = execute_smt2(
+                text,
+                timeout=args.timeout,
+                max_conflicts=args.max_conflicts,
+                max_quantifier_rounds=args.max_quantifier_rounds,
+                max_quantifier_matches=args.max_quantifier_matches,
+            )
             if args.stats:
                 for key, val in stats.items():
                     print(f"; {key}: {val}")
@@ -102,7 +132,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         cnf = parse_dimacs(text)
-        result, model, stats = solve_dimacs(cnf)
+        result, model, stats = solve_dimacs(
+            cnf,
+            timeout=args.timeout,
+            max_conflicts=args.max_conflicts,
+        )
         if args.stats:
             for key, val in stats.items():
                 print(f"c {key}: {val}")

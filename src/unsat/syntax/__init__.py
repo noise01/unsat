@@ -4,11 +4,11 @@ Stateless/explicit-context AST layer at the bottom of the solver; must not
 depend on any other ``unsat`` module.
 """
 
-from unsat.syntax.core import (
+from unsat.syntax.context import Context
+from unsat.syntax.expr import (
     App,
     BoundVar,
     Const,
-    Context,
     Expr,
     FuncDecl,
     Quantifier,

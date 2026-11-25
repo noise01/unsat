@@ -1,3 +1,4 @@
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -376,3 +377,88 @@ def test_theory_unit_explanation_and_check_unit_lemma() -> None:
     assert solver3.solve([p, q]) is SolveResult.UNSAT
     assert set(solver3.unsat_core()) == {p, q}
     assert solver3.statistics()["theory_conflicts"] >= 1
+
+
+def test_check_batch_preserves_clauses_after_conflict_and_reduce_db() -> None:
+    p, q, r = pos_lit(0), pos_lit(1), pos_lit(2)
+    # Conflict clause [~p, ~q] comes FIRST under trail [p, q, r], followed by
+    # definition clause [~r] (or [p, ~r] + [~q, ~r]) which must not be dropped.
+    batch = [
+        [negate(p), negate(q)],  # Conflict when p=T, q=T
+        [negate(p), negate(r)],  # Must hold after backtracking and DB reduction
+    ]
+
+    class _BatchProp(RecordingPropagator):
+        def check(self) -> Sequence[Sequence[Lit]]:
+            self.check_calls += 1
+            if self.check_calls == 1:
+                return batch
+            return ()
+
+    prop = _BatchProp()
+    solver = SATSolver(propagator=prop)
+    solver.ensure_vars(3)
+    solver.add_clause([p, q])
+    solver.add_clause([p, r])
+    assert solver.solve([p, q, r]) is SolveResult.UNSAT
+
+    # Verify the post-conflict clause [~p, ~r] remained permanent across _reduce_db().
+    solver._reduce_db()
+    assert solver.solve([p, r]) is SolveResult.UNSAT
+    assert solver.solve([p, negate(q), negate(r)]) is SolveResult.SAT
+    m = solver.model()
+    assert m[0] is True
+    assert m[1] is False
+    assert m[2] is False
+
+
+def test_solve_resource_limits_max_conflicts_and_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    solver = SATSolver()
+    for clause in _pigeonhole_clauses(4, 3):
+        solver.add_clause(clause)
+
+    with pytest.raises(ValueError, match="max_conflicts"):
+        solver.solve(max_conflicts=-1)
+
+    assert solver.solve(max_conflicts=1) is SolveResult.UNKNOWN
+    assert solver.ok is True
+    assert solver.statistics()["conflicts"] == 1
+    assert solver.unsat_core() == []
+    with pytest.raises(ValueError, match="Model is only available"):
+        solver.model()
+
+    # Subsequent solve without conflict budget recovers and finishes UNSAT.
+    assert solver.solve() is SolveResult.UNSAT
+
+    # Past deadline unwinds cleanly without corrupting SAT state.
+    sat_solver = SATSolver()
+    p, q = pos_lit(0), pos_lit(1)
+    sat_solver.add_clause([p, q])
+    assert sat_solver.solve() is SolveResult.SAT
+    assert sat_solver.solve(deadline=time.monotonic() - 1.0) is SolveResult.UNKNOWN
+    assert sat_solver.ok is True
+    assert sat_solver.solve() is SolveResult.SAT
+
+    # Mid-propagation deadline abort inside _propagate_sat (> 512 propagations).
+    chain = SATSolver()
+    chain.ensure_vars(600)
+    for i in range(599):
+        chain.add_clause([neg_lit(i), pos_lit(i + 1)])
+
+    calls = 0
+
+    def fake_monotonic() -> float:
+        nonlocal calls
+        calls += 1
+        return 10.0 if calls <= 3 else 100.0
+
+    monkeypatch.setattr("unsat.sat.solver.time.monotonic", fake_monotonic)
+    assert chain.solve([pos_lit(0)], deadline=50.0) is SolveResult.UNKNOWN
+    assert chain.ok is True
+    assert calls == 4
+
+    monkeypatch.undo()
+    assert chain.solve([pos_lit(0)]) is SolveResult.SAT
+    assert chain.model()[599] is True

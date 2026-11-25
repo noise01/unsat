@@ -138,7 +138,7 @@ class ArraySolver:
             lemmas.append(ArrayLemma(reasons, formula))
             return True
 
-        # 1. RoW1-self & store class representative reads.
+        # 1. RoW1-self & store equivalence-class member reads.
         for st in self._stores:
             _, idx, val = st.args
             sel_self = self._ctx.mk_select(st, idx)
@@ -147,11 +147,13 @@ class ArraySolver:
             ):
                 self._stats.row1_lemmas += 1
             rep = euf.rep_expr(st)
-            if rep is not st:
-                sel_rep = self._ctx.mk_select(rep, idx)
-                if not euf.are_equal(sel_rep, val):
-                    reasons = tuple(euf.explain_terms_equal(st, rep))
-                    if _add(reasons, self._ctx.mk_eq(sel_rep, val)):
+            for member in sorted(euf.eclass_members(rep), key=lambda t: t.id):
+                if member is st:
+                    continue
+                sel_m = self._ctx.mk_select(member, idx)
+                if not euf.are_equal(sel_m, val):
+                    reasons = tuple(dict.fromkeys(euf.explain_terms_equal(st, member)))
+                    if _add(reasons, self._ctx.mk_eq(sel_m, val)):
                         self._stats.row1_lemmas += 1
 
         # 2. RoW1 & RoW2-down: select(b, j) where b == store(a, i, v).

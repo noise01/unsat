@@ -1,11 +1,19 @@
-"""SMT-LIB2 lexer, S-expression parser, formatter, and command runner."""
+"""SMT-LIB2 command runner and script execution helpers."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-from fractions import Fraction
 from pathlib import Path
 
-from unsat.model import Model, Value
+from unsat.parser.smt2.format import format_smt2_model
+from unsat.parser.smt2.lexer import (
+    SExpr,
+    _BVLiteral,
+    _Keyword,
+    _parse_sexprs,
+    _StringLit,
+    _Symbol,
+    tokenize_smt2,
+)
 from unsat.sat import SolveResult
 from unsat.smt import SMTSolver
 from unsat.syntax import (
@@ -15,251 +23,11 @@ from unsat.syntax import (
     Expr,
     FuncDecl,
     Sort,
-    SortKind,
     abstract_vars,
     format_expr,
-    format_sort,
     quote_smt2_symbol,
+    substitute,
 )
-
-type SExpr = _Atom | tuple[SExpr, ...]
-
-_SIMPLE_SYMBOL_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789~!@$%^&*_-+=<>.?/"
-)
-_HEX_CHARS = frozenset("0123456789abcdefABCDEF")
-
-
-@dataclass(frozen=True, slots=True)
-class _Symbol:
-    name: str
-    quoted: bool
-    line: int
-    col: int
-
-
-@dataclass(frozen=True, slots=True)
-class _Keyword:
-    name: str
-    line: int
-    col: int
-
-
-@dataclass(frozen=True, slots=True)
-class _StringLit:
-    value: str
-    line: int
-    col: int
-
-
-@dataclass(frozen=True, slots=True)
-class _BVLiteral:
-    value: int
-    width: int
-    line: int
-    col: int
-
-
-type _Atom = _Symbol | _Keyword | _StringLit | _BVLiteral
-
-
-@dataclass(frozen=True, slots=True)
-class _Token:
-    kind: str
-    value: str
-    line: int
-    col: int
-
-
-def tokenize_smt2(text: str) -> list[_Token]:
-    """Tokenize SMT-LIB2 source text into tokens."""
-    text = text.removeprefix("\ufeff")
-    tokens: list[_Token] = []
-    n = len(text)
-    i = 0
-    line = 1
-    col = 1
-
-    while i < n:
-        ch = text[i]
-        if ch in " \t\r":
-            i += 1
-            col += 1
-            continue
-        if ch == "\n":
-            i += 1
-            line += 1
-            col = 1
-            continue
-        if ch == ";":
-            while i < n and text[i] != "\n":
-                i += 1
-            continue
-        if ch == "(":
-            tokens.append(_Token("LPAREN", "(", line, col))
-            i += 1
-            col += 1
-            continue
-        if ch == ")":
-            tokens.append(_Token("RPAREN", ")", line, col))
-            i += 1
-            col += 1
-            continue
-        if ch == "|":
-            start_line, start_col = line, col
-            i += 1
-            col += 1
-            chars: list[str] = []
-            while i < n and text[i] != "|":
-                if text[i] == "\\":
-                    msg = f"Line {line}, col {col}: '\\' is not allowed inside '|...|'"
-                    raise ValueError(msg)
-                if text[i] == "\n":
-                    line += 1
-                    col = 1
-                else:
-                    col += 1
-                chars.append(text[i])
-                i += 1
-            if i >= n:
-                msg = (
-                    f"Line {start_line}, col {start_col}: "
-                    "unterminated quoted symbol '|...|'"
-                )
-                raise ValueError(msg)
-            i += 1
-            col += 1
-            tokens.append(_Token("QSYMBOL", "".join(chars), start_line, start_col))
-            continue
-        if ch == '"':
-            start_line, start_col = line, col
-            i += 1
-            col += 1
-            chars = []
-            while i < n:
-                cur = text[i]
-                if cur == '"':
-                    if i + 1 < n and text[i + 1] == '"':
-                        chars.append('"')
-                        i += 2
-                        col += 2
-                        continue
-                    i += 1
-                    col += 1
-                    break
-                if cur == "\n":
-                    line += 1
-                    col = 1
-                else:
-                    col += 1
-                chars.append(cur)
-                i += 1
-            else:
-                msg = f"Line {start_line}, col {start_col}: unterminated string literal"
-                raise ValueError(msg)
-            tokens.append(_Token("STRING", "".join(chars), start_line, start_col))
-            continue
-        if ch == ":":
-            start_col = col
-            i += 1
-            col += 1
-            start = i
-            while i < n and text[i] in _SIMPLE_SYMBOL_CHARS:
-                i += 1
-                col += 1
-            if i == start:
-                msg = f"Line {line}, col {start_col}: empty keyword ':'"
-                raise ValueError(msg)
-            tokens.append(_Token("KEYWORD", text[start:i], line, start_col))
-            continue
-        if ch == "#":
-            start_col = col
-            if i + 1 < n and text[i + 1] == "b":
-                i += 2
-                col += 2
-                start = i
-                while i < n and text[i] in ("0", "1"):
-                    i += 1
-                    col += 1
-                if i == start:
-                    msg = f"Line {line}, col {start_col}: empty binary '#b' literal"
-                    raise ValueError(msg)
-                tokens.append(_Token("BVBIN", text[start:i], line, start_col))
-                continue
-            if i + 1 < n and text[i + 1] == "x":
-                i += 2
-                col += 2
-                start = i
-                while i < n and text[i] in _HEX_CHARS:
-                    i += 1
-                    col += 1
-                if i == start:
-                    msg = f"Line {line}, col {start_col}: empty hex '#x' literal"
-                    raise ValueError(msg)
-                tokens.append(_Token("BVHEX", text[start:i], line, start_col))
-                continue
-            msg = f"Line {line}, col {col}: unexpected '#' literal"
-            raise ValueError(msg)
-        if ch in _SIMPLE_SYMBOL_CHARS:
-            start_col = col
-            start = i
-            while i < n and text[i] in _SIMPLE_SYMBOL_CHARS:
-                i += 1
-                col += 1
-            tokens.append(_Token("SYMBOL", text[start:i], line, start_col))
-            continue
-
-        msg = f"Line {line}, col {col}: unexpected character {ch!r}"
-        raise ValueError(msg)
-
-    return tokens
-
-
-def _parse_sexprs(tokens: Sequence[_Token]) -> list[SExpr]:
-    top: list[SExpr] = []
-    stack: list[tuple[list[SExpr], int, int]] = []
-
-    for tok in tokens:
-        if tok.kind == "LPAREN":
-            stack.append(([], tok.line, tok.col))
-            continue
-        if tok.kind == "RPAREN":
-            if not stack:
-                msg = f"Line {tok.line}, col {tok.col}: unexpected ')'"
-                raise ValueError(msg)
-            items, _, _ = stack.pop()
-            node: SExpr = tuple(items)
-            if stack:
-                stack[-1][0].append(node)
-            else:
-                top.append(node)
-            continue
-
-        if tok.kind == "SYMBOL":
-            atom: SExpr = _Symbol(tok.value, False, tok.line, tok.col)
-        elif tok.kind == "QSYMBOL":
-            atom = _Symbol(tok.value, True, tok.line, tok.col)
-        elif tok.kind == "KEYWORD":
-            atom = _Keyword(tok.value, tok.line, tok.col)
-        elif tok.kind == "BVBIN":
-            atom = _BVLiteral(int(tok.value, 2), len(tok.value), tok.line, tok.col)
-        elif tok.kind == "BVHEX":
-            atom = _BVLiteral(int(tok.value, 16), 4 * len(tok.value), tok.line, tok.col)
-        else:
-            atom = _StringLit(tok.value, tok.line, tok.col)
-
-        if stack:
-            stack[-1][0].append(atom)
-        else:
-            top.append(atom)
-
-    if stack:
-        _, open_line, open_col = stack[-1]
-        msg = f"Line {open_line}, col {open_col}: unclosed '('"
-        raise ValueError(msg)
-
-    return top
-
 
 _SUPPORTED_LOGICS = frozenset(
     {
@@ -307,103 +75,58 @@ def _is_decimal_token(name: str) -> bool:
     return len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit()
 
 
-def _default_expr_for_model(model: Model, sort: Sort) -> Expr:
-    chain: list[Sort] = []
-    cur = sort
-    while cur.kind is SortKind.ARRAY:
-        chain.append(cur.index_sort)
-        cur = cur.element_sort
-    if cur.kind is SortKind.BOOL:
-        val: Expr = model.ctx.mk_false()
-    elif cur.kind is SortKind.INT:
-        val = model.ctx.mk_int_val(0)
-    elif cur.kind is SortKind.REAL:
-        val = model.ctx.mk_real_val(0)
-    elif cur.kind is SortKind.BITVEC:
-        val = model.ctx.mk_bv_val(0, cur.size)
-    else:
-        universe = model.universe(cur)
-        val = universe[0] if universe else model.ctx.mk_domain_val(cur, 0)
-    for idx_sort in reversed(chain):
-        val = model.ctx.mk_const_array(idx_sort, val)
-    return val
+@dataclass(frozen=True, slots=True)
+class _FuncDef:
+    params: tuple[App, ...]
+    param_sorts: tuple[Sort, ...]
+    return_sort: Sort
+    body: Expr
 
 
-def _format_value_atom(ctx: Context, val: Value, sort: Sort) -> str:
-    if isinstance(val, bool):
-        return "true" if val else "false"
-    if isinstance(val, int):
-        if sort.is_bv:
-            return format_expr(ctx.mk_bv_val(val, sort.size))
-        return format_expr(ctx.mk_int_val(val))
-    if isinstance(val, Fraction):
-        return format_expr(ctx.mk_real_val(val))
-    return format_expr(val)
-
-
-def format_smt2_model(
-    model: Model,
-    *,
-    decls: Sequence[FuncDecl] | None = None,
-) -> str:
-    """Format ``model`` as an SMT-LIB2 ``(get-model)`` S-expression."""
-    target_decls = (
-        tuple(decls) if decls is not None else (model.decls() + model.func_decls())
-    )
-    if not target_decls:
-        return "()"
-
-    lines = ["("]
-    for decl in target_decls:
-        sym = quote_smt2_symbol(decl.name)
-        range_str = format_sort(decl.range_sort)
-        if decl.arity == 0:
-            raw_val = model.get(decl)
-            val_str = (
-                _format_value_atom(model.ctx, raw_val, decl.range_sort)
-                if raw_val is not None
-                else format_expr(_default_expr_for_model(model, decl.range_sort))
-            )
-            lines.append(f"  (define-fun {sym} () {range_str} {val_str})")
-            continue
-
-        param_names = [f"x!{i}" for i in range(decl.arity)]
-        params_str = " ".join(
-            f"({p} {format_sort(sort)})"
-            for p, sort in zip(param_names, decl.domain, strict=True)
-        )
-        if model.has_func_interp(decl):
-            interp = model.func_interp(decl)
-            body = format_expr(interp.else_value)
-            for key_args, result in reversed(interp.entries()):
-                if len(key_args) == 1:
-                    cond = f"(= {param_names[0]} {format_expr(key_args[0])})"
-                else:
-                    eqs = " ".join(
-                        f"(= {p} {format_expr(arg)})"
-                        for p, arg in zip(param_names, key_args, strict=True)
-                    )
-                    cond = f"(and {eqs})"
-                body = f"(ite {cond} {format_expr(result)} {body})"
-        else:
-            body = format_expr(_default_expr_for_model(model, decl.range_sort))
-        lines.append(f"  (define-fun {sym} ({params_str}) {range_str} {body})")
-    lines.append(")")
-    return "\n".join(lines)
+@dataclass(frozen=True, slots=True)
+class _SortDef:
+    params: tuple[str, ...]
+    body: SExpr
 
 
 class SMT2Runner:
     """Stateful SMT-LIB2 command executor for core & combined SMT logics."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float | None = None,
+        max_conflicts: int | None = None,
+        max_quantifier_rounds: int | None = None,
+        max_quantifier_matches: int | None = None,
+    ) -> None:
+        self._timeout = timeout
+        self._max_conflicts = max_conflicts
+        self._max_quantifier_rounds = max_quantifier_rounds
+        self._max_quantifier_matches = max_quantifier_matches
         self.ctx = Context()
-        self.solver = SMTSolver(self.ctx)
+        self.solver = self._make_solver()
         self._sorts_stack: list[dict[str, Sort]] = [{}]
+        self._sort_defs_stack: list[dict[str, _SortDef]] = [{}]
         self._decls_stack: list[dict[str, FuncDecl]] = [{}]
-        self._defs_stack: list[dict[str, Expr]] = [{}]
+        self._defs_stack: list[dict[str, _FuncDef]] = [{}]
         self._declared_order: list[list[FuncDecl]] = [[]]
+        self._named_stack: list[list[tuple[App, str]]] = [[]]
+        self._assertions_stack: list[list[Expr]] = [[]]
         self._logic: str | None = None
         self._qvar_seq = 0
+        self._named_seq = 0
+        self._last_check_result: SolveResult | None = None
+        self._last_named_map: dict[Expr, str] = {}
+
+    def _make_solver(self) -> SMTSolver:
+        return SMTSolver(
+            self.ctx,
+            timeout=self._timeout,
+            max_conflicts=self._max_conflicts,
+            max_quantifier_rounds=self._max_quantifier_rounds,
+            max_quantifier_matches=self._max_quantifier_matches,
+        )
 
     def declared_decls(self) -> list[FuncDecl]:
         """Return currently active declarations in declaration order."""
@@ -426,23 +149,39 @@ class SMT2Runner:
         """Return underlying solver statistics."""
         return self.solver.statistics()
 
-    def _lookup_sort(self, name: str) -> Sort | None:
-        for scope in reversed(self._sorts_stack):
-            if name in scope:
-                return scope[name]
+    def _lookup_sort_entry(self, name: str) -> Sort | _SortDef | None:
+        for sort_scope, def_scope in zip(
+            reversed(self._sorts_stack), reversed(self._sort_defs_stack), strict=True
+        ):
+            if name in def_scope:
+                return def_scope[name]
+            if name in sort_scope:
+                return sort_scope[name]
         return None
 
-    def _lookup_decl(self, name: str) -> FuncDecl | None:
-        for scope in reversed(self._decls_stack):
-            if name in scope:
-                return scope[name]
+    def _lookup_callable(self, name: str) -> FuncDecl | _FuncDef | None:
+        for decl_scope, def_scope in zip(
+            reversed(self._decls_stack), reversed(self._defs_stack), strict=True
+        ):
+            if name in def_scope:
+                return def_scope[name]
+            if name in decl_scope:
+                return decl_scope[name]
         return None
 
-    def _lookup_def(self, name: str) -> Expr | None:
-        for scope in reversed(self._defs_stack):
-            if name in scope:
-                return scope[name]
-        return None
+    def _alloc_placeholder(self, prefix: str, sort: Sort) -> App:
+        while True:
+            self._qvar_seq += 1
+            ph_name = f"{prefix}!{self._qvar_seq}"
+            if self._lookup_callable(ph_name) is None:
+                return self.ctx.mk_const(ph_name, sort)
+
+    def _alloc_named_indicator(self) -> App:
+        while True:
+            self._named_seq += 1
+            ind_name = f"__smt2_named!{self._named_seq}"
+            if self._lookup_callable(ind_name) is None:
+                return self.ctx.mk_const(ind_name, self.ctx.bool_sort)
 
     def _expect_symbol(self, sexpr: SExpr, context_desc: str) -> _Symbol:
         if not isinstance(sexpr, _Symbol):
@@ -450,7 +189,13 @@ class SMT2Runner:
             raise ValueError(msg)
         return sexpr
 
-    def _resolve_sort(self, sexpr: SExpr, context_desc: str) -> Sort:
+    def _resolve_sort(
+        self,
+        sexpr: SExpr,
+        context_desc: str,
+        sort_env: Mapping[str, Sort] | None = None,
+        resolving: frozenset[str] = frozenset(),
+    ) -> Sort:
         if isinstance(sexpr, tuple) and sexpr:
             head = self._expect_symbol(sexpr[0], context_desc)
             if not head.quoted and head.name == "_" and len(sexpr) == 3:
@@ -459,9 +204,39 @@ class SMT2Runner:
                     width = self._parse_nonneg_int(sexpr[2], context_desc)
                     return self.ctx.mk_bv_sort(width)
             if not head.quoted and head.name == "Array" and len(sexpr) == 3:
-                idx_sort = self._resolve_sort(sexpr[1], context_desc)
-                elem_sort = self._resolve_sort(sexpr[2], context_desc)
+                idx_sort = self._resolve_sort(
+                    sexpr[1], context_desc, sort_env=sort_env, resolving=resolving
+                )
+                elem_sort = self._resolve_sort(
+                    sexpr[2], context_desc, sort_env=sort_env, resolving=resolving
+                )
                 return self.ctx.mk_array_sort(idx_sort, elem_sort)
+            if head.name in resolving:
+                msg = (
+                    f"Cyclic sort definition involving {head.name!r} in {context_desc}"
+                )
+                raise ValueError(msg)
+            entry = self._lookup_sort_entry(head.name)
+            if isinstance(entry, _SortDef):
+                if len(sexpr) - 1 != len(entry.params):
+                    msg = (
+                        f"Sort {head.name!r} expects {len(entry.params)} arguments, "
+                        f"got {len(sexpr) - 1}"
+                    )
+                    raise ValueError(msg)
+                resolved_args = [
+                    self._resolve_sort(
+                        arg, context_desc, sort_env=sort_env, resolving=resolving
+                    )
+                    for arg in sexpr[1:]
+                ]
+                next_env = dict(zip(entry.params, resolved_args, strict=True))
+                return self._resolve_sort(
+                    entry.body,
+                    context_desc,
+                    sort_env=next_env,
+                    resolving=resolving | {head.name},
+                )
             msg = f"Invalid compound sort {sexpr!r} in {context_desc}"
             raise ValueError(msg)
 
@@ -473,11 +248,29 @@ class SMT2Runner:
                 return self.ctx.int_sort
             if sym.name == "Real":
                 return self.ctx.real_sort
-        found = self._lookup_sort(sym.name)
-        if found is None:
-            msg = f"Unknown sort {sym.name!r} in {context_desc}"
+        if sort_env is not None and sym.name in sort_env:
+            return sort_env[sym.name]
+        if sym.name in resolving:
+            msg = f"Cyclic sort definition involving {sym.name!r} in {context_desc}"
             raise ValueError(msg)
-        return found
+        entry = self._lookup_sort_entry(sym.name)
+        if isinstance(entry, Sort):
+            return entry
+        if isinstance(entry, _SortDef):
+            if entry.params:
+                msg = (
+                    f"Parameterized sort {sym.name!r} expects "
+                    f"{len(entry.params)} arguments"
+                )
+                raise ValueError(msg)
+            return self._resolve_sort(
+                entry.body,
+                context_desc,
+                sort_env=None,
+                resolving=resolving | {sym.name},
+            )
+        msg = f"Unknown sort {sym.name!r} in {context_desc}"
+        raise ValueError(msg)
 
     def _parse_nonneg_int(self, sexpr: SExpr, context_desc: str) -> int:
         sym = self._expect_symbol(sexpr, context_desc)
@@ -528,11 +321,69 @@ class SMT2Runner:
                 if not sym.quoted and sym.name in ("Bool", "Int", "Real"):
                     msg = f"Cannot redeclare built-in sort '{sym.name}'"
                     raise ValueError(msg)
-                if sym.name in self._sorts_stack[-1]:
+                if (
+                    sym.name in self._sorts_stack[-1]
+                    or sym.name in self._sort_defs_stack[-1]
+                ):
                     msg = f"Sort {sym.name!r} already declared in current scope"
                     raise ValueError(msg)
                 self._sorts_stack[-1][sym.name] = self.ctx.mk_uninterpreted_sort(
                     sym.name
+                )
+                return False, None
+            case "define-sort":
+                if len(args) != 3:
+                    msg = "define-sort expects <symbol> (<symbol>*) <sort>"
+                    raise ValueError(msg)
+                sym = self._expect_symbol(args[0], "define-sort")
+                if not sym.quoted and sym.name in (
+                    "Bool",
+                    "Int",
+                    "Real",
+                    "BitVec",
+                    "Array",
+                ):
+                    msg = f"Cannot redefine built-in sort '{sym.name}'"
+                    raise ValueError(msg)
+                if (
+                    sym.name in self._sorts_stack[-1]
+                    or sym.name in self._sort_defs_stack[-1]
+                ):
+                    msg = f"Sort {sym.name!r} already defined in current scope"
+                    raise ValueError(msg)
+                if not isinstance(args[1], tuple):
+                    msg = "define-sort parameter list must be a list"
+                    raise ValueError(msg)
+                param_names: list[str] = []
+                seen_params: set[str] = set()
+                for param_sexpr in args[1]:
+                    param_sym = self._expect_symbol(
+                        param_sexpr, "define-sort parameter"
+                    )
+                    if not param_sym.quoted and param_sym.name in (
+                        "Bool",
+                        "Int",
+                        "Real",
+                    ):
+                        msg = (
+                            f"Cannot use built-in sort '{param_sym.name}' as "
+                            "define-sort parameter"
+                        )
+                        raise ValueError(msg)
+                    if param_sym.name in seen_params:
+                        msg = f"Duplicate parameter {param_sym.name!r} in define-sort"
+                        raise ValueError(msg)
+                    seen_params.add(param_sym.name)
+                    param_names.append(param_sym.name)
+                dummy_env = {pname: self.ctx.bool_sort for pname in param_names}
+                self._resolve_sort(
+                    args[2],
+                    "define-sort body",
+                    sort_env=dummy_env,
+                    resolving=frozenset({sym.name}),
+                )
+                self._sort_defs_stack[-1][sym.name] = _SortDef(
+                    params=tuple(param_names), body=args[2]
                 )
                 return False, None
             case "declare-const":
@@ -566,42 +417,108 @@ class SMT2Runner:
                 if not isinstance(args[1], tuple):
                     msg = "define-fun parameter list must be a list"
                     raise ValueError(msg)
-                if args[1]:
-                    msg = "Parameterized define-fun is not supported yet"
-                    raise ValueError(msg)
-                expected_sort = self._resolve_sort(args[2], "define-fun")
                 if (
                     sym.name in self._decls_stack[-1]
                     or sym.name in self._defs_stack[-1]
                 ):
                     msg = f"Symbol {sym.name!r} already defined in current scope"
                     raise ValueError(msg)
-                body = self._parse_term(args[3], {})
+                param_env: dict[str, Expr] = {}
+                param_placeholders: list[App] = []
+                param_sorts: list[Sort] = []
+                for binding in args[1]:
+                    if not isinstance(binding, tuple) or len(binding) != 2:
+                        msg = f"Malformed define-fun parameter {binding!r}"
+                        raise ValueError(msg)
+                    p_sym = self._expect_symbol(binding[0], "define-fun parameter")
+                    if p_sym.name in param_env:
+                        msg = f"Duplicate parameter {p_sym.name!r} in define-fun"
+                        raise ValueError(msg)
+                    p_sort = self._resolve_sort(binding[1], "define-fun parameter sort")
+                    placeholder = self._alloc_placeholder("__smt2_param", p_sort)
+                    param_env[p_sym.name] = placeholder
+                    param_placeholders.append(placeholder)
+                    param_sorts.append(p_sort)
+                expected_sort = self._resolve_sort(args[2], "define-fun")
+                body = self._parse_term(args[3], param_env)
+                if expected_sort.is_real and isinstance(body, Const) and body.is_int:
+                    body = self.ctx.mk_to_real(body)
                 if body.sort is not expected_sort:
                     msg = (
                         f"define-fun '{sym.name}' body sort '{body.sort}' does not "
                         f"match declared sort '{expected_sort}'"
                     )
                     raise TypeError(msg)
-                self._defs_stack[-1][sym.name] = body
+                self._defs_stack[-1][sym.name] = _FuncDef(
+                    params=tuple(param_placeholders),
+                    param_sorts=tuple(param_sorts),
+                    return_sort=expected_sort,
+                    body=body,
+                )
                 return False, None
             case "assert":
                 if len(args) != 1:
                     msg = "assert expects exactly 1 formula"
                     raise ValueError(msg)
-                self.solver.add(self._parse_term(args[0], {}))
+                inner_sexpr, named_sym = self._unwrap_assert_named(args[0])
+                if named_sym is not None and any(
+                    existing == named_sym
+                    for scope in self._named_stack
+                    for _, existing in scope
+                ):
+                    msg = f"Duplicate assertion name {named_sym!r}"
+                    raise ValueError(msg)
+                formula = self._parse_term(inner_sexpr, {})
+                if named_sym is not None:
+                    ind = self._alloc_named_indicator()
+                    self.solver.add(self.ctx.mk_implies(ind, formula))
+                    self._named_stack[-1].append((ind, named_sym))
+                else:
+                    self.solver.add(formula)
+                self._assertions_stack[-1].append(formula)
+                self._last_check_result = None
+                self._last_named_map = {}
                 return False, None
             case "check-sat":
                 if args:
                     msg = "check-sat takes no arguments"
                     raise ValueError(msg)
-                return False, self._format_verdict(self.solver.check())
+                return False, self._run_check(())
             case "check-sat-assuming":
                 if len(args) != 1 or not isinstance(args[0], tuple):
                     msg = "check-sat-assuming expects a list of assumptions"
                     raise ValueError(msg)
-                assumps = [self._parse_term(item, {}) for item in args[0]]
-                return False, self._format_verdict(self.solver.check(*assumps))
+                assumps = tuple(self._parse_term(item, {}) for item in args[0])
+                return False, self._run_check(assumps)
+            case "get-unsat-core":
+                if args:
+                    msg = "get-unsat-core takes no arguments"
+                    raise ValueError(msg)
+                if self._last_check_result is not SolveResult.UNSAT:
+                    msg = "Unsat core is only available after check-sat returns unsat"
+                    raise ValueError(msg)
+                core_names = [
+                    quote_smt2_symbol(self._last_named_map[expr])
+                    for expr in self.solver.unsat_core()
+                    if expr in self._last_named_map
+                ]
+                return False, "(" + " ".join(core_names) + ")"
+            case "get-assertions":
+                if args:
+                    msg = "get-assertions takes no arguments"
+                    raise ValueError(msg)
+                rendered = [
+                    format_expr(expr)
+                    for scope in self._assertions_stack
+                    for expr in scope
+                ]
+                return False, "(" + " ".join(rendered) + ")"
+            case "echo":
+                if len(args) != 1 or not isinstance(args[0], _StringLit):
+                    msg = "echo expects exactly 1 string literal"
+                    raise ValueError(msg)
+                escaped = args[0].value.replace('"', '""')
+                return False, f'"{escaped}"'
             case "get-model":
                 if args:
                     msg = "get-model takes no arguments"
@@ -628,9 +545,14 @@ class SMT2Runner:
                 for _ in range(levels):
                     self.solver.push()
                     self._sorts_stack.append({})
+                    self._sort_defs_stack.append({})
                     self._decls_stack.append({})
                     self._defs_stack.append({})
                     self._declared_order.append([])
+                    self._named_stack.append([])
+                    self._assertions_stack.append([])
+                self._last_check_result = None
+                self._last_named_map = {}
                 return False, None
             case "pop":
                 levels = 1 if not args else self._parse_nonneg_int(args[0], "pop")
@@ -640,21 +562,31 @@ class SMT2Runner:
                 self.solver.pop(levels)
                 for _ in range(levels):
                     self._sorts_stack.pop()
+                    self._sort_defs_stack.pop()
                     self._decls_stack.pop()
                     self._defs_stack.pop()
                     self._declared_order.pop()
+                    self._named_stack.pop()
+                    self._assertions_stack.pop()
+                self._last_check_result = None
+                self._last_named_map = {}
                 return False, None
             case "reset":
                 if args:
                     msg = "reset takes no arguments"
                     raise ValueError(msg)
                 self.ctx = Context()
-                self.solver = SMTSolver(self.ctx)
+                self.solver = self._make_solver()
                 self._sorts_stack = [{}]
+                self._sort_defs_stack = [{}]
                 self._decls_stack = [{}]
                 self._defs_stack = [{}]
                 self._declared_order = [[]]
+                self._named_stack = [[]]
+                self._assertions_stack = [[]]
                 self._logic = None
+                self._last_check_result = None
+                self._last_named_map = {}
                 return False, None
             case "reset-assertions":
                 if args:
@@ -662,9 +594,14 @@ class SMT2Runner:
                     raise ValueError(msg)
                 self.solver.reset()
                 self._sorts_stack = [self._sorts_stack[0]]
+                self._sort_defs_stack = [self._sort_defs_stack[0]]
                 self._decls_stack = [self._decls_stack[0]]
                 self._defs_stack = [self._defs_stack[0]]
                 self._declared_order = [self._declared_order[0]]
+                self._named_stack = [[]]
+                self._assertions_stack = [[]]
+                self._last_check_result = None
+                self._last_named_map = {}
                 return False, None
             case "exit":
                 if args:
@@ -696,15 +633,85 @@ class SMT2Runner:
             return "unsat"
         return "unknown"
 
-    def _coerce_call_args(self, parsed: list[Expr], decl: FuncDecl) -> list[Expr]:
-        if len(parsed) != decl.arity:
+    def _unwrap_assert_named(self, sexpr: SExpr) -> tuple[SExpr, str | None]:
+        cur = sexpr
+        named_sym: str | None = None
+        while (
+            isinstance(cur, tuple)
+            and cur
+            and isinstance(cur[0], _Symbol)
+            and not cur[0].quoted
+            and cur[0].name == "!"
+        ):
+            ann_args = cur[1:]
+            if len(ann_args) < 3 or len(ann_args) % 2 == 0:
+                msg = "Attribute term '(! <term> :kw <val> ...)' is malformed"
+                raise ValueError(msg)
+            for idx in range(1, len(ann_args), 2):
+                kw = ann_args[idx]
+                if not isinstance(kw, _Keyword):
+                    msg = f"Expected attribute keyword in '!', got {kw!r}"
+                    raise ValueError(msg)
+                if kw.name == "named":
+                    if named_sym is not None:
+                        msg = "Multiple :named attributes on a single assertion"
+                        raise ValueError(msg)
+                    name_atom = self._expect_symbol(
+                        ann_args[idx + 1], ":named attribute"
+                    )
+                    named_sym = name_atom.name
+            cur = ann_args[0]
+        return cur, named_sym
+
+    def _run_check(self, assumptions: tuple[Expr, ...]) -> str:
+        active_named = [pair for scope in self._named_stack for pair in scope]
+        all_assumps = [*(ind for ind, _ in active_named), *assumptions]
+        verdict = self.solver.check(*all_assumps)
+        self._last_check_result = verdict
+        self._last_named_map = (
+            {ind: name for ind, name in active_named}
+            if verdict is SolveResult.UNSAT
+            else {}
+        )
+        return self._format_verdict(verdict)
+
+    def _coerce_domain_args(
+        self, parsed: list[Expr], domain: tuple[Sort, ...]
+    ) -> list[Expr]:
+        if len(parsed) != len(domain):
             return parsed
         return [
             self.ctx.mk_to_real(arg)
             if isinstance(arg, Const) and arg.is_int and exp.is_real
             else arg
-            for arg, exp in zip(parsed, decl.domain, strict=True)
+            for arg, exp in zip(parsed, domain, strict=True)
         ]
+
+    def _expand_def(
+        self,
+        name: str,
+        fdef: _FuncDef,
+        parsed: list[Expr],
+        line: int,
+        col: int,
+    ) -> Expr:
+        if len(parsed) != len(fdef.params):
+            msg = (
+                f"Line {line}, col {col}: defined function {name!r} expects "
+                f"{len(fdef.params)} arguments, got {len(parsed)}"
+            )
+            raise ValueError(msg)
+        coerced = self._coerce_domain_args(parsed, fdef.param_sorts)
+        for arg, exp in zip(coerced, fdef.param_sorts, strict=True):
+            if arg.sort is not exp:
+                msg = (
+                    f"Argument sort '{arg.sort}' does not match parameter sort "
+                    f"'{exp}' in {name!r}"
+                )
+                raise TypeError(msg)
+        if not fdef.params:
+            return fdef.body
+        return substitute(fdef.body, dict(zip(fdef.params, coerced, strict=True)))
 
     def _coerce_int_literals_for_real(self, exprs: list[Expr]) -> list[Expr]:
         if not any(item.is_real for item in exprs):
@@ -743,18 +750,24 @@ class SMT2Runner:
                     return self.ctx.mk_real_val(sexpr.name)
             if sexpr.name in local_env:
                 return local_env[sexpr.name]
-            defined = self._lookup_def(sexpr.name)
-            if defined is not None:
-                return defined
-            decl = self._lookup_decl(sexpr.name)
-            if decl is not None:
-                if decl.arity != 0:
+            target = self._lookup_callable(sexpr.name)
+            if isinstance(target, _FuncDef):
+                if target.params:
                     msg = (
-                        f"Line {sexpr.line}, col {sexpr.col}: function {sexpr.name!r} "
-                        f"of arity {decl.arity} requires arguments"
+                        f"Line {sexpr.line}, col {sexpr.col}: defined function "
+                        f"{sexpr.name!r} of arity {len(target.params)} requires "
+                        "arguments"
                     )
                     raise ValueError(msg)
-                return decl()
+                return target.body
+            if target is not None:
+                if target.arity != 0:
+                    msg = (
+                        f"Line {sexpr.line}, col {sexpr.col}: function {sexpr.name!r} "
+                        f"of arity {target.arity} requires arguments"
+                    )
+                    raise ValueError(msg)
+                return target()
             msg = (
                 f"Line {sexpr.line}, col {sexpr.col}: "
                 f"undeclared identifier {sexpr.name!r}"
@@ -772,10 +785,13 @@ class SMT2Runner:
         args = sexpr[1:]
 
         if head.quoted:
-            decl = self._lookup_decl(head.name)
-            if decl is not None:
+            target = self._lookup_callable(head.name)
+            if isinstance(target, _FuncDef):
                 parsed = [self._parse_term(arg, local_env) for arg in args]
-                return decl(*self._coerce_call_args(parsed, decl))
+                return self._expand_def(head.name, target, parsed, head.line, head.col)
+            if target is not None:
+                parsed = [self._parse_term(arg, local_env) for arg in args]
+                return target(*self._coerce_domain_args(parsed, target.domain))
             msg = (
                 f"Line {head.line}, col {head.col}: "
                 f"unknown function application {head.name!r}"
@@ -840,12 +856,7 @@ class SMT2Runner:
                     msg = f"Duplicate bound variable {var_sym.name!r} in {op}"
                     raise ValueError(msg)
                 sort = self._resolve_sort(binding[1], f"{op} binder sort")
-                while True:
-                    self._qvar_seq += 1
-                    ph_name = f"__smt2_qvar!{self._qvar_seq}"
-                    if self._lookup_decl(ph_name) is None:
-                        break
-                placeholder = self.ctx.mk_const(ph_name, sort)
+                placeholder = self._alloc_placeholder("__smt2_qvar", sort)
                 q_bound[var_sym.name] = placeholder
                 var_names.append(var_sym.name)
                 var_sorts.append(sort)
@@ -869,7 +880,7 @@ class SMT2Runner:
                     if not isinstance(kw, _Keyword):
                         msg = f"Expected attribute keyword in '!', got {kw!r}"
                         raise ValueError(msg)
-                    if kw.name == ":pattern":
+                    if kw.name == "pattern":
                         pat_val = ann_args[idx + 1]
                         if not isinstance(pat_val, tuple) or not pat_val:
                             msg = "Expected non-empty term list after :pattern"
@@ -1199,9 +1210,11 @@ class SMT2Runner:
                         val = self.ctx.mk_to_real(val)
                 return self.ctx.mk_store(arr, idx, val)
             case _:
-                decl = self._lookup_decl(op)
-                if decl is not None:
-                    return decl(*self._coerce_call_args(parsed, decl))
+                target = self._lookup_callable(op)
+                if isinstance(target, _FuncDef):
+                    return self._expand_def(op, target, parsed, head.line, head.col)
+                if target is not None:
+                    return target(*self._coerce_domain_args(parsed, target.domain))
                 msg = (
                     f"Line {head.line}, col {head.col}: "
                     f"unsupported operator or undeclared function {op!r}"
@@ -1275,26 +1288,77 @@ class SMT2Runner:
         raise ValueError(msg)
 
 
-def execute_smt2(text: str) -> tuple[list[str], dict[str, int]]:
+def execute_smt2(
+    text: str,
+    *,
+    timeout: float | None = None,
+    max_conflicts: int | None = None,
+    max_quantifier_rounds: int | None = None,
+    max_quantifier_matches: int | None = None,
+) -> tuple[list[str], dict[str, int]]:
     """Execute SMT-LIB2 script text and return outputs paired with solver stats."""
-    runner = SMT2Runner()
+    runner = SMT2Runner(
+        timeout=timeout,
+        max_conflicts=max_conflicts,
+        max_quantifier_rounds=max_quantifier_rounds,
+        max_quantifier_matches=max_quantifier_matches,
+    )
     outputs = runner.execute(text)
     return outputs, runner.statistics()
 
 
-def execute_smt2_file(path: str | Path) -> tuple[list[str], dict[str, int]]:
+def execute_smt2_file(
+    path: str | Path,
+    *,
+    timeout: float | None = None,
+    max_conflicts: int | None = None,
+    max_quantifier_rounds: int | None = None,
+    max_quantifier_matches: int | None = None,
+) -> tuple[list[str], dict[str, int]]:
     """Read and execute a UTF-8 SMT-LIB2 file, returning outputs and stats."""
     text = Path(path).read_text(encoding="utf-8-sig")
-    return execute_smt2(text)
+    return execute_smt2(
+        text,
+        timeout=timeout,
+        max_conflicts=max_conflicts,
+        max_quantifier_rounds=max_quantifier_rounds,
+        max_quantifier_matches=max_quantifier_matches,
+    )
 
 
-def run_smt2(text: str) -> list[str]:
+def run_smt2(
+    text: str,
+    *,
+    timeout: float | None = None,
+    max_conflicts: int | None = None,
+    max_quantifier_rounds: int | None = None,
+    max_quantifier_matches: int | None = None,
+) -> list[str]:
     """Execute SMT-LIB2 script text and return emitted response strings."""
-    outputs, _ = execute_smt2(text)
+    outputs, _ = execute_smt2(
+        text,
+        timeout=timeout,
+        max_conflicts=max_conflicts,
+        max_quantifier_rounds=max_quantifier_rounds,
+        max_quantifier_matches=max_quantifier_matches,
+    )
     return outputs
 
 
-def run_smt2_file(path: str | Path) -> list[str]:
+def run_smt2_file(
+    path: str | Path,
+    *,
+    timeout: float | None = None,
+    max_conflicts: int | None = None,
+    max_quantifier_rounds: int | None = None,
+    max_quantifier_matches: int | None = None,
+) -> list[str]:
     """Read and execute a UTF-8 SMT-LIB2 file and return emitted response strings."""
-    outputs, _ = execute_smt2_file(path)
+    outputs, _ = execute_smt2_file(
+        path,
+        timeout=timeout,
+        max_conflicts=max_conflicts,
+        max_quantifier_rounds=max_quantifier_rounds,
+        max_quantifier_matches=max_quantifier_matches,
+    )
     return outputs

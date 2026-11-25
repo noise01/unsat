@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator, Mapping, Sequence
 
-from unsat.syntax.core import (
+from unsat.syntax.expr import (
     App,
     BoundVar,
     Const,
@@ -26,13 +26,18 @@ _RESERVED_WORDS = frozenset(
         "check-sat-assuming",
         "declare-const",
         "declare-fun",
+        "declare-sort",
         "define-fun",
+        "define-sort",
         "distinct",
+        "echo",
         "exists",
         "exit",
         "false",
         "forall",
+        "get-assertions",
         "get-model",
+        "get-unsat-core",
         "get-value",
         "ite",
         "let",

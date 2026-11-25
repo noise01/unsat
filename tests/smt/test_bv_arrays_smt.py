@@ -195,3 +195,70 @@ def test_qf_auflia_and_bv_arrays_mbtc_incremental() -> None:
     assert m2.eval_bv(bv) == 3
     assert m2.eval_bv(unsat.Select(barr, bv)) > 1
     assert "theory_array_checks" in s2.statistics()
+
+
+def test_qf_aufbv_const_array_mbtc_regression() -> None:
+    unsat.reset_default_context()
+    bv4 = unsat.BitVecSort(4)
+    b0 = unsat.Bool("b0")
+    x, y, z = unsat.BitVecs("x y z", 4)
+    arr = unsat.Array("A", bv4, bv4)
+    pred = unsat.Function("P", bv4, unsat.BoolSort())
+    k0 = unsat.K(bv4, unsat.BitVecVal(0, 4))
+
+    f1 = unsat.And(pred(x), unsat.Distinct(y, x, ~x))
+    f2 = unsat.And(
+        unsat.If(unsat.Eq(k0, arr), b0, unsat.Not(unsat.Eq(x, y)) | (-(~x) <= x)),
+        unsat.If(b0, unsat.Eq(x, z), unsat.BoolVal(False)),
+    )
+    f3 = (z ^ (unsat.Select(unsat.Store(k0, 0, x), x) << 2)) <= y
+
+    solver = unsat.Solver()
+    solver.add(f1, f2, f3)
+    assert solver.check() is unsat.SAT
+    model = solver.model()
+    for formula in (f1, f2, f3):
+        assert model.eval_bool(formula, model_completion=True) is True
+
+
+def test_qf_aufbv_store_eclass_member_read_regression() -> None:
+    unsat.reset_default_context()
+    bv4 = unsat.BitVecSort(4)
+    x = unsat.BitVec("x_eclass", bv4)
+    z = unsat.BitVec("z_eclass", bv4)
+    arr = unsat.Array("A_eclass", bv4, bv4)
+    pred = unsat.Function("P_eclass", bv4, unsat.BoolSort())
+    zero = unsat.BitVecVal(0, bv4)
+    const_arr = unsat.K(bv4, zero)
+
+    f1 = unsat.Not(pred(x))
+    f2 = unsat.Eq(unsat.Store(const_arr, x, x), unsat.Store(arr, z, x))
+    f3 = pred(z)
+
+    solver = unsat.Solver()
+    solver.add(f1, f2, f3)
+    assert solver.check() is unsat.SAT
+    model = solver.model()
+    for formula in (f1, f2, f3):
+        assert model.eval_bool(formula, model_completion=True) is True
+
+
+def test_qf_aufbv_store_eclass_member_read_unsat_regression() -> None:
+    unsat.reset_default_context()
+    bv4 = unsat.BitVecSort(4)
+    x = unsat.BitVec("x_eclass_u", bv4)
+    z = unsat.BitVec("z_eclass_u", bv4)
+    arr = unsat.Array("A_eclass_u", bv4, bv4)
+    b0 = unsat.Bool("b0_eclass_u")
+    pred = unsat.Function("P_eclass_u", bv4, unsat.BoolSort())
+    zero = unsat.BitVecVal(0, bv4)
+    const_arr = unsat.K(bv4, zero)
+
+    f1 = unsat.Not(pred(x))
+    f2 = unsat.Eq(unsat.Store(const_arr, x, x), unsat.Store(arr, z, x))
+    f3 = pred(z)
+    f4 = unsat.And(b0, unsat.Not(unsat.Eq(const_arr, unsat.Store(arr, z, x))))
+
+    solver = unsat.Solver()
+    solver.add(f1, f2, f3, f4)
+    assert solver.check() is unsat.UNSAT

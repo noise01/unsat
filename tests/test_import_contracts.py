@@ -39,7 +39,16 @@ MODULES = (
     "syntax",
     "sat",
 )
-SUBPACKAGES = ("syntax", "sat", "theories", "tactics", "quantifiers", "parser")
+SUBPACKAGES = (
+    "syntax",
+    "sat",
+    "theories",
+    "tactics",
+    "quantifiers",
+    "parser",
+    "smt",
+    "model",
+)
 CHILD_MODULES = (
     "syntax.expr",
     "sat.cdcl",
@@ -47,6 +56,8 @@ CHILD_MODULES = (
     "tactics.simplify",
     "quantifiers.ematch",
     "parser.reader",
+    "smt.solver",
+    "model.eval",
 )
 
 SUBMODULE_FORBIDDEN_CASES = [
@@ -60,6 +71,8 @@ SUBMODULE_FORBIDDEN_CASES = [
     ("quantifiers.ematch", "sat"),
     ("syntax.expr", "sat"),
     ("sat.cdcl", "syntax"),
+    ("model.eval", "sat"),
+    ("smt.solver", "api"),
 ]
 
 WORKER_SCRIPT = """
@@ -221,6 +234,8 @@ def test_all_allowed_dependencies_pass(lint_worker: LintWorker, package: Path) -
         "theories.euf": ("syntax.expr",),
         "tactics.simplify": ("model",),
         "quantifiers.ematch": ("theories.euf",),
+        "smt.solver": ("theories.euf", "tactics.simplify", "quantifiers.ematch"),
+        "model.eval": ("syntax.expr",),
     }
     for source, targets in allowed_with_submodules.items():
         if targets:

@@ -1,7 +1,7 @@
 import pytest
 
 from unsat.model import Model
-from unsat.parser import format_smt2_model, run_smt2
+from unsat.parser import SMT2Runner, execute_smt2, format_smt2_model, run_smt2
 from unsat.parser.smt2 import tokenize_smt2
 from unsat.syntax import Context, format_expr
 
@@ -26,7 +26,8 @@ def test_smt2_lexing_and_parse_errors() -> None:
         "(declare-sort Int 0)",
         "(declare-sort Real 0)",
         "(declare-const x Float)",
-        "(define-fun f ((x Bool)) Bool x)",
+        "(define-fun f ((x Bool)) Bool (f x))",
+        "(define-fun bad ((x Bool) (x Bool)) Bool x)",
         "(assert unknown_var)",
         "(assert (not a b))",
         "(unknown-cmd)",
@@ -375,3 +376,200 @@ def test_smt2_quantifiers_uf_lia_patterns_and_let_capture() -> None:
     (check-sat)
     """
     assert run_smt2(capture_script) == ["sat", "unsat"]
+
+
+def test_smt2_parameterized_define_fun_and_scoping() -> None:
+    script = """
+    (set-logic ALL)
+    (define-fun inc ((x Int)) Int (+ x 1))
+    (define-fun inc2 ((x Int)) Int (inc (inc x)))
+    (define-fun half_plus ((x Real)) Real (+ (/ x 2) 1))
+    (define-fun mask4 ((v (_ BitVec 4))) (_ BitVec 4) (bvand v #x3))
+    (declare-const a Int)
+    (declare-const r Real)
+    (declare-const bv (_ BitVec 4))
+    (assert (= (inc2 a) 10))
+    (assert (= (half_plus 4) r))
+    (assert (= (mask4 #b1101) bv))
+    (check-sat)
+    (get-value (a r bv))
+    """
+    out = run_smt2(script)
+    assert out[0] == "sat"
+    assert "(a 8)" in out[1]
+    assert "(r 3.0)" in out[1] or "(r (/ 3 1))" in out[1]
+    assert "(bv #x1)" in out[1]
+
+    # Shadowing under push/pop and capture avoidance under quantifiers.
+    shadow_and_capture = """
+    (set-logic LIA)
+    (declare-fun g (Int) Int)
+    (declare-const x Int)
+    (define-fun all_eq ((y Int)) Bool (forall ((x Int)) (= x y)))
+    (assert (= (g 2) 10))
+    (assert (not (all_eq x)))
+    (check-sat)
+    (push 1)
+    (define-fun g ((z Int)) Int (+ z 1))
+    (assert (= (g 2) 3))
+    (check-sat)
+    (pop 1)
+    (assert (= (g 2) 10))
+    (check-sat)
+    """
+    assert run_smt2(shadow_and_capture) == ["sat", "sat", "sat"]
+
+    # Sort mismatch and arity errors.
+    for bad in (
+        "(define-fun f ((x Int)) Int (+ x 1))\n(assert (= (f 1 2) 3))",
+        "(define-fun f ((x Int)) Int (+ x 1))\n(assert (= (f true) 3))",
+        "(define-fun f ((x Int)) Int (+ x 1))\n(assert f)",
+        "(define-fun f ((x Int)) Int true)",
+    ):
+        with pytest.raises((TypeError, ValueError), match=r".+"):
+            run_smt2(bad)
+
+
+def test_smt2_define_sort_and_cycles() -> None:
+    script = """
+    (set-logic QF_AUFBV)
+    (define-sort Byte () (_ BitVec 8))
+    (define-sort Pair (K V) (Array K V))
+    (define-sort RegMap (V) (Pair Byte V))
+    (declare-const m (RegMap (_ BitVec 4)))
+    (declare-const k Byte)
+    (assert (= (select (store m k #x5) k) #x5))
+    (check-sat)
+    (push 1)
+    (define-sort Local () Int)
+    (declare-const n Local)
+    (assert (= (+ n 1) 4))
+    (check-sat)
+    (pop 1)
+    """
+    assert run_smt2(script) == ["sat", "sat"]
+
+    for bad in (
+        "(push 1)\n(define-sort Local () Int)\n(pop 1)\n(declare-const n Local)",
+        (
+            "(define-sort A () Bool)\n(define-sort B () A)\n"
+            "(push 1)\n(define-sort A () B)\n(declare-const x A)"
+        ),
+        "(define-sort Pair (A B) (Array A B))\n(declare-const x Pair)",
+        "(define-sort Pair (A B) (Array A B))\n(declare-const x (Pair Int))",
+        "(define-sort Int () Bool)",
+    ):
+        with pytest.raises(ValueError, match=r".+"):
+            run_smt2(bad)
+
+
+def test_smt2_named_unsat_core_get_assertions_and_echo() -> None:
+    script = '''
+    (set-logic QF_LIA)
+    (echo "starting ""check""")
+    (declare-const x Int)
+    (declare-const y Int)
+    (assert (! (> x 5) :named a1))
+    (assert (! (< x 2) :named |a 2|))
+    (assert (! (= y 10) :named extra))
+    (get-assertions)
+    (check-sat)
+    (get-unsat-core)
+    '''
+    out = run_smt2(script)
+    assert out[0] == '"starting ""check"""'
+    assert out[1] == "((> x 5) (< x 2) (= y 10))"
+    assert out[2] == "unsat"
+    assert "a1" in out[3]
+    assert "|a 2|" in out[3]
+    assert "extra" not in out[3]
+
+    # push/pop retracts named assertions cleanly and allows name reuse; model hides
+    # internal indicator constants.
+    scoped = """
+    (set-logic QF_BOOL)
+    (declare-const p Bool)
+    (assert (! p :named h1))
+    (push 1)
+    (assert (! (not p) :named h2))
+    (check-sat)
+    (get-unsat-core)
+    (pop 1)
+    (assert (! p :named h2))
+    (check-sat)
+    (get-model)
+    (get-assertions)
+    (reset-assertions)
+    (get-assertions)
+    """
+    scoped_out = run_smt2(scoped)
+    assert scoped_out[0] == "unsat"
+    assert scoped_out[1] in ("(h1 h2)", "(h2 h1)")
+    assert scoped_out[2] == "sat"
+    assert "__smt2_named" not in scoped_out[3]
+    assert scoped_out[4] == "(p p)"
+    assert scoped_out[5] == "()"
+
+    # Unnamed-only UNSAT returns empty core.
+    unnamed_script = (
+        "(declare-const p Bool)\n(assert p)\n(assert (not p))\n"
+        "(check-sat)\n(get-unsat-core)"
+    )
+    assert run_smt2(unnamed_script) == ["unsat", "()"]
+
+    # Quantified :named assertion core.
+    q_core = """
+    (set-logic UF)
+    (declare-sort U 0)
+    (declare-fun P (U) Bool)
+    (declare-const a U)
+    (declare-const b U)
+    (assert (! (forall ((x U)) (! (P x) :pattern ((P x)))) :named ax))
+    (assert (! (not (P a)) :named neg_a))
+    (assert (! (= b b) :named triv))
+    (check-sat)
+    (get-unsat-core)
+    """
+    q_out = run_smt2(q_core)
+    assert q_out[0] == "unsat"
+    assert "ax" in q_out[1]
+    assert "neg_a" in q_out[1]
+    assert "triv" not in q_out[1]
+
+    # Invalid usages: get-unsat-core without unsat, duplicate :named, non-string echo.
+    for bad in (
+        "(get-unsat-core)",
+        "(assert true)\n(check-sat)\n(get-unsat-core)",
+        "(declare-const p Bool)\n(assert (! p :named h))\n(assert (! p :named h))",
+        "(echo 123)",
+    ):
+        with pytest.raises(ValueError, match=r".+"):
+            run_smt2(bad)
+
+
+def test_smt2_runner_preserves_budgets_across_reset_and_reset_assertions() -> None:
+    script = """
+    (set-logic UF)
+    (declare-fun P (Int) Bool)
+    (assert (forall ((x Int)) (! (P x) :pattern ((P x)))))
+    (check-sat)
+    (reset-assertions)
+    (assert (forall ((x Int)) (! (P x) :pattern ((P x)))))
+    (check-sat)
+    (reset)
+    (set-logic UF)
+    (declare-fun Q (Int) Bool)
+    (assert (forall ((x Int)) (! (Q x) :pattern ((Q x)))))
+    (check-sat)
+    """
+    outputs, _ = execute_smt2(script, max_quantifier_rounds=0)
+    assert outputs == ["unknown", "unknown", "unknown"]
+
+    # Also verify SMT2Runner preserves timeout=0.0 across resets.
+    runner = SMT2Runner(timeout=0.0)
+    res = runner.execute(
+        "(declare-const p Bool)\n(assert p)\n(check-sat)\n"
+        "(reset-assertions)\n(assert p)\n(check-sat)\n"
+        "(reset)\n(declare-const q Bool)\n(assert q)\n(check-sat)\n"
+    )
+    assert res == ["unknown", "unknown", "unknown"]

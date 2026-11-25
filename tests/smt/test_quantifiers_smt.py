@@ -169,3 +169,15 @@ def test_quantifiers_incremental_push_pop_cores_and_unknown_budget() -> None:
     assert s_unk.check() is unsat.UNKNOWN
     s_unk.add(unsat.Eq(f(unsat.IntVal(0)), unsat.IntVal(2)))
     assert s_unk.check() is unsat.UNSAT
+
+    # Nested quantifier spawned inside a pushed scope must retract on pop.
+    y = unsat.Int("y")
+    s_nested = unsat.Solver()
+    s_nested.add(p(unsat.IntVal(1)))
+    s_nested.push()
+    inner_q = unsat.ForAll(y, unsat.Eq(f(y), y + 1))
+    outer_q = unsat.ForAll(x, unsat.If(p(x), inner_q, unsat.BoolVal(True)))
+    s_nested.add(outer_q)
+    assert s_nested.check() is unsat.UNKNOWN
+    s_nested.pop(1)
+    assert s_nested.check() is unsat.SAT

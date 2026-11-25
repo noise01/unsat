@@ -487,11 +487,15 @@ class Solver:
         *,
         max_quantifier_rounds: int | None = None,
         max_quantifier_matches: int | None = None,
+        timeout: float | None = None,
+        max_conflicts: int | None = None,
     ) -> None:
         self._solver = SMTSolver(
             _resolve_ctx(ctx),
             max_quantifier_rounds=max_quantifier_rounds,
             max_quantifier_matches=max_quantifier_matches,
+            timeout=timeout,
+            max_conflicts=max_conflicts,
         )
 
     @property
@@ -503,9 +507,16 @@ class Solver:
         """Assert one or more formulas into the current scope."""
         self._solver.add(*formulas)
 
-    def check(self, *assumptions: Expr) -> SolveResult:
+    def check(
+        self,
+        *assumptions: Expr,
+        timeout: float | None = None,
+        max_conflicts: int | None = None,
+    ) -> SolveResult:
         """Check satisfiability under optional assumption formulas."""
-        return self._solver.check(*assumptions)
+        return self._solver.check(
+            *assumptions, timeout=timeout, max_conflicts=max_conflicts
+        )
 
     def model(self) -> Model:
         """Return a satisfying :class:`Model` from the latest ``check()``."""
