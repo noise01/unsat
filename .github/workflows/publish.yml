@@ -4,14 +4,25 @@ on:
   push:
     tags: ["v*"]
 
+permissions: {}
+
 jobs:
-  verify:
-    name: Verify tag and test suite
+  ci:
+    name: Run CI checks
+    uses: ./.github/workflows/ci.yml
+    with:
+      skip-build-smoke: true
+    permissions:
+      contents: read
+
+  check-tag:
+    name: Verify release tag matches version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -19,69 +30,89 @@ jobs:
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           python-version: "3.14"
-          enable-cache: true
-
-      - name: Install the project
-        run: uv sync --locked --all-extras --dev
+          enable-cache: false
 
       - name: Verify release tag matches pyproject.toml version
+        shell: bash
         run: |
-          uv run python -c "
-          import os, tomllib
-          tag = os.environ['GITHUB_REF_NAME'].removeprefix('v')
-          with open('pyproject.toml', 'rb') as f:
-              version = tomllib.load(f)['project']['version']
-          assert tag == version, f'Tag {tag!r} != pyproject version {version!r}'
-          "
+          uv run --no-project python - <<'EOF'
+          import os
+          import tomllib
 
-      - name: Run ruff check
-        run: uv run ruff check .
+          raw_tag = os.environ["GITHUB_REF_NAME"]
+          if not raw_tag.startswith("v"):
+              raise SystemExit(f"Release tag {raw_tag!r} must start with 'v'")
 
-      - name: Run ruff format check
-        run: uv run ruff format --check .
+          tag_version = raw_tag.removeprefix("v")
+          with open("pyproject.toml", "rb") as f:
+              pkg_version = tomllib.load(f)["project"]["version"]
 
-      - name: Run ty check
-        run: uv run ty check
-
-      - name: Run import-linter
-        run: uv run lint-imports
-
-      - name: Run rumdl check
-        run: uv run rumdl check .
-
-      - name: Run tests
-        run: uv run pytest tests
-
-      - name: Run benchmark suite check
-        run: uv run python benchmarks/run.py --check
+          if tag_version != pkg_version:
+              raise SystemExit(
+                  f"Tag version {tag_version!r} != pyproject version {pkg_version!r}"
+              )
+          EOF
 
   build:
-    name: Build distribution
-    needs: [verify]
+    name: Build and smoke-test distribution
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.14"
+          enable-cache: false
 
       - name: Build wheel and sdist
         run: uv build
 
+      - name: Smoke-test built wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected 1 wheel in dist/, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          uv run --isolated --no-project --with "${wheels[0]}" python - <<'EOF'
+          from pathlib import Path
+          import unsat
+
+          pkg_dir = Path(unsat.__file__).resolve().parent
+          if not (pkg_dir / "py.typed").is_file():
+              raise SystemExit("py.typed is missing from installed wheel")
+
+          x = unsat.Int("x")
+          s = unsat.Solver()
+          s.add(x > 0)
+          if s.check() is not unsat.SAT:
+              raise SystemExit("Wheel smoke check failed: expected SAT for x > 0")
+          EOF
+          uv run --isolated --no-project --with "${wheels[0]}" unsat --version
+          printf '(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n' \
+            | uv run --isolated --no-project --with "${wheels[0]}" unsat - --format smt2 \
+            | grep -qx 'sat'
+
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
 
   publish:
     name: Publish to PyPI
-    needs: [build]
+    needs: [ci, check-tag, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     environment:
       name: pypi
       url: https://pypi.org/p/unsat
@@ -94,7 +125,7 @@ jobs:
           enable-cache: false
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: dist
           path: dist/

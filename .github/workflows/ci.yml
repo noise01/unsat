@@ -4,19 +4,34 @@ on:
   push:
     branches: ["main"]
   pull_request:
+  workflow_call:
+    inputs:
+      skip-build-smoke:
+        description: Skip building and smoke-testing the wheel inside the CI job
+        required: false
+        type: boolean
+        default: false
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.14"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
@@ -44,3 +59,37 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests
+
+      - name: Run benchmark suite check
+        run: uv run python benchmarks/run.py --check
+
+      - name: Build and smoke-test wheel
+        if: ${{ !inputs.skip-build-smoke }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected 1 wheel in dist/, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          uv run --isolated --no-project --with "${wheels[0]}" python - <<'EOF'
+          from pathlib import Path
+          import unsat
+
+          pkg_dir = Path(unsat.__file__).resolve().parent
+          if not (pkg_dir / "py.typed").is_file():
+              raise SystemExit("py.typed is missing from installed wheel")
+
+          x = unsat.Int("x")
+          s = unsat.Solver()
+          s.add(x > 0)
+          if s.check() is not unsat.SAT:
+              raise SystemExit("Wheel smoke check failed: expected SAT for x > 0")
+          EOF
+          uv run --isolated --no-project --with "${wheels[0]}" unsat --version
+          printf '(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n' \
+            | uv run --isolated --no-project --with "${wheels[0]}" unsat - --format smt2 \
+            | grep -qx 'sat'
