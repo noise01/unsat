@@ -43,11 +43,11 @@ uv sync --locked --all-extras --dev
 ### Python DSL
 
 ```python
-from unsat import Eq, Int, IntVal, SAT, Solver
+from unsat import Eq, Int, SAT, Solver
 
 x, y = Int("x"), Int("y")
 solver = Solver(timeout=5.0, max_conflicts=10_000)
-solver.add(Eq(x + y, IntVal(10)), x > y, y >= 2)
+solver.add(Eq(x + y, 10), x > y, y >= 2)
 
 if solver.check() is SAT:
     model = solver.model()
@@ -104,8 +104,9 @@ uv run python benchmarks/run.py --z3 --check
 
 ## Documentation
 
-- [Architecture & Module Layout](docs/architecture.md)
-- [Design & Roadmap](docs/roadmap.md)
+- [Architecture & Module Layout](docs/architecture/README.md)
+- [Design & Roadmap](docs/designs/README.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
