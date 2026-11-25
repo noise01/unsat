@@ -18,7 +18,7 @@ from unsat.syntax import (
     iter_subexprs,
 )
 from unsat.tactics import BitBlaster, bv_simplify, simplify, skolemize
-from unsat.theories import ArraySolver, EUFSolver, LRASolver
+from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver
 
 _CMP_KINDS = frozenset({DeclKind.LT, DeclKind.LE, DeclKind.GT, DeclKind.GE})
 _ARITH_OP_KINDS = frozenset(
@@ -82,6 +82,8 @@ class _PropSink(Protocol):
 
     def bind_lra(self, lit: Lit, atom: Expr, *, catch_up: bool = True) -> None: ...
 
+    def bind_bv(self, lit: Lit, atom: Expr, *, catch_up: bool = True) -> None: ...
+
 
 def _strip_nots(expr: Expr) -> tuple[Expr, bool]:
     flip = False
@@ -111,6 +113,7 @@ class _PlaistedGreenbaumEncoder:
         euf_solver: EUFSolver,
         lra_solver: LRASolver,
         array_solver: ArraySolver,
+        bv_solver: BVSolver,
         bitblaster: BitBlaster,
         prop: _PropSink,
     ) -> None:
@@ -119,6 +122,7 @@ class _PlaistedGreenbaumEncoder:
         self._euf = euf_solver
         self._lra = lra_solver
         self._arrays = array_solver
+        self._bv = bv_solver
         self._bitblaster = bitblaster
         self._prop = prop
         self._expr_to_var: dict[Expr, Var] = {}
@@ -283,6 +287,25 @@ class _PlaistedGreenbaumEncoder:
             self._clause_sink = prev_sink
         return lit, clauses
 
+    def encode_bv_blast_lemma(self, atom: Expr, atom_lit: Lit) -> list[list[Lit]]:
+        """Bit-blast a single BV atom on demand, returning SAT definition clauses."""
+        assert isinstance(atom, App)
+        self._bitblaster.register_reserved(atom)
+        if atom.decl.kind is DeclKind.EQ:
+            blasted = self._bitblaster.blast_eq(atom.args[0], atom.args[1])
+        else:
+            blasted = self._bitblaster.blast_bool(atom)
+        if blasted is self._ctx.true_expr:
+            return [[atom_lit]]
+        if blasted is self._ctx.false_expr:
+            return [[negate(atom_lit)]]
+        lit_blast, def_clauses = self.encode_lemma(blasted, polarity=0)
+        return [
+            *def_clauses,
+            [negate(atom_lit), lit_blast],
+            [atom_lit, negate(lit_blast)],
+        ]
+
     def any_lit(self) -> Lit | None:
         """Return an allocated SAT literal if any variable exists yet."""
         return self._first_lit
@@ -353,15 +376,6 @@ class _PlaistedGreenbaumEncoder:
             kind = node.decl.kind
             if kind is DeclKind.ITE and not node.is_bool:
                 eff_euf = euf_flag or node.is_array
-                if node.is_bv and not eff_euf:
-                    if not expanded:
-                        stack.append((node, euf_flag, True))
-                        stack.append((node.args[2], euf_flag, False))
-                        stack.append((node.args[1], euf_flag, False))
-                        continue
-                    self._terms_non_euf.add(node)
-                    continue
-
                 if not expanded:
                     stack.append((node, eff_euf, True))
                     stack.append((node.args[2], eff_euf, False))
@@ -378,6 +392,8 @@ class _PlaistedGreenbaumEncoder:
                         self._arrays.register_term(node)
                 else:
                     self._terms_non_euf.add(node)
+                    if node.is_bv:
+                        self._bv.register_term(node)
                 if node.is_arith:
                     self._lra.register_term(node)
                 non_bool_ites.append(node)
@@ -661,12 +677,9 @@ class _PlaistedGreenbaumEncoder:
             if kind in _BV_CMP_KINDS:
                 self._register_term(node.args[0], in_euf=False)
                 self._register_term(node.args[1], in_euf=False)
-                self._bitblaster.register_reserved(node)
-                blasted = self._bitblaster.blast_bool(node)
-                lit_blast = self.encode(blasted, polarity=0)
-                lit_v = pos_lit(self.ensure_expr_var(node))
-                self._emit_clause([negate(lit_v), lit_blast])
-                self._emit_clause([lit_v, negate(lit_blast)])
+                self._bv.register_atom(node)
+                var = self.ensure_expr_var(node)
+                self._prop.bind_bv(pos_lit(var), node, catch_up=catch_up)
                 self._pos_encoded.add(node)
                 self._neg_encoded.add(node)
                 continue
@@ -687,12 +700,9 @@ class _PlaistedGreenbaumEncoder:
                 elif lhs.is_bv:
                     self._register_term(lhs, in_euf=False)
                     self._register_term(rhs, in_euf=False)
-                    self._bitblaster.register_reserved(node)
-                    blasted = self._bitblaster.blast_eq(lhs, rhs)
-                    lit_blast = self.encode(blasted, polarity=0)
+                    self._bv.register_atom(node)
                     lit_eq = pos_lit(self.ensure_expr_var(node))
-                    self._emit_clause([negate(lit_eq), lit_blast])
-                    self._emit_clause([lit_eq, negate(lit_blast)])
+                    self._prop.bind_bv(lit_eq, node, catch_up=catch_up)
                     self._euf.register_eq(node)
                     self._prop.bind_euf(lit_eq, node, catch_up=catch_up)
                 else:

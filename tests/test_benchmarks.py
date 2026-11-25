@@ -33,6 +33,7 @@ def test_benchmark_inventory_covers_dimacs_and_smt2_logics() -> None:
         "qf_lia",
         "qf_uflia",
         "qf_bv",
+        "qf_ufbv",
         "qf_ax",
         "qf_aufbv",
         "qf_auflia",

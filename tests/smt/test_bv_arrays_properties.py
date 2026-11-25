@@ -569,6 +569,27 @@ def test_qf_bv_and_standalone_tactic_match_z3(
 
 
 @settings(max_examples=35, deadline=None)
+@given(data=_bv_formulas(with_uf=True, with_arrays=False))
+def test_qf_ufbv_matches_z3_and_validates_models(
+    data: tuple[_BVSig, list[Expr]],
+) -> None:
+    sig, formulas = data
+    usolver = SMTSolver(sig.ctx)
+    zsolver = z3.Solver()
+    for f in formulas:
+        usolver.add(f)
+        zsolver.add(_to_z3_expr(f, sig.z3_consts, sig.z3_funcs, {}))
+
+    ures = usolver.check()
+    zres = _z3_verdict(zsolver)
+    assert ures is zres
+    if ures is SolveResult.SAT:
+        model = usolver.model()
+        for f in formulas:
+            assert model.eval_bool(f, model_completion=True) is True
+
+
+@settings(max_examples=35, deadline=None)
 @given(data=_bv_formulas(with_uf=True, with_arrays=True))
 def test_qf_aufbv_matches_z3_and_validates_models(
     data: tuple[_BVSig, list[Expr]],

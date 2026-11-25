@@ -8,6 +8,8 @@ from unsat.syntax import Const, Context, Expr, Sort
 from unsat.tactics import BitBlaster
 from unsat.theories import (
     ArraySolver,
+    BVBlastRequest,
+    BVSolver,
     EUFSolver,
     LIACutLemma,
     LIASplitLemma,
@@ -26,9 +28,11 @@ class _LemmaEncoder(Protocol):
         self, expr: Expr, polarity: int = 1
     ) -> tuple[Lit, list[list[Lit]]]: ...
 
+    def encode_bv_blast_lemma(self, atom: Expr, atom_lit: Lit) -> list[list[Lit]]: ...
+
 
 class _CombinedPropagator:
-    """Propagator coordinating ``EUF``, ``LRA``, ``LIA``, ``Arrays``, and ``MBTC``."""
+    """Propagator coordinating ``EUF``, ``LRA``, ``LIA``, ``BV``, and ``Arrays``."""
 
     def __init__(
         self,
@@ -36,6 +40,7 @@ class _CombinedPropagator:
         euf_solver: EUFSolver,
         lra_solver: LRASolver,
         array_solver: ArraySolver,
+        bv_solver: BVSolver,
         bitblaster: BitBlaster,
     ) -> None:
         self._ctx = ctx
@@ -43,6 +48,7 @@ class _CombinedPropagator:
         self._euf = euf_solver
         self._lra = lra_solver
         self._arrays = array_solver
+        self._bv = bv_solver
         self._bitblaster = bitblaster
         self._encoder: _LemmaEncoder | None = None
 
@@ -51,6 +57,9 @@ class _CombinedPropagator:
 
         self._lra_lit_to_atoms: dict[Lit, list[tuple[Expr, bool]]] = {}
         self._lra_atom_to_pos_lit: dict[Expr, Lit] = {}
+
+        self._bv_lit_to_atoms: dict[Lit, list[tuple[Expr, bool]]] = {}
+        self._bv_atom_to_pos_lit: dict[Expr, Lit] = {}
 
         self._shared_arith_terms: dict[Sort, list[Expr]] = {}
         self._shared_arith_set: set[Expr] = set()
@@ -83,6 +92,7 @@ class _CombinedPropagator:
         self._shared_bv_set.add(term)
         self._shared_bv_terms.setdefault(term.sort, []).append(term)
         self._euf.register_term(term)
+        self._bv.register_term(term)
 
     def all_shared_arith_terms(self) -> list[Expr]:
         """Return all registered mixed EUF+arithmetic interface terms."""
@@ -160,13 +170,47 @@ class _CombinedPropagator:
                 ]
                 self._sat.add_clause(lemma)
 
+    def bind_bv(self, lit: Lit, atom: Expr, *, catch_up: bool = True) -> None:
+        """Bind positive ``lit`` to BV atom ``(atom, True)``."""
+        if atom in self._bv_atom_to_pos_lit:
+            return
+        self._bv_atom_to_pos_lit[atom] = lit
+        self._bv_lit_to_atoms.setdefault(lit, []).append((atom, True))
+        self._bv_lit_to_atoms.setdefault(negate(lit), []).append((atom, False))
+
+        if not catch_up:
+            return
+        assert self._sat is not None
+        val = self._sat.value(lit)
+        if val is None:
+            return
+        self._bv.assert_atom(atom, val)
+        props, conflict = self._bv.propagate()
+        if conflict is not None:
+            self._sat.add_clause(self._bv_conflict_to_clause(conflict))
+            return
+        for p_atom, p_sign in props:
+            p_lit = self._bv_atom_to_pos_lit.get(p_atom)
+            if p_lit is None:
+                continue
+            sat_p_lit = p_lit if p_sign else negate(p_lit)
+            if self._sat.value(sat_p_lit) is None:
+                reasons = self._bv.explain_propagation(p_atom, p_sign)
+                lemma = [
+                    sat_p_lit,
+                    *(negate(self._bv_lit_to_sat(tl)) for tl in reasons),
+                ]
+                self._sat.add_clause(lemma)
+
     def push(self) -> None:
         self._euf.push()
         self._lra.push()
+        self._bv.push()
 
     def pop(self, num_levels: int) -> None:
         self._euf.pop(num_levels)
         self._lra.pop(num_levels)
+        self._bv.pop(num_levels)
 
     def on_assign(self, lit: Lit) -> None:
         euf_entries = self._euf_lit_to_atoms.get(lit)
@@ -177,6 +221,10 @@ class _CombinedPropagator:
         if lra_entries is not None:
             for atom, sign in lra_entries:
                 self._lra.assert_atom(atom, sign)
+        bv_entries = self._bv_lit_to_atoms.get(lit)
+        if bv_entries is not None:
+            for atom, sign in bv_entries:
+                self._bv.assert_atom(atom, sign)
 
     def propagate(self) -> tuple[Sequence[Lit], Sequence[Lit] | None]:
         euf_props, euf_conflict = self._euf.propagate()
@@ -187,6 +235,10 @@ class _CombinedPropagator:
         if lra_conflict is not None:
             return (), self._lra_conflict_to_clause(lra_conflict)
 
+        bv_props, bv_conflict = self._bv.propagate()
+        if bv_conflict is not None:
+            return (), self._bv_conflict_to_clause(bv_conflict)
+
         sat_props: list[Lit] = []
         for atom, sign in euf_props:
             pos = self._euf_atom_to_pos_lit.get(atom)
@@ -194,6 +246,10 @@ class _CombinedPropagator:
                 sat_props.append(pos if sign else negate(pos))
         for atom, sign in lra_props:
             pos = self._lra_atom_to_pos_lit.get(atom)
+            if pos is not None:
+                sat_props.append(pos if sign else negate(pos))
+        for atom, sign in bv_props:
+            pos = self._bv_atom_to_pos_lit.get(atom)
             if pos is not None:
                 sat_props.append(pos if sign else negate(pos))
         return sat_props, None
@@ -216,6 +272,15 @@ class _CombinedPropagator:
                 except KeyError, ValueError:
                     continue
                 return [lit, *(negate(self._lra_lit_to_sat(tl)) for tl in reasons)]
+
+        bv_entries = self._bv_lit_to_atoms.get(lit)
+        if bv_entries:
+            for atom, sign in bv_entries:
+                try:
+                    reasons = self._bv.explain_propagation(atom, sign)
+                except KeyError, ValueError:
+                    continue
+                return [lit, *(negate(self._bv_lit_to_sat(tl)) for tl in reasons)]
 
         msg = f"SAT literal {lit} has no valid theory explanation in current state"
         raise ValueError(msg)
@@ -252,7 +317,13 @@ class _CombinedPropagator:
             if mbtc_lemmas:
                 return mbtc_lemmas
 
-        if self._shared_bv_terms:
+        bv_res: BVBlastRequest | list[TheoryLit] | None = None
+        if self._bv_atom_to_pos_lit or self._shared_bv_set:
+            bv_res = self._bv.check(self._collect_sat_bv_values())
+            if isinstance(bv_res, list):
+                return [self._bv_conflict_to_clause(bv_res)]
+
+        if bv_res is None and self._shared_bv_terms:
             bv_mbtc = self._check_mbtc_bv()
             if bv_mbtc:
                 return bv_mbtc
@@ -276,6 +347,9 @@ class _CombinedPropagator:
             if out:
                 return out
 
+        if isinstance(bv_res, BVBlastRequest):
+            return self._blast_bv_request(bv_res)
+
         return ()
 
     def _sat_bit_lookup(self) -> Callable[[Expr], bool]:
@@ -293,13 +367,31 @@ class _CombinedPropagator:
 
         return _lookup
 
+    def _collect_sat_bv_values(self) -> dict[Expr, int]:
+        lookup = self._sat_bit_lookup()
+        sat_vals: dict[Expr, int] = {}
+        for term in self._bv.registered_terms():
+            val = self._bitblaster.eval_blasted_term_bits(term, lookup)
+            if val is not None:
+                sat_vals[term] = val
+        return sat_vals
+
+    def _blast_bv_request(self, req: BVBlastRequest) -> list[list[Lit]]:
+        assert self._encoder is not None
+        out: list[list[Lit]] = []
+        for atom in req.atoms:
+            if self._bv.is_blasted(atom):
+                continue
+            atom_lit = self._bv_atom_to_pos_lit[atom]
+            out.extend(self._encoder.encode_bv_blast_lemma(atom, atom_lit))
+            self._bv.mark_blasted(atom)
+            self._bv.stats.blasted_atoms += 1
+        return out
+
     def _check_mbtc_bv(self) -> list[list[Lit]]:
         assert self._encoder is not None
-        lookup = self._sat_bit_lookup()
-        vals: dict[Expr, int] = {
-            term: self._bitblaster.eval_term_bits(term, lookup)
-            for term in self.all_shared_bv_terms()
-        }
+        sat_vals = self._collect_sat_bv_values()
+        vals = self._bv.term_values(self.all_shared_bv_terms(), sat_vals)
 
         # Direction 1 (EUF -> BV): force matching bit vectors on EUF-equal terms.
         sort_reps: dict[Sort, dict[Expr, Expr]] = {}
@@ -337,9 +429,10 @@ class _CombinedPropagator:
                 eq_atom = self._ctx.mk_eq(leader, other)
                 if eq_atom is self._ctx.false_expr or eq_atom is self._ctx.true_expr:
                     continue
+                if self._encoder.expr_var_or_none(eq_atom) is not None:
+                    continue
                 _, def_clauses = self._encoder.encode_lemma(eq_atom, polarity=0)
-                if def_clauses:
-                    return def_clauses
+                return def_clauses
 
         return []
 
@@ -454,3 +547,10 @@ class _CombinedPropagator:
 
     def _lra_conflict_to_clause(self, conflict: Sequence[TheoryLit]) -> list[Lit]:
         return [negate(self._lra_lit_to_sat(tl)) for tl in conflict]
+
+    def _bv_lit_to_sat(self, tlit: TheoryLit) -> Lit:
+        pos = self._bv_atom_to_pos_lit[tlit.atom]
+        return pos if tlit.sign else negate(pos)
+
+    def _bv_conflict_to_clause(self, conflict: Sequence[TheoryLit]) -> list[Lit]:
+        return [negate(self._bv_lit_to_sat(tl)) for tl in conflict]

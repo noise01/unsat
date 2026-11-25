@@ -18,7 +18,7 @@ from unsat.smt.encoder import _PlaistedGreenbaumEncoder
 from unsat.smt.propagator import _CombinedPropagator
 from unsat.syntax import App, Context, DeclKind, Expr, FuncDecl, Quantifier
 from unsat.tactics import BitBlaster, Tactic, bv_simplify, simplify
-from unsat.theories import ArraySolver, EUFSolver, LRASolver
+from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver
 
 
 def _validate_timeout(timeout: float | None) -> None:
@@ -124,9 +124,15 @@ class SMTSolver:
         self._euf = EUFSolver(self._ctx)
         self._lra = LRASolver(self._ctx)
         self._arrays = ArraySolver(self._ctx)
+        self._bv = BVSolver(self._ctx)
         self._bitblaster = BitBlaster(self._ctx)
         self._propagator = _CombinedPropagator(
-            self._ctx, self._euf, self._lra, self._arrays, self._bitblaster
+            self._ctx,
+            self._euf,
+            self._lra,
+            self._arrays,
+            self._bv,
+            self._bitblaster,
         )
         self._sat = SATSolver(propagator=self._propagator)
         self._encoder = _PlaistedGreenbaumEncoder(
@@ -135,6 +141,7 @@ class SMTSolver:
             self._euf,
             self._lra,
             self._arrays,
+            self._bv,
             self._bitblaster,
             self._propagator,
         )
@@ -450,13 +457,26 @@ class SMTSolver:
             var = self._encoder.expr_var_or_none(node)
             return sat_model[var] if var is not None else False
 
-        bv_decl_vals: dict[FuncDecl, int] = {}
+        sat_bv_vals: dict[Expr, int] = {}
+        for bv_term in self._bv.registered_terms():
+            val = self._bitblaster.eval_blasted_term_bits(bv_term, _bit_lookup)
+            if val is not None:
+                sat_bv_vals[bv_term] = val
+
+        bv_decl_vals: dict[FuncDecl, int] = {
+            decl: val
+            for decl, val in self._bv.concrete_values(sat_bv_vals).items()
+            if decl not in internal_decls
+        }
         for bv_decl, bits in self._bitblaster.bv_const_bits.items():
-            if bv_decl not in internal_decls:
+            if bv_decl not in internal_decls and bv_decl not in bv_decl_vals:
                 bv_decl_vals[bv_decl] = self._bitblaster.eval_bits(bits, _bit_lookup)
-        for bv_term in self._propagator.all_shared_bv_terms():
-            bv_int = self._bitblaster.eval_term_bits(bv_term, _bit_lookup)
-            external_vals[bv_term] = self._ctx.mk_bv_val(bv_int, bv_term.bv_size)
+
+        shared_bv_terms = self._propagator.all_shared_bv_terms()
+        if shared_bv_terms:
+            shared_bv_vals = self._bv.term_values(shared_bv_terms, sat_bv_vals)
+            for bv_term, bv_int in shared_bv_vals.items():
+                external_vals[bv_term] = self._ctx.mk_bv_val(bv_int, bv_term.bv_size)
 
         for decl, var in self._encoder.decl_to_var.items():
             if decl not in internal_decls:
@@ -527,6 +547,7 @@ class SMTSolver:
         stats.update(self._euf.stats.to_dict())
         stats.update(self._lra.stats.to_dict())
         stats.update(self._arrays.stats.to_dict())
+        stats.update(self._bv.stats.to_dict())
         stats.update(self._quant_stats.to_dict())
         return stats
 
