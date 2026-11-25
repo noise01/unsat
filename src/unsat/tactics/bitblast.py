@@ -602,6 +602,14 @@ class BitBlaster:
         self._udiv_cache: dict[
             tuple[Expr, Expr], tuple[tuple[Expr, ...], tuple[Expr, ...]]
         ] = {}
+        self._sdiv_cache: dict[
+            tuple[Expr, Expr], tuple[tuple[Expr, ...], tuple[Expr, ...]]
+        ] = {}
+        self._and_cache: dict[tuple[int, int], Expr] = {}
+        self._or_cache: dict[tuple[int, int], Expr] = {}
+        self._xor_cache: dict[tuple[int, int], Expr] = {}
+        self._ite_cache: dict[tuple[int, int, int], Expr] = {}
+        self._fa_cache: dict[tuple[int, int, int], tuple[Expr, Expr]] = {}
 
     @property
     def ctx(self) -> Context:
@@ -826,95 +834,279 @@ class BitBlaster:
             self._ctx.mk_bool_val(bool((value >> i) & 1)) for i in range(width)
         )
 
+    def _gate_not(self, a: Expr) -> Expr:
+        ctx = self._ctx
+        if a is ctx.false_expr:
+            return ctx.true_expr
+        if a is ctx.true_expr:
+            return ctx.false_expr
+        if isinstance(a, App) and a.decl.kind is DeclKind.NOT:
+            return a.args[0]
+        return ctx.mk_not(a)
+
+    def _gate_and(self, a: Expr, b: Expr) -> Expr:
+        ctx = self._ctx
+        f = ctx.false_expr
+        t = ctx.true_expr
+        if a is f or b is f:
+            return f
+        if a is t:
+            return b
+        if b is t or a is b:
+            return a
+        if (isinstance(a, App) and a.decl.kind is DeclKind.NOT and a.args[0] is b) or (
+            isinstance(b, App) and b.decl.kind is DeclKind.NOT and b.args[0] is a
+        ):
+            return f
+        key = (a.id, b.id) if a.id <= b.id else (b.id, a.id)
+        cached = self._and_cache.get(key)
+        if cached is not None:
+            return cached
+        res = ctx.mk_and(a, b)
+        self._and_cache[key] = res
+        return res
+
+    def _gate_or(self, a: Expr, b: Expr) -> Expr:
+        ctx = self._ctx
+        f = ctx.false_expr
+        t = ctx.true_expr
+        if a is t or b is t:
+            return t
+        if a is f:
+            return b
+        if b is f or a is b:
+            return a
+        if (isinstance(a, App) and a.decl.kind is DeclKind.NOT and a.args[0] is b) or (
+            isinstance(b, App) and b.decl.kind is DeclKind.NOT and b.args[0] is a
+        ):
+            return t
+        key = (a.id, b.id) if a.id <= b.id else (b.id, a.id)
+        cached = self._or_cache.get(key)
+        if cached is not None:
+            return cached
+        res = ctx.mk_or(a, b)
+        self._or_cache[key] = res
+        return res
+
+    def _gate_xor(self, a: Expr, b: Expr) -> Expr:
+        ctx = self._ctx
+        f = ctx.false_expr
+        t = ctx.true_expr
+        if a is f:
+            return b
+        if b is f:
+            return a
+        if a is t:
+            return self._gate_not(b)
+        if b is t:
+            return self._gate_not(a)
+        if a is b:
+            return f
+        if (isinstance(a, App) and a.decl.kind is DeclKind.NOT and a.args[0] is b) or (
+            isinstance(b, App) and b.decl.kind is DeclKind.NOT and b.args[0] is a
+        ):
+            return t
+        key = (a.id, b.id) if a.id <= b.id else (b.id, a.id)
+        cached = self._xor_cache.get(key)
+        if cached is not None:
+            return cached
+        res = ctx.mk_xor(a, b)
+        self._xor_cache[key] = res
+        return res
+
+    def _gate_ite(self, cond: Expr, then_expr: Expr, else_expr: Expr) -> Expr:
+        ctx = self._ctx
+        f = ctx.false_expr
+        t = ctx.true_expr
+        if cond is t:
+            return then_expr
+        if cond is f:
+            return else_expr
+        if then_expr is else_expr:
+            return then_expr
+        if then_expr is t and else_expr is f:
+            return cond
+        if then_expr is f and else_expr is t:
+            return self._gate_not(cond)
+        if then_expr is f:
+            return self._gate_and(self._gate_not(cond), else_expr)
+        if else_expr is f:
+            return self._gate_and(cond, then_expr)
+        if then_expr is t:
+            return self._gate_or(cond, else_expr)
+        if else_expr is t:
+            return self._gate_or(self._gate_not(cond), then_expr)
+        key = (cond.id, then_expr.id, else_expr.id)
+        cached = self._ite_cache.get(key)
+        if cached is not None:
+            return cached
+        res = ctx.mk_ite(cond, then_expr, else_expr)
+        self._ite_cache[key] = res
+        return res
+
+    def _half_adder(self, a: Expr, b: Expr) -> tuple[Expr, Expr]:
+        f = self._ctx.false_expr
+        t = self._ctx.true_expr
+        if a is f:
+            return b, f
+        if b is f:
+            return a, f
+        if a is t:
+            return self._gate_not(b), b
+        if b is t:
+            return self._gate_not(a), a
+        if a is b:
+            return f, a
+        return self._gate_xor(a, b), self._gate_and(a, b)
+
+    def _full_adder(self, a: Expr, b: Expr, cin: Expr) -> tuple[Expr, Expr]:
+        f = self._ctx.false_expr
+        if cin is f:
+            return self._half_adder(a, b)
+        if a is f:
+            return self._half_adder(b, cin)
+        if b is f:
+            return self._half_adder(a, cin)
+        if a is b:
+            return cin, a
+        if b is cin:
+            return a, b
+        if a is cin:
+            return b, a
+        ia, ib, ic = a.id, b.id, cin.id
+        if ia > ib:
+            ia, ib = ib, ia
+        if ib > ic:
+            ib, ic = ic, ib
+        if ia > ib:
+            ia, ib = ib, ia
+        key = (ia, ib, ic)
+        cached = self._fa_cache.get(key)
+        if cached is not None:
+            return cached
+        ab_xor = self._gate_xor(a, b)
+        s = self._gate_xor(ab_xor, cin)
+        cout = self._gate_or(self._gate_and(a, b), self._gate_and(ab_xor, cin))
+        res = (s, cout)
+        self._fa_cache[key] = res
+        return res
+
     def _mux_bits(
         self, cond: Expr, then_bits: Sequence[Expr], else_bits: Sequence[Expr]
     ) -> tuple[Expr, ...]:
         return tuple(
-            self._ctx.mk_ite(cond, t_bit, e_bit)
+            self._gate_ite(cond, t_bit, e_bit)
             for t_bit, e_bit in zip(then_bits, else_bits, strict=True)
         )
 
     def _add_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr], carry_in: Expr
     ) -> tuple[tuple[Expr, ...], Expr]:
-        ctx = self._ctx
         sums: list[Expr] = []
         carry = carry_in
         for ai, bi in zip(a_bits, b_bits, strict=True):
-            ab_xor = ctx.mk_xor(ai, bi)
-            sums.append(ctx.mk_xor(ab_xor, carry))
-            carry = ctx.mk_or(ctx.mk_and(ai, bi), ctx.mk_and(ab_xor, carry))
+            s, carry = self._full_adder(ai, bi, carry)
+            sums.append(s)
         return tuple(sums), carry
 
     def _neg_bits(self, a_bits: Sequence[Expr]) -> tuple[Expr, ...]:
+        if not a_bits:
+            return ()
         ctx = self._ctx
-        zeros = [ctx.mk_false()] * len(a_bits)
-        inv = [ctx.mk_not(bit) for bit in a_bits]
-        return self._add_bits(inv, zeros, ctx.mk_true())[0]
+        f = ctx.false_expr
+        t = ctx.true_expr
+        out: list[Expr] = [a_bits[0]]
+        seen = a_bits[0]
+        for bit in a_bits[1:]:
+            if seen is f:
+                out.append(bit)
+                seen = bit
+            elif seen is t:
+                out.append(self._gate_not(bit))
+            else:
+                out.append(self._gate_xor(bit, seen))
+                seen = self._gate_or(bit, seen)
+        return tuple(out)
 
     def _sub_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
     ) -> tuple[Expr, ...]:
         ctx = self._ctx
-        return self._add_bits(a_bits, [ctx.mk_not(b) for b in b_bits], ctx.mk_true())[0]
+        return self._add_bits(
+            a_bits, [self._gate_not(b) for b in b_bits], ctx.true_expr
+        )[0]
 
     def _mul_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
     ) -> tuple[Expr, ...]:
-        ctx = self._ctx
+        f = self._ctx.false_expr
         width = len(a_bits)
-        acc: tuple[Expr, ...] = (ctx.mk_false(),) * width
+        a_active = sum(1 for bit in a_bits if bit is not f)
+        b_active = sum(1 for bit in b_bits if bit is not f)
+        if a_active == 0 or b_active == 0:
+            return (f,) * width
+        if a_active < b_active:
+            a_bits, b_bits = b_bits, a_bits
+
+        acc: list[Expr] | None = None
         for i, bi in enumerate(b_bits):
-            if bi is ctx.false_expr:
+            if bi is f:
                 continue
-            shifted = [ctx.mk_false()] * i + [
-                ctx.mk_and(a_bits[j], bi) for j in range(width - i)
-            ]
-            acc, _ = self._add_bits(acc, shifted, ctx.mk_false())
-        return acc
+            row = [self._gate_and(a_bits[j], bi) for j in range(width - i)]
+            if acc is None:
+                acc = [f] * i + row
+                continue
+            if not row:
+                continue
+            sum_slice, _ = self._add_bits(acc[i:], row, f)
+            acc[i:] = sum_slice
+        assert acc is not None
+        return tuple(acc)
 
     def _shl_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
     ) -> tuple[Expr, ...]:
         ctx = self._ctx
+        f = ctx.false_expr
         width = len(a_bits)
         stages = (width - 1).bit_length()
         cur = list(a_bits)
         for stage in range(stages):
             shift = 1 << stage
             ctrl = b_bits[stage]
-            if ctrl is ctx.false_expr:
+            if ctrl is f:
                 continue
             cur = [
-                ctx.mk_ite(
+                self._gate_ite(
                     ctrl,
-                    cur[idx - shift] if idx >= shift else ctx.mk_false(),
+                    cur[idx - shift] if idx >= shift else f,
                     cur[idx],
                 )
                 for idx in range(width)
             ]
         if stages < width:
             high_or = ctx.mk_or(*b_bits[stages:])
-            if high_or is not ctx.false_expr:
-                not_high = ctx.mk_not(high_or)
-                cur = [ctx.mk_and(not_high, bit) for bit in cur]
+            if high_or is not f:
+                not_high = self._gate_not(high_or)
+                cur = [self._gate_and(not_high, bit) for bit in cur]
         return tuple(cur)
 
     def _shr_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr], *, arithmetic: bool
     ) -> tuple[Expr, ...]:
         ctx = self._ctx
+        f = ctx.false_expr
         width = len(a_bits)
         stages = (width - 1).bit_length()
-        fill = a_bits[-1] if arithmetic else ctx.mk_false()
+        fill = a_bits[-1] if arithmetic else f
         cur = list(a_bits)
         for stage in range(stages):
             shift = 1 << stage
             ctrl = b_bits[stage]
-            if ctrl is ctx.false_expr:
+            if ctrl is f:
                 continue
             cur = [
-                ctx.mk_ite(
+                self._gate_ite(
                     ctrl,
                     cur[idx + shift] if idx + shift < width else fill,
                     cur[idx],
@@ -923,29 +1115,33 @@ class BitBlaster:
             ]
         if stages < width:
             high_or = ctx.mk_or(*b_bits[stages:])
-            if high_or is not ctx.false_expr:
-                cur = [ctx.mk_ite(high_or, fill, bit) for bit in cur]
+            if high_or is not f:
+                cur = [self._gate_ite(high_or, fill, bit) for bit in cur]
         return tuple(cur)
 
     def _udiv_urem_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
     ) -> tuple[tuple[Expr, ...], tuple[Expr, ...]]:
         ctx = self._ctx
+        f = ctx.false_expr
+        t = ctx.true_expr
         width = len(a_bits)
-        b_is_zero = ctx.mk_not(ctx.mk_or(*b_bits))
-        neg_b_ext = (*(ctx.mk_not(b) for b in b_bits), ctx.mk_true())
+        b_is_zero = self._gate_not(ctx.mk_or(*b_bits))
+        neg_b_ext = (*(self._gate_not(b) for b in b_bits), t)
 
-        rem: list[Expr] = [ctx.mk_false()] * width
-        quot: list[Expr] = [ctx.mk_false()] * width
+        rem: list[Expr] = [f] * width
+        quot: list[Expr] = [f] * width
         for step in range(width - 1, -1, -1):
             rem_ext = [a_bits[step], *rem]
-            diff, borrow_inv = self._add_bits(rem_ext, neg_b_ext, ctx.mk_true())
+            diff, borrow_inv = self._add_bits(rem_ext, neg_b_ext, t)
             quot[step] = borrow_inv
-            rem = [ctx.mk_ite(borrow_inv, diff[k], rem_ext[k]) for k in range(width)]
+            rem = [
+                self._gate_ite(borrow_inv, diff[k], rem_ext[k]) for k in range(width)
+            ]
 
-        quot_final = tuple(ctx.mk_ite(b_is_zero, ctx.mk_true(), q) for q in quot)
+        quot_final = tuple(self._gate_ite(b_is_zero, t, q) for q in quot)
         rem_final = tuple(
-            ctx.mk_ite(b_is_zero, a_bit, r_bit)
+            self._gate_ite(b_is_zero, a_bit, r_bit)
             for a_bit, r_bit in zip(a_bits, rem, strict=True)
         )
         return quot_final, rem_final
@@ -961,12 +1157,34 @@ class BitBlaster:
         self._udiv_cache[key] = res
         return res
 
+    def _sdiv_rem_for_pair(
+        self, lhs: Expr, rhs: Expr
+    ) -> tuple[tuple[Expr, ...], tuple[Expr, ...], tuple[Expr, ...], Expr, Expr]:
+        a_bits = self._term_bits[lhs]
+        b_bits = self._term_bits[rhs]
+        ma, mb = a_bits[-1], b_bits[-1]
+        key = (lhs, rhs)
+        cached = self._sdiv_cache.get(key)
+        if cached is not None:
+            u_q, u_r = cached
+            return u_q, u_r, b_bits, ma, mb
+        abs_a = self._mux_bits(ma, self._neg_bits(a_bits), a_bits)
+        abs_b = self._mux_bits(mb, self._neg_bits(b_bits), b_bits)
+        u_q, u_r = self._udiv_urem_bits(abs_a, abs_b)
+        self._sdiv_cache[key] = (u_q, u_r)
+        return u_q, u_r, b_bits, ma, mb
+
     def _ult_bits(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]) -> Expr:
-        ctx = self._ctx
-        _, carry = self._add_bits(
-            a_bits, [ctx.mk_not(b) for b in b_bits], ctx.mk_true()
-        )
-        return ctx.mk_not(carry)
+        borrow = self._ctx.false_expr
+        for ai, bi in zip(a_bits, b_bits, strict=True):
+            if ai is bi:
+                continue
+            na = self._gate_not(ai)
+            borrow = self._gate_or(
+                self._gate_and(na, bi),
+                self._gate_and(self._gate_or(na, bi), borrow),
+            )
+        return borrow
 
     def _slt_bits(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]) -> Expr:
         ctx = self._ctx
@@ -1020,33 +1238,18 @@ class BitBlaster:
             case DeclKind.BV_UREM:
                 return self._udiv_rem_for_pair(args[0], args[1])[1]
             case DeclKind.BV_SDIV:
-                a_bits = self._term_bits[args[0]]
-                b_bits = self._term_bits[args[1]]
-                ma, mb = a_bits[-1], b_bits[-1]
-                abs_a = self._mux_bits(ma, self._neg_bits(a_bits), a_bits)
-                abs_b = self._mux_bits(mb, self._neg_bits(b_bits), b_bits)
-                u_q, _ = self._udiv_urem_bits(abs_a, abs_b)
-                return self._mux_bits(ctx.mk_xor(ma, mb), self._neg_bits(u_q), u_q)
+                u_q, _, _, ma, mb = self._sdiv_rem_for_pair(args[0], args[1])
+                return self._mux_bits(self._gate_xor(ma, mb), self._neg_bits(u_q), u_q)
             case DeclKind.BV_SREM:
-                a_bits = self._term_bits[args[0]]
-                b_bits = self._term_bits[args[1]]
-                ma, mb = a_bits[-1], b_bits[-1]
-                abs_a = self._mux_bits(ma, self._neg_bits(a_bits), a_bits)
-                abs_b = self._mux_bits(mb, self._neg_bits(b_bits), b_bits)
-                _, u_r = self._udiv_urem_bits(abs_a, abs_b)
+                _, u_r, _, ma, _ = self._sdiv_rem_for_pair(args[0], args[1])
                 return self._mux_bits(ma, self._neg_bits(u_r), u_r)
             case DeclKind.BV_SMOD:
-                a_bits = self._term_bits[args[0]]
-                b_bits = self._term_bits[args[1]]
-                ma, mb = a_bits[-1], b_bits[-1]
-                abs_a = self._mux_bits(ma, self._neg_bits(a_bits), a_bits)
-                abs_b = self._mux_bits(mb, self._neg_bits(b_bits), b_bits)
-                _, u_r = self._udiv_urem_bits(abs_a, abs_b)
+                _, u_r, b_bits, ma, mb = self._sdiv_rem_for_pair(args[0], args[1])
                 signed_u = self._mux_bits(ma, self._neg_bits(u_r), u_r)
-                with_b = self._add_bits(signed_u, b_bits, ctx.mk_false())[0]
-                adj = self._mux_bits(ctx.mk_xor(ma, mb), with_b, signed_u)
+                with_b = self._add_bits(signed_u, b_bits, ctx.false_expr)[0]
+                adj = self._mux_bits(self._gate_xor(ma, mb), with_b, signed_u)
                 u_nz = ctx.mk_or(*u_r)
-                return tuple(ctx.mk_and(u_nz, bit) for bit in adj)
+                return tuple(self._gate_and(u_nz, bit) for bit in adj)
             case DeclKind.BV_SHL:
                 return self._shl_bits(
                     self._term_bits[args[0]], self._term_bits[args[1]]

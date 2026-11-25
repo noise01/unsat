@@ -51,6 +51,7 @@ class SATSolver:
         self._reduce_inc = 500
 
         self._seen: list[bool] = []
+        self._failed: list[bool] = []
         self._seen_level: list[bool] = [False]
 
         self._conflicts = 0
@@ -92,6 +93,7 @@ class SATSolver:
         self._bin_watches.extend(([], []))
         self._activities.append(0.0)
         self._seen.append(False)
+        self._failed.append(False)
         self._seen_level.append(False)
         self._heap.insert(var)
         return var
@@ -434,34 +436,54 @@ class SATSolver:
                 return None
 
     def _propagate_sat(self, deadline: float | None = None) -> Clause | None:
-        lit_eval = self._trail.lit_eval
+        trail = self._trail
+        assignment = trail.assignment
+        level = trail.level
+        reason = trail.reason
+        phase = trail.phase
+        lit_eval = trail.lit_eval
+        stack = trail.stack
+        stack_append = stack.append
+        curr_level = len(trail.limits)
         watches = self._watches
         bin_watches = self._bin_watches
-        stack = self._trail.stack
+        qhead = self._qhead
         propagations = 0
+        tick = 0
 
-        while self._qhead < len(stack):
-            propagations += 1
+        while qhead < len(stack):
+            tick += 1
             if (
                 deadline is not None
-                and (propagations & 511) == 0
+                and (tick & 511) == 0
                 and time.monotonic() >= deadline
             ):
+                self._qhead = qhead
+                self._stats["propagations"] += propagations
                 self._aborted = True
                 return None
-            self._stats["propagations"] += 1
-            p = stack[self._qhead]
-            self._qhead += 1
+
+            propagations += 1
+            p = stack[qhead]
+            qhead += 1
             false_lit = p ^ 1
 
             for implied_lit, clause in bin_watches[false_lit]:
-                if clause.deleted:
-                    continue
                 val = lit_eval[implied_lit]
                 if val == L_FALSE:
+                    self._qhead = qhead
+                    self._stats["propagations"] += propagations
                     return clause
                 if val == L_UNDEF:
-                    self._trail.assign(implied_lit, reason=clause)
+                    imp_var = implied_lit >> 1
+                    imp_val = L_FALSE if (implied_lit & 1) else L_TRUE
+                    assignment[imp_var] = imp_val
+                    level[imp_var] = curr_level
+                    reason[imp_var] = clause
+                    phase[imp_var] = imp_val
+                    lit_eval[implied_lit] = L_TRUE
+                    lit_eval[implied_lit ^ 1] = L_FALSE
+                    stack_append(implied_lit)
 
             watchers = watches[false_lit]
             i = 0
@@ -470,9 +492,6 @@ class SATSolver:
             while i < n_watchers:
                 blocker, clause = watchers[i]
                 i += 1
-
-                if clause.deleted:
-                    continue
 
                 if lit_eval[blocker] == L_TRUE:
                     watchers[j] = (blocker, clause)
@@ -505,17 +524,27 @@ class SATSolver:
                 j += 1
 
                 if lit_eval[first_watch] == L_FALSE:
-                    while i < n_watchers:
-                        watchers[j] = watchers[i]
-                        i += 1
-                        j += 1
-                    del watchers[j:]
+                    if j < i:
+                        watchers[j:] = watchers[i:]
+                    self._qhead = qhead
+                    self._stats["propagations"] += propagations
                     return clause
 
-                self._trail.assign(first_watch, reason=clause)
+                imp_var = first_watch >> 1
+                imp_val = L_FALSE if (first_watch & 1) else L_TRUE
+                assignment[imp_var] = imp_val
+                level[imp_var] = curr_level
+                reason[imp_var] = clause
+                phase[imp_var] = imp_val
+                lit_eval[first_watch] = L_TRUE
+                lit_eval[first_watch ^ 1] = L_FALSE
+                stack_append(first_watch)
 
-            del watchers[j:]
+            if j < i:
+                del watchers[j:]
 
+        self._qhead = qhead
+        self._stats["propagations"] += propagations
         return None
 
     def _make_theory_clause(
@@ -553,10 +582,15 @@ class SATSolver:
         raise RuntimeError(msg)
 
     def _analyze_conflict(self, conflict: Clause) -> tuple[list[Lit], int]:
-        stack = self._trail.stack
-        curr_level = self._trail.decision_level
+        trail = self._trail
+        stack = trail.stack
+        level = trail.level
+        seen = self._seen
+        failed = self._failed
+        curr_level = len(trail.limits)
         learned: list[Lit] = [-1]
         clear_seen: list[Var] = []
+        clear_failed: list[Var] = []
         path_c = 0
         trail_idx = len(stack) - 1
         clause: Clause | None = conflict
@@ -571,9 +605,9 @@ class SATSolver:
                         var = lit >> 1
                         if var == skip_var:
                             continue
-                        lvl = self._trail.level[var]
-                        if not self._seen[var] and lvl > 0:
-                            self._seen[var] = True
+                        lvl = level[var]
+                        if not seen[var] and lvl > 0:
+                            seen[var] = True
                             clear_seen.append(var)
                             self._bump_var_activity(var)
                             if lvl >= curr_level:
@@ -581,7 +615,7 @@ class SATSolver:
                             else:
                                 learned.append(lit)
 
-                while not self._seen[stack[trail_idx] >> 1]:
+                while not seen[stack[trail_idx] >> 1]:
                     trail_idx -= 1
 
                 p = stack[trail_idx]
@@ -594,18 +628,20 @@ class SATSolver:
                 clause = self._resolve_reason(p)
 
             learned[0] = p ^ 1
-            learned = self._minimize_learned(learned, clear_seen)
+            learned = self._minimize_learned(learned, clear_seen, clear_failed)
         finally:
             for var in clear_seen:
-                self._seen[var] = False
+                seen[var] = False
+            for var in clear_failed:
+                failed[var] = False
 
         if len(learned) == 1:
             bt_level = 0
         else:
             max_i = 1
-            max_lvl = self._trail.level[learned[1] >> 1]
+            max_lvl = level[learned[1] >> 1]
             for i in range(2, len(learned)):
-                lvl = self._trail.level[learned[i] >> 1]
+                lvl = level[learned[i] >> 1]
                 if lvl > max_lvl:
                     max_lvl = lvl
                     max_i = i
@@ -616,53 +652,92 @@ class SATSolver:
         self._decay_clause_activity()
         return learned, bt_level
 
-    def _minimize_learned(self, learned: list[Lit], clear_seen: list[Var]) -> list[Lit]:
+    def _minimize_learned(
+        self,
+        learned: list[Lit],
+        clear_seen: list[Var],
+        clear_failed: list[Var],
+    ) -> list[Lit]:
         if len(learned) <= 2:
             return learned
 
+        level = self._trail.level
+        reason_list = self._trail.reason
         abstract_levels = 0
         for lit in learned[1:]:
-            abstract_levels |= 1 << (self._trail.level[lit >> 1] & 63)
+            abstract_levels |= 1 << (level[lit >> 1] & 63)
 
         kept = [learned[0]]
         for lit in learned[1:]:
             var = lit >> 1
-            if self._trail.reason[var] is None or not self._lit_redundant(
-                lit, abstract_levels, clear_seen
+            if reason_list[var] is None or not self._lit_redundant(
+                lit, abstract_levels, clear_seen, clear_failed
             ):
                 kept.append(lit)
         return kept
 
     def _lit_redundant(
-        self, start_lit: Lit, abstract_levels: int, clear_seen: list[Var]
+        self,
+        start_lit: Lit,
+        abstract_levels: int,
+        clear_seen: list[Var],
+        clear_failed: list[Var],
     ) -> bool:
-        work = [start_lit]
+        seen = self._seen
+        failed = self._failed
+        level = self._trail.level
+        reason_list = self._trail.reason
+
+        work: list[tuple[Lit, int]] = [(start_lit, -1)]
         added: list[Var] = []
+        parents: list[int] = []
+
+        def _abort_chain(fail_idx: int) -> None:
+            for var in added:
+                seen[var] = False
+            idx = fail_idx
+            while idx >= 0:
+                f_var = added[idx]
+                if not failed[f_var]:
+                    failed[f_var] = True
+                    clear_failed.append(f_var)
+                idx = parents[idx]
+            start_var = start_lit >> 1
+            if not failed[start_var]:
+                failed[start_var] = True
+                clear_failed.append(start_var)
+
         while work:
-            curr_lit = work.pop()
+            curr_lit, curr_idx = work.pop()
             curr_var = curr_lit >> 1
             reason = self._resolve_reason(curr_lit ^ 1)
             if reason is None:
-                for var in added:
-                    self._seen[var] = False
+                _abort_chain(curr_idx)
                 return False
 
             for r_lit in reason.literals:
                 r_var = r_lit >> 1
-                if r_var == curr_var or self._seen[r_var]:
+                if r_var == curr_var or seen[r_var]:
                     continue
-                r_lvl = self._trail.level[r_var]
+                if failed[r_var]:
+                    _abort_chain(curr_idx)
+                    return False
+                r_lvl = level[r_var]
                 if r_lvl == 0:
                     continue
-                if self._trail.reason[r_var] is None or not (
+                if reason_list[r_var] is None or not (
                     abstract_levels & (1 << (r_lvl & 63))
                 ):
-                    for var in added:
-                        self._seen[var] = False
+                    if not failed[r_var]:
+                        failed[r_var] = True
+                        clear_failed.append(r_var)
+                    _abort_chain(curr_idx)
                     return False
-                self._seen[r_var] = True
+                seen[r_var] = True
+                next_idx = len(added)
                 added.append(r_var)
-                work.append(r_lit)
+                parents.append(curr_idx)
+                work.append((r_lit, next_idx))
 
         clear_seen.extend(added)
         return True

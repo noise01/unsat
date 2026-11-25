@@ -70,37 +70,51 @@ class VarMaxHeap:
         return act_a > act_b or (act_a == act_b and a < b)
 
     def _sift_up(self, idx: int) -> None:
-        var = self._heap[idx]
+        heap = self._heap
+        pos = self._pos
+        act = self._activities
+        var = heap[idx]
+        act_var = act[var]
         while idx > 0:
             parent_idx = (idx - 1) >> 1
-            parent_var = self._heap[parent_idx]
-            if not self._higher(var, parent_var):
+            parent_var = heap[parent_idx]
+            act_parent = act[parent_var]
+            if act_var < act_parent or (act_var == act_parent and var >= parent_var):
                 break
-            self._heap[idx] = parent_var
-            self._pos[parent_var] = idx
+            heap[idx] = parent_var
+            pos[parent_var] = idx
             idx = parent_idx
-        self._heap[idx] = var
-        self._pos[var] = idx
+        heap[idx] = var
+        pos[var] = idx
 
     def _sift_down(self, idx: int) -> None:
-        size = len(self._heap)
-        var = self._heap[idx]
+        heap = self._heap
+        pos = self._pos
+        act = self._activities
+        size = len(heap)
+        var = heap[idx]
+        act_var = act[var]
         while True:
             left_idx = (idx << 1) + 1
             if left_idx >= size:
                 break
             best_idx = left_idx
-            best_var = self._heap[left_idx]
+            best_var = heap[left_idx]
+            best_act = act[best_var]
             right_idx = left_idx + 1
             if right_idx < size:
-                right_var = self._heap[right_idx]
-                if self._higher(right_var, best_var):
+                right_var = heap[right_idx]
+                right_act = act[right_var]
+                if right_act > best_act or (
+                    right_act == best_act and right_var < best_var
+                ):
                     best_idx = right_idx
                     best_var = right_var
-            if not self._higher(best_var, var):
+                    best_act = right_act
+            if best_act < act_var or (best_act == act_var and best_var >= var):
                 break
-            self._heap[idx] = best_var
-            self._pos[best_var] = idx
+            heap[idx] = best_var
+            pos[best_var] = idx
             idx = best_idx
-        self._heap[idx] = var
-        self._pos[var] = idx
+        heap[idx] = var
+        pos[var] = idx

@@ -21,13 +21,17 @@ from unsat.model import Model, Value
 from unsat.syntax import App, Const, Context, DeclKind, Expr, FuncDecl
 from unsat.theories.base import LRAStats, TheoryLit
 
+_FRAC_ZERO = Fraction(0)
+_FRAC_ONE = Fraction(1)
+_FRAC_NEG_ONE = Fraction(-1)
+
 
 @dataclass(frozen=True, slots=True, order=True)
 class DeltaRational:
     """Exact extended rational ``real + delta * eps`` for infinitesimal ``eps > 0``."""
 
     real: Fraction
-    delta: Fraction = Fraction(0)
+    delta: Fraction = _FRAC_ZERO
 
     def __add__(self, other: DeltaRational) -> DeltaRational:
         return DeltaRational(self.real + other.real, self.delta + other.delta)
@@ -47,7 +51,7 @@ class DeltaRational:
         return self.delta == 0 and self.real.denominator == 1
 
 
-_DELTA_ZERO = DeltaRational(Fraction(0), Fraction(0))
+_DELTA_ZERO = DeltaRational(_FRAC_ZERO, _FRAC_ZERO)
 
 # Undo opcodes stored on LRASolver._history when _trail_marks is non-empty.
 _OP_ASSERT = 0
@@ -90,9 +94,9 @@ def _tighten_bound(
             int_val = math.ceil(bound) - 1 if strict else math.floor(bound)
         else:
             int_val = math.floor(bound) + 1 if strict else math.ceil(bound)
-        return DeltaRational(Fraction(int_val), Fraction(0))
+        return DeltaRational(Fraction(int_val), _FRAC_ZERO)
 
-    delta = (Fraction(-1) if is_upper else Fraction(1)) if strict else Fraction(0)
+    delta = (_FRAC_NEG_ONE if is_upper else _FRAC_ONE) if strict else _FRAC_ZERO
     return DeltaRational(bound, delta)
 
 
@@ -131,8 +135,11 @@ class LRASolver:
         self._upper_reason: list[TheoryLit | None] = []
 
         # Registered comparison atoms:
-        # atom -> ("const", bool_val) | ("linear", vid, scale, rhs, cmp_kind)
-        self._atom_info: dict[Expr, tuple[object, ...]] = {}
+        # atom -> bool (constant truth)
+        #       | (vid, true_is_upper, true_req, false_is_upper, false_req)
+        self._atom_info: dict[
+            Expr, bool | tuple[int, bool, DeltaRational, bool, DeltaRational]
+        ] = {}
         self._var_atoms: dict[int, list[Expr]] = {}
         self._asserted_atoms: dict[Expr, bool] = {}
 
@@ -237,7 +244,7 @@ class LRASolver:
         coeffs, const_val = self._linearize(atom.args[0])
         rhs_coeffs, rhs_const = self._linearize(atom.args[1])
         for v, c in rhs_coeffs.items():
-            updated = coeffs.get(v, Fraction(0)) - c
+            updated = coeffs.get(v, _FRAC_ZERO) - c
             if updated == 0:
                 coeffs.pop(v, None)
             else:
@@ -247,12 +254,31 @@ class LRASolver:
         if not coeffs:
             is_upper, strict = _bound_from_cmp(atom.decl.kind, True)
             fixed_truth = _eval_cmp(const_diff, is_upper, strict)
-            self._atom_info[atom] = ("const", fixed_truth)
+            self._atom_info[atom] = fixed_truth
             self._enqueue_prop(atom, fixed_truth, [])
             return
 
         vid, scale, scaled_rhs = self._get_or_create_var_for_form(coeffs, -const_diff)
-        self._atom_info[atom] = ("linear", vid, scale, scaled_rhs, atom.decl.kind)
+        var_int = self._is_int[vid]
+        dir_sign = 1 if scale > 0 else -1
+        cmp_kind = atom.decl.kind
+        raw_upper_t, strict_t = _bound_from_cmp(cmp_kind, True)
+        true_is_upper, true_strict = _apply_dir(raw_upper_t, strict_t, dir_sign)
+        true_req = _tighten_bound(
+            var_int, scaled_rhs, is_upper=true_is_upper, strict=true_strict
+        )
+        raw_upper_f, strict_f = _bound_from_cmp(cmp_kind, False)
+        false_is_upper, false_strict = _apply_dir(raw_upper_f, strict_f, dir_sign)
+        false_req = _tighten_bound(
+            var_int, scaled_rhs, is_upper=false_is_upper, strict=false_strict
+        )
+        self._atom_info[atom] = (
+            vid,
+            true_is_upper,
+            true_req,
+            false_is_upper,
+            false_req,
+        )
         self._var_atoms.setdefault(vid, []).append(atom)
 
         # Check if existing bounds already decide this newly registered atom.
@@ -275,24 +301,15 @@ class LRASolver:
             self._history.append((_OP_ASSERT, atom))
 
         info = self._atom_info[atom]
-        if info[0] == "const":
-            fixed_truth = bool(info[1])
-            if fixed_truth != polarity and self._conflict is None:
+        if isinstance(info, bool):
+            if info != polarity and self._conflict is None:
                 self._conflict = [TheoryLit(atom, polarity)]
                 self._stats.conflicts += 1
             return
 
-        _, vid, scale, scaled_rhs, cmp_kind = info
-        assert isinstance(vid, int)
-        assert isinstance(scale, Fraction)
-        assert isinstance(scaled_rhs, Fraction)
-        assert isinstance(cmp_kind, DeclKind)
-
-        raw_upper, strict = _bound_from_cmp(cmp_kind, polarity)
-        is_upper, strict = _apply_dir(raw_upper, strict, 1 if scale > 0 else -1)
-        target = _tighten_bound(
-            self._is_int[vid], scaled_rhs, is_upper=is_upper, strict=strict
-        )
+        vid, true_is_upper, true_req, false_is_upper, false_req = info
+        is_upper = true_is_upper if polarity else false_is_upper
+        target = true_req if polarity else false_req
         reason = TheoryLit(atom, polarity)
         self._apply_bound_update(vid, target, reason, is_upper=is_upper)
 
@@ -940,41 +957,40 @@ class LRASolver:
         self._stats.propagations += 1
 
     def _check_atom_subsumed(self, atom: Expr) -> None:
+        if atom in self._asserted_atoms:
+            return
         info = self._atom_info[atom]
-        if info[0] == "const" or atom in self._asserted_atoms:
+        if isinstance(info, bool):
             return
 
-        _, vid, scale, scaled_rhs, cmp_kind = info
-        assert isinstance(vid, int)
-        assert isinstance(scale, Fraction)
-        assert isinstance(scaled_rhs, Fraction)
-        assert isinstance(cmp_kind, DeclKind)
-        var_int = self._is_int[vid]
-        dir_sign = 1 if scale > 0 else -1
+        vid, true_is_upper, true_req, false_is_upper, false_req = info
+        if true_is_upper:
+            cur_ub = self._upper[vid]
+            if cur_ub is not None and cur_ub <= true_req:
+                reason = self._upper_reason[vid]
+                assert reason is not None
+                self._enqueue_prop(atom, True, [reason])
+                return
+        else:
+            cur_lb = self._lower[vid]
+            if cur_lb is not None and cur_lb >= true_req:
+                reason = self._lower_reason[vid]
+                assert reason is not None
+                self._enqueue_prop(atom, True, [reason])
+                return
 
-        # Check whether polarity=True is already forced by current bounds.
-        for pol in (True, False):
-            raw_upper, strict = _bound_from_cmp(cmp_kind, pol)
-            need_upper, strict = _apply_dir(raw_upper, strict, dir_sign)
-            req = _tighten_bound(
-                var_int, scaled_rhs, is_upper=need_upper, strict=strict
-            )
-            # ``v <= ub_req`` holds if current upper <= ub_req.
-            # ``v >= lb_req`` holds if current lower >= lb_req.
-            if need_upper:
-                cur_ub = self._upper[vid]
-                if cur_ub is not None and cur_ub <= req:
-                    reason = self._upper_reason[vid]
-                    assert reason is not None
-                    self._enqueue_prop(atom, pol, [reason])
-                    return
-            else:
-                cur_lb = self._lower[vid]
-                if cur_lb is not None and cur_lb >= req:
-                    reason = self._lower_reason[vid]
-                    assert reason is not None
-                    self._enqueue_prop(atom, pol, [reason])
-                    return
+        if false_is_upper:
+            cur_ub = self._upper[vid]
+            if cur_ub is not None and cur_ub <= false_req:
+                reason = self._upper_reason[vid]
+                assert reason is not None
+                self._enqueue_prop(atom, False, [reason])
+        else:
+            cur_lb = self._lower[vid]
+            if cur_lb is not None and cur_lb >= false_req:
+                reason = self._lower_reason[vid]
+                assert reason is not None
+                self._enqueue_prop(atom, False, [reason])
 
     def _propagate_var_atoms(self, vid: int) -> None:
         atoms = self._var_atoms.get(vid)
@@ -1034,74 +1050,93 @@ class LRASolver:
         self._propagate_var_atoms(vid)
 
     def _update_nonbasic(self, j_nb: int, new_val: DeltaRational) -> None:
-        diff = new_val - self._val[j_nb]
-        self._val[j_nb] = new_val
+        vals = self._val
+        old_nb = vals[j_nb]
+        d_real = new_val.real - old_nb.real
+        d_delta = new_val.delta - old_nb.delta
+        vals[j_nb] = new_val
         uses = self._col_uses.get(j_nb)
         if not uses:
             return
-        for r_basic in uses:
-            a_rj = self._basic_rows[r_basic][j_nb]
-            self._val[r_basic] = self._val[r_basic] + diff.scale(a_rj)
+        basic_rows = self._basic_rows
+        if d_delta == _FRAC_ZERO:
+            for r_basic in uses:
+                old_r = vals[r_basic]
+                vals[r_basic] = DeltaRational(
+                    old_r.real + d_real * basic_rows[r_basic][j_nb],
+                    old_r.delta,
+                )
+        else:
+            for r_basic in uses:
+                a_rj = basic_rows[r_basic][j_nb]
+                old_r = vals[r_basic]
+                vals[r_basic] = DeltaRational(
+                    old_r.real + d_real * a_rj,
+                    old_r.delta + d_delta * a_rj,
+                )
 
     def _solve_simplex(self) -> bool:
+        basic_rows = self._basic_rows
+        vals = self._val
+        lowers = self._lower
+        uppers = self._upper
         while True:
             # Bland's rule: pick smallest violated basic variable ID.
             i_basic: int | None = None
             need_inc = False
-            for r_id in sorted(self._basic_rows):
-                val = self._val[r_id]
-                lb = self._lower[r_id]
+            for r_id in basic_rows:
+                if i_basic is not None and r_id >= i_basic:
+                    continue
+                val = vals[r_id]
+                lb = lowers[r_id]
                 if lb is not None and val < lb:
                     i_basic = r_id
                     need_inc = True
-                    break
-                ub = self._upper[r_id]
+                    continue
+                ub = uppers[r_id]
                 if ub is not None and val > ub:
                     i_basic = r_id
                     need_inc = False
-                    break
 
             if i_basic is None:
                 return True
 
-            row = self._basic_rows[i_basic]
+            row = basic_rows[i_basic]
             entering_nb: int | None = None
             if need_inc:
-                for j_nb in sorted(row):
-                    a_ij = row[j_nb]
+                for j_nb, a_ij in row.items():
+                    if entering_nb is not None and j_nb >= entering_nb:
+                        continue
                     if a_ij > 0:
-                        ub = self._upper[j_nb]
-                        if ub is None or self._val[j_nb] < ub:
+                        ub = uppers[j_nb]
+                        if ub is None or vals[j_nb] < ub:
                             entering_nb = j_nb
-                            break
                     else:
-                        lb = self._lower[j_nb]
-                        if lb is None or self._val[j_nb] > lb:
+                        lb = lowers[j_nb]
+                        if lb is None or vals[j_nb] > lb:
                             entering_nb = j_nb
-                            break
                 if entering_nb is None:
                     self._record_farkas_conflict(i_basic, row, violated_lower=True)
                     return False
-                target = self._lower[i_basic]
+                target = lowers[i_basic]
                 assert target is not None
                 self._pivot_and_update(i_basic, entering_nb, target)
             else:
-                for j_nb in sorted(row):
-                    a_ij = row[j_nb]
+                for j_nb, a_ij in row.items():
+                    if entering_nb is not None and j_nb >= entering_nb:
+                        continue
                     if a_ij > 0:
-                        lb = self._lower[j_nb]
-                        if lb is None or self._val[j_nb] > lb:
+                        lb = lowers[j_nb]
+                        if lb is None or vals[j_nb] > lb:
                             entering_nb = j_nb
-                            break
                     else:
-                        ub = self._upper[j_nb]
-                        if ub is None or self._val[j_nb] < ub:
+                        ub = uppers[j_nb]
+                        if ub is None or vals[j_nb] < ub:
                             entering_nb = j_nb
-                            break
                 if entering_nb is None:
                     self._record_farkas_conflict(i_basic, row, violated_lower=False)
                     return False
-                target = self._upper[i_basic]
+                target = uppers[i_basic]
                 assert target is not None
                 self._pivot_and_update(i_basic, entering_nb, target)
 
@@ -1130,42 +1165,76 @@ class LRASolver:
         self, i_basic: int, j_nb: int, target_val: DeltaRational
     ) -> None:
         self._stats.pivots += 1
-        row_i = self._basic_rows.pop(i_basic)
-        a_ij = row_i[j_nb]
-        theta = (target_val - self._val[i_basic]).scale(Fraction(1) / a_ij)
+        basic_rows = self._basic_rows
+        col_uses = self._col_uses
+        vals = self._val
 
-        self._val[i_basic] = target_val
-        self._val[j_nb] = self._val[j_nb] + theta
-        for k_basic in list(self._col_uses.get(j_nb, ())):
-            if k_basic == i_basic or k_basic not in self._basic_rows:
-                continue
-            a_kj = self._basic_rows[k_basic][j_nb]
-            self._val[k_basic] = self._val[k_basic] + theta.scale(a_kj)
+        row_i = basic_rows.pop(i_basic)
+        a_ij = row_i[j_nb]
+        inv_aij = _FRAC_ONE / a_ij
+        old_i = vals[i_basic]
+        t_real = (target_val.real - old_i.real) * inv_aij
+        t_delta = (target_val.delta - old_i.delta) * inv_aij
+
+        vals[i_basic] = target_val
+        old_j = vals[j_nb]
+        vals[j_nb] = DeltaRational(old_j.real + t_real, old_j.delta + t_delta)
+
+        j_uses = list(col_uses.get(j_nb, ()))
+        if t_delta == _FRAC_ZERO:
+            for k_basic in j_uses:
+                if k_basic == i_basic or k_basic not in basic_rows:
+                    continue
+                a_kj = basic_rows[k_basic][j_nb]
+                old_k = vals[k_basic]
+                vals[k_basic] = DeltaRational(
+                    old_k.real + t_real * a_kj,
+                    old_k.delta,
+                )
+        else:
+            for k_basic in j_uses:
+                if k_basic == i_basic or k_basic not in basic_rows:
+                    continue
+                a_kj = basic_rows[k_basic][j_nb]
+                old_k = vals[k_basic]
+                vals[k_basic] = DeltaRational(
+                    old_k.real + t_real * a_kj,
+                    old_k.delta + t_delta * a_kj,
+                )
 
         for col in row_i:
-            self._col_uses[col].discard(i_basic)
+            col_uses[col].discard(i_basic)
 
-        inv_aij = Fraction(1) / a_ij
+        neg_inv_aij = -inv_aij
         new_row_j: dict[int, Fraction] = {i_basic: inv_aij}
         for col, a_ik in row_i.items():
             if col != j_nb:
-                new_row_j[col] = -a_ik * inv_aij
+                new_row_j[col] = a_ik * neg_inv_aij
 
-        self._basic_rows[j_nb] = new_row_j
+        basic_rows[j_nb] = new_row_j
         for col in new_row_j:
-            self._col_uses.setdefault(col, set()).add(j_nb)
+            uses = col_uses.get(col)
+            if uses is None:
+                col_uses[col] = {j_nb}
+            else:
+                uses.add(j_nb)
 
-        for k_basic in list(self._col_uses.get(j_nb, ())):
-            if k_basic == j_nb:
+        j_col_uses = col_uses[j_nb]
+        for k_basic in j_uses:
+            if k_basic == j_nb or k_basic not in basic_rows:
                 continue
-            row_k = self._basic_rows[k_basic]
+            row_k = basic_rows[k_basic]
             a_kj = row_k.pop(j_nb)
-            self._col_uses[j_nb].discard(k_basic)
+            j_col_uses.discard(k_basic)
             for col, coef_jm in new_row_j.items():
-                upd = row_k.get(col, Fraction(0)) + a_kj * coef_jm
-                if upd == 0:
-                    row_k.pop(col, None)
-                    self._col_uses[col].discard(k_basic)
+                prod = a_kj * coef_jm
+                if col not in row_k:
+                    row_k[col] = prod
+                    col_uses[col].add(k_basic)
                 else:
-                    row_k[col] = upd
-                    self._col_uses.setdefault(col, set()).add(k_basic)
+                    upd = row_k[col] + prod
+                    if upd == _FRAC_ZERO:
+                        del row_k[col]
+                        col_uses[col].discard(k_basic)
+                    else:
+                        row_k[col] = upd

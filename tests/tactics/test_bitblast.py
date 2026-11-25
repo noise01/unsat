@@ -206,3 +206,50 @@ def test_bv_semantics_exhaustive_4bit_and_1bit_vs_z3() -> None:
     z0 = ctx.mk_zero_ext(0, ctx.mk_bv("v", 8))
     assert isinstance(z0, App)
     assert z0.decl.kind is DeclKind.UNINTERPRETED
+
+
+def test_bitblast_gate_compaction_and_sdiv_sharing() -> None:
+    from unsat.syntax import iter_subexprs
+
+    ctx = Context()
+    x = ctx.mk_bv("x", 16)
+    y = ctx.mk_bv("y", 16)
+
+    # Identical operand comparison simplifies directly to constant false without gates.
+    same_ult = bitblast(ctx.mk_bv_ult(x, x)).formulas[0]
+    assert same_ult is ctx.false_expr
+
+    # Multiplication by a sparse power-of-two constant emits no adder XOR gates.
+    sparse_mul = bitblast(ctx.mk_eq(x * ctx.mk_bv_val(16, 16), y)).formulas[0]
+    sparse_kinds = {
+        node.decl.kind for node in iter_subexprs(sparse_mul) if isinstance(node, App)
+    }
+    assert DeclKind.XOR not in sparse_kinds
+
+    # Verify both operand orders of sparse multiplication match Z3.
+    lhs_mul = ctx.mk_bv_val(16, 16) * x
+    rhs_mul = x * ctx.mk_bv_val(16, 16)
+    neq = bitblast(ctx.mk_not(ctx.mk_eq(lhs_mul, rhs_mul))).formulas
+    s = SMTSolver(ctx)
+    s.add(*neq)
+    assert s.check() is SolveResult.UNSAT
+
+    # Unsigned < circuit omits XOR gates via direct borrow chain.
+    ult_nodes = list(iter_subexprs(bitblast(ctx.mk_bv_ult(x, y)).formulas[0]))
+    assert all(
+        not (isinstance(n, App) and n.decl.kind is DeclKind.XOR) for n in ult_nodes
+    )
+
+    # Signed sdiv + srem sharing: blaster populates _sdiv_cache once for the pair.
+    sdiv_only = BitBlaster(ctx)
+    f_div = ctx.mk_eq(x / y, ctx.mk_bv_val(3, 16))
+    sdiv_nodes = len(list(iter_subexprs(sdiv_only.blast_formula(f_div))))
+
+    sdiv_rem = BitBlaster(ctx)
+    f_both = ctx.mk_and(
+        ctx.mk_eq(x / y, ctx.mk_bv_val(3, 16)),
+        ctx.mk_eq(ctx.mk_bv_srem(x, y), ctx.mk_bv_val(1, 16)),
+    )
+    both_nodes = len(list(iter_subexprs(sdiv_rem.blast_formula(f_both))))
+    assert len(sdiv_rem._sdiv_cache) == 1
+    assert both_nodes < int(sdiv_nodes * 1.4)

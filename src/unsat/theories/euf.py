@@ -72,6 +72,8 @@ class EUFSolver:
         # Proof Forest: parent pointer (-1 for root) and edge justification.
         self._proof_parent: list[int] = []
         self._proof_reason: list[_Reason | None] = []
+        self._lca_mark: list[int] = []
+        self._lca_stamp = 0
 
         # Equality atoms and two-watch lists indexed by class representative.
         self._eq_atoms: list[tuple[int, int, Expr]] = []
@@ -221,6 +223,7 @@ class EUFSolver:
                 self._class_bool_terms.pop()
                 self._proof_parent.pop()
                 self._proof_reason.pop()
+                self._lca_mark.pop()
                 self._eq_watches.pop()
 
     def register_term(self, term: Expr) -> None:
@@ -780,6 +783,7 @@ class EUFSolver:
         self._class_bool_terms.append([])
         self._proof_parent.append(-1)
         self._proof_reason.append(None)
+        self._lca_mark.append(0)
         self._eq_watches.append([])
 
         is_uapp = (
@@ -822,7 +826,16 @@ class EUFSolver:
 
     def _compute_sig(self, nid: int) -> tuple[int, ...]:
         rep = self._rep
-        return (self._decl_ids[nid], *(rep[aid] for aid in self._arg_ids[nid]))
+        args = self._arg_ids[nid]
+        decl_id = self._decl_ids[nid]
+        n = len(args)
+        if n == 1:
+            return (decl_id, rep[args[0]])
+        if n == 2:
+            return (decl_id, rep[args[0]], rep[args[1]])
+        if n == 3:
+            return (decl_id, rep[args[0]], rep[args[1]], rep[args[2]])
+        return (decl_id, *(rep[aid] for aid in args))
 
     def _sig_set(self, sig: tuple[int, ...], nid: int) -> None:
         self._sig_table[sig] = nid
@@ -900,15 +913,17 @@ class EUFSolver:
                 self._history.append((_OP_CONST_SET, r_large))
 
         # Step 1: Delete current signatures of affected parents before changing _rep.
+        small_uses = self._use_list[r_small]
         parents: list[int] = []
-        seen_parents: set[int] = set()
-        for p in self._use_list[r_small]:
-            if p not in seen_parents:
-                seen_parents.add(p)
-                parents.append(p)
-                old_sig = self._compute_sig(p)
-                if self._sig_table.get(old_sig) == p:
-                    self._sig_del(old_sig, p)
+        if small_uses:
+            seen_parents: set[int] = set()
+            for p in small_uses:
+                if p not in seen_parents:
+                    seen_parents.add(p)
+                    parents.append(p)
+                    old_sig = self._compute_sig(p)
+                    if self._sig_table.get(old_sig) == p:
+                        self._sig_del(old_sig, p)
 
         # Step 2: Re-root smaller Proof Forest tree at u_side and link to v_side.
         self._link_proof(u_side, v_side, reason)
@@ -926,7 +941,8 @@ class EUFSolver:
             self._rep[member] = r_large
         self._class_members[r_large].extend(self._class_members[r_small])
         self._class_bool_terms[r_large].extend(self._class_bool_terms[r_small])
-        self._use_list[r_large].extend(self._use_list[r_small])
+        if small_uses:
+            self._use_list[r_large].extend(small_uses)
 
         # Step 4: Propagate Boolean constant value to newly unified Bool terms.
         if c_large is None and c_small is not None:
@@ -1027,6 +1043,8 @@ class EUFSolver:
         seen_edge_nodes: set[int] = set()
         pending: list[tuple[int, int]] = [(lhs_id, rhs_id)]
 
+        proof_parent = self._proof_parent
+        lca_mark = self._lca_mark
         while pending:
             a, b = pending.pop()
             if a == b:
@@ -1036,15 +1054,28 @@ class EUFSolver:
                 continue
             explained_pairs.add(pair)
 
-            ancestors: set[int] = set()
-            cur = a
-            while cur != -1:
-                ancestors.add(cur)
-                cur = self._proof_parent[cur]
+            self._lca_stamp += 1
+            stamp = self._lca_stamp
+            if stamp > 0x7FFF_FFFF:
+                lca_mark[:] = [0] * len(lca_mark)
+                self._lca_stamp = 1
+                stamp = 1
 
-            lca = b
-            while lca not in ancestors:
-                lca = self._proof_parent[lca]
+            cur_a = a
+            cur_b = b
+            while True:
+                if cur_a != -1:
+                    if lca_mark[cur_a] == stamp:
+                        lca = cur_a
+                        break
+                    lca_mark[cur_a] = stamp
+                    cur_a = proof_parent[cur_a]
+                if cur_b != -1:
+                    if lca_mark[cur_b] == stamp:
+                        lca = cur_b
+                        break
+                    lca_mark[cur_b] = stamp
+                    cur_b = proof_parent[cur_b]
 
             for start in (a, b):
                 cur = start
@@ -1064,6 +1095,6 @@ class EUFSolver:
                             ):
                                 if a_arg != b_arg:
                                     pending.append((a_arg, b_arg))
-                    cur = self._proof_parent[cur]
+                    cur = proof_parent[cur]
 
         return result
