@@ -244,6 +244,8 @@ class SATSolver:
                             continue
                         if progressed:
                             continue
+                    if not self._trail.all_assigned:
+                        continue
 
                 self._last_result = SolveResult.SAT
                 return SolveResult.SAT

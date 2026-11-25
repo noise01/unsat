@@ -92,6 +92,27 @@ class ArrayStats:
         }
 
 
+@dataclass(slots=True)
+class BVStats:
+    """Instrumentation counters collected by a :class:`BVSolver`."""
+
+    propagations: int = 0
+    conflicts: int = 0
+    checks: int = 0
+    word_models: int = 0
+    blasted_atoms: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Return counters as a plain dictionary."""
+        return {
+            "theory_bv_propagations": self.propagations,
+            "theory_bv_conflicts": self.conflicts,
+            "theory_bv_checks": self.checks,
+            "theory_bv_word_models": self.word_models,
+            "theory_bv_blasted_atoms": self.blasted_atoms,
+        }
+
+
 class TheorySolver(Protocol):
     """Protocol implemented by incremental congruence / background theory solvers."""
 

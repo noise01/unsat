@@ -752,6 +752,19 @@ class BitBlaster:
         self._ensure(formula)
         return self._formula_cache[formula]
 
+    def has_term_bits(self, term: Expr) -> bool:
+        """Return whether ``term`` already has bit-blasted Boolean wire expressions."""
+        return term in self._term_bits
+
+    def eval_blasted_term_bits(
+        self, term: Expr, bit_lookup: Callable[[Expr], bool]
+    ) -> int | None:
+        """Evaluate already bit-blasted ``term``, or ``None`` if not blasted."""
+        bits = self._term_bits.get(term)
+        if bits is None:
+            return None
+        return self.eval_bits(bits, bit_lookup)
+
     def eval_term_bits(
         self,
         term: Expr,
