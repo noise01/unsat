@@ -16,9 +16,9 @@ from unsat.quantifiers import (
 from unsat.sat import Lit, SATSolver, SolveResult, negate, pos_lit
 from unsat.smt.encoder import _PlaistedGreenbaumEncoder
 from unsat.smt.propagator import _CombinedPropagator
-from unsat.syntax import App, Context, DeclKind, Expr, FuncDecl, Quantifier
+from unsat.syntax import App, Const, Context, DeclKind, Expr, FuncDecl, Quantifier
 from unsat.tactics import BitBlaster, Tactic, bv_simplify, simplify
-from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver
+from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver, NLASolver
 
 
 def _validate_timeout(timeout: float | None) -> None:
@@ -122,9 +122,10 @@ class SMTSolver:
 
     def _init_backend(self) -> None:
         self._euf = EUFSolver(self._ctx)
-        self._lra = LRASolver(self._ctx)
+        self._lra = LRASolver(self._ctx, allow_nonlinear=True)
         self._arrays = ArraySolver(self._ctx)
         self._bv = BVSolver(self._ctx)
+        self._nla = NLASolver(self._ctx)
         self._bitblaster = BitBlaster(self._ctx)
         self._propagator = _CombinedPropagator(
             self._ctx,
@@ -132,6 +133,7 @@ class SMTSolver:
             self._lra,
             self._arrays,
             self._bv,
+            self._nla,
             self._bitblaster,
         )
         self._sat = SATSolver(propagator=self._propagator)
@@ -331,7 +333,7 @@ class SMTSolver:
                         core.append(mapped[0])
                 self._unsat_core = list(dict.fromkeys(core))
                 return SolveResult.UNSAT
-            if result is SolveResult.UNKNOWN:
+            if result is SolveResult.UNKNOWN or self._propagator.nla_unknown:
                 self._last_result = SolveResult.UNKNOWN
                 self._unsat_core = []
                 return SolveResult.UNKNOWN
@@ -520,7 +522,38 @@ class SMTSolver:
             if decl not in internal_decls
         }
         universes = {sort: euf_model.universe(sort) for sort in euf_model.sorts()}
-        return Model(self._ctx, values, functions=functions, universes=universes)
+        div_zero: dict[tuple[DeclKind, Const], Const] = {}
+        div_args = [
+            expr
+            for expr in lra_conc
+            if isinstance(expr, App)
+            and expr.decl.kind in (DeclKind.DIV, DeclKind.IDIV, DeclKind.MOD)
+        ]
+        if div_args:
+            needed = [arg for expr in div_args for arg in expr.args]
+            div_arg_vals = self._lra.term_values(needed)
+            for expr in div_args:
+                assert isinstance(expr, App)
+                den_val = div_arg_vals[expr.args[1]]
+                if den_val == 0:
+                    num_val = div_arg_vals[expr.args[0]]
+                    out_val = lra_conc[expr]
+                    if expr.is_int:
+                        assert num_val.denominator == 1
+                        assert out_val.denominator == 1
+                        num_c = self._ctx.mk_int_val(num_val.numerator)
+                        out_c = self._ctx.mk_int_val(out_val.numerator)
+                    else:
+                        num_c = self._ctx.mk_real_val(num_val)
+                        out_c = self._ctx.mk_real_val(out_val)
+                    div_zero[(expr.decl.kind, num_c)] = out_c
+        return Model(
+            self._ctx,
+            values,
+            functions=functions,
+            universes=universes,
+            div_zero=div_zero,
+        )
 
     def model(self) -> Model:
         """Return a satisfying :class:`Model` from the latest ``check()`` call."""
@@ -548,6 +581,7 @@ class SMTSolver:
         stats.update(self._lra.stats.to_dict())
         stats.update(self._arrays.stats.to_dict())
         stats.update(self._bv.stats.to_dict())
+        stats.update(self._nla.stats.to_dict())
         stats.update(self._quant_stats.to_dict())
         return stats
 

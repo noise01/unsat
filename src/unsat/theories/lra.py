@@ -109,9 +109,14 @@ def _eval_cmp(val: Fraction, is_upper: bool, strict: bool) -> bool:
 class LRASolver:
     """Incremental generalized Simplex solver for ``QF_LRA`` and ``QF_LIA``."""
 
-    def __init__(self, ctx: Context) -> None:
+    def __init__(self, ctx: Context, *, allow_nonlinear: bool = False) -> None:
         self._ctx = ctx
+        self._allow_nonlinear = allow_nonlinear
         self._stats = LRAStats()
+
+        # Nonlinear monomial / division tracking for NLASolver when enabled.
+        self._nonlinear_muls: dict[Expr, tuple[Expr, Expr]] = {}
+        self._nonlinear_divs: dict[Expr, tuple[Expr, Expr]] = {}
 
         # Arithmetic leaf terms -> original variable ID.
         self._expr_to_var: dict[Expr, int] = {}
@@ -441,10 +446,51 @@ class LRASolver:
     def var_orig_coeffs(self, vid: int) -> dict[int, Fraction]:
         """Return the expansion of variable ``vid`` in terms of original vars."""
         if self._is_original[vid]:
-            return {vid: Fraction(1)}
+            return {vid: _FRAC_ONE}
         coeffs = self._slack_orig_coeffs[vid]
         assert coeffs is not None
         return dict(coeffs)
+
+    @property
+    def nonlinear_muls(self) -> dict[Expr, tuple[Expr, Expr]]:
+        """Map linearized product terms ``m`` to canonical factors ``(a, b)``."""
+        return dict(self._nonlinear_muls)
+
+    @property
+    def nonlinear_divs(self) -> dict[Expr, tuple[Expr, Expr]]:
+        """Map linearized non-constant/zero divisions ``d`` to ``(num, den)``."""
+        return dict(self._nonlinear_divs)
+
+    def var_id_or_none(self, expr: Expr) -> int | None:
+        """Return original Simplex variable ID for ``expr``, or ``None``."""
+        return self._expr_to_var.get(expr)
+
+    def var_bounds_with_reasons(
+        self, vid: int
+    ) -> tuple[
+        DeltaRational | None, TheoryLit | None, DeltaRational | None, TheoryLit | None
+    ]:
+        """Return ``(lower, lower_reason, upper, upper_reason)`` for ``vid``."""
+        return (
+            self._lower[vid],
+            self._lower_reason[vid],
+            self._upper[vid],
+            self._upper_reason[vid],
+        )
+
+    def active_atoms(self) -> list[tuple[Expr, bool]]:
+        """Return currently asserted arithmetic comparison atoms and polarities."""
+        return list(self._asserted_atoms.items())
+
+    def atom_linear_form(self, expr: Expr) -> tuple[dict[Expr, Fraction], Fraction]:
+        """Return linear expression ``coeffs[orig_expr], const`` for ``expr``."""
+        coeffs, const_val = self._linearize(expr)
+        out: dict[Expr, Fraction] = {}
+        for vid, coef in coeffs.items():
+            var_expr = self._var_expr[vid]
+            assert var_expr is not None
+            out[var_expr] = out.get(var_expr, _FRAC_ZERO) + coef
+        return out, const_val
 
     # ------------------------------------------------------------------
     # LIA integrality patching & vertex tightening
@@ -786,9 +832,17 @@ class LRASolver:
                 raise TypeError(msg)
 
             kind = node.decl.kind
-            if kind in (DeclKind.UNINTERPRETED, DeclKind.ITE, DeclKind.SELECT):
+            if kind in (
+                DeclKind.UNINTERPRETED,
+                DeclKind.ITE,
+                DeclKind.SELECT,
+                DeclKind.IDIV,
+                DeclKind.MOD,
+                DeclKind.ABS,
+                DeclKind.TO_INT,
+            ):
                 vid = self._alloc_orig_var(node)
-                memo[node] = ({vid: Fraction(1)}, Fraction(0))
+                memo[node] = ({vid: _FRAC_ONE}, _FRAC_ZERO)
                 continue
 
             if not expanded:
@@ -829,36 +883,87 @@ class LRASolver:
                         sub_map[v] = nxt
                 memo[node] = (sub_map, l_const - r_const)
             elif kind is DeclKind.MUL:
-                const_factor = Fraction(1)
-                var_term: tuple[dict[int, Fraction], Fraction] | None = None
+                const_factor = _FRAC_ONE
+                non_const: list[tuple[dict[int, Fraction], Fraction]] = []
                 for arg in node.args:
                     c_map, c_const = memo[arg]
                     if not c_map:
                         const_factor *= c_const
-                    elif var_term is None:
-                        var_term = (c_map, c_const)
                     else:
-                        msg = f"Non-linear multiplication in linear arithmetic: {node}"
-                        raise ValueError(msg)
-                if const_factor == 0 or var_term is None:
-                    scaled_val = const_factor if var_term is None else Fraction(0)
+                        non_const.append((c_map, c_const))
+                if const_factor == _FRAC_ZERO or not non_const:
+                    scaled_val = const_factor if not non_const else _FRAC_ZERO
                     memo[node] = ({}, scaled_val)
-                else:
-                    v_map, v_const = var_term
+                elif len(non_const) == 1:
+                    v_map, v_const = non_const[0]
                     memo[node] = (
                         {v: c * const_factor for v, c in v_map.items()},
                         v_const * const_factor,
+                    )
+                else:
+                    cur_map = dict(non_const[0][0])
+                    cur_const = non_const[0][1]
+                    for f_map, f_const in non_const[1:]:
+                        nxt_map: dict[int, Fraction] = {}
+                        nxt_const = cur_const * f_const
+                        if cur_const != _FRAC_ZERO:
+                            for v2, c2 in f_map.items():
+                                nxt_map[v2] = (
+                                    nxt_map.get(v2, _FRAC_ZERO) + cur_const * c2
+                                )
+                        if f_const != _FRAC_ZERO:
+                            for v1, c1 in cur_map.items():
+                                nxt_map[v1] = nxt_map.get(v1, _FRAC_ZERO) + f_const * c1
+                        for v1, c1 in cur_map.items():
+                            e1 = self._var_expr[v1]
+                            assert e1 is not None
+                            for v2, c2 in f_map.items():
+                                if not self._allow_nonlinear:
+                                    msg = (
+                                        "Non-linear multiplication in linear "
+                                        f"arithmetic: {node}"
+                                    )
+                                    raise ValueError(msg)
+                                e2 = self._var_expr[v2]
+                                assert e2 is not None
+                                s1 = (
+                                    self._ctx.mk_to_real(e1)
+                                    if (e1.is_int and (node.is_real or e2.is_real))
+                                    else e1
+                                )
+                                s2 = (
+                                    self._ctx.mk_to_real(e2)
+                                    if (e2.is_int and (node.is_real or e1.is_real))
+                                    else e2
+                                )
+                                a_e, b_e = (s1, s2) if s1.id <= s2.id else (s2, s1)
+                                prod = self._ctx.mk_mul(a_e, b_e)
+                                self._nonlinear_muls[prod] = (a_e, b_e)
+                                pv = self._alloc_orig_var(prod)
+                                nxt_map[pv] = nxt_map.get(pv, _FRAC_ZERO) + c1 * c2
+                        cur_map = {v: c for v, c in nxt_map.items() if c != _FRAC_ZERO}
+                        cur_const = nxt_const
+                    memo[node] = (
+                        {v: c * const_factor for v, c in cur_map.items()},
+                        cur_const * const_factor,
                     )
             elif kind is DeclKind.DIV:
                 l_map, l_const = memo[node.args[0]]
                 r_map, r_const = memo[node.args[1]]
                 if r_map or r_const == 0:
-                    msg = f"Non-linear or zero division in linear arithmetic: {node}"
-                    raise ValueError(msg)
-                memo[node] = (
-                    {v: c / r_const for v, c in l_map.items()},
-                    l_const / r_const,
-                )
+                    if not self._allow_nonlinear:
+                        msg = (
+                            f"Non-linear or zero division in linear arithmetic: {node}"
+                        )
+                        raise ValueError(msg)
+                    self._nonlinear_divs[node] = (node.args[0], node.args[1])
+                    vid = self._alloc_orig_var(node)
+                    memo[node] = ({vid: _FRAC_ONE}, _FRAC_ZERO)
+                else:
+                    memo[node] = (
+                        {v: c / r_const for v, c in l_map.items()},
+                        l_const / r_const,
+                    )
             else:
                 msg = f"Unsupported operator in arithmetic expression: {kind}"
                 raise TypeError(msg)

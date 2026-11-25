@@ -624,7 +624,13 @@ def test_qf_ax_matches_z3_and_validates_models(
 
     ures = usolver.check()
     zres = _z3_verdict(zsolver)
-    assert ures is zres
+    if zres is SolveResult.UNKNOWN:
+        zsolver_ax = z3.SolverFor("QF_AX")
+        for f in formulas:
+            zsolver_ax.add(_to_z3_expr(f, sig.z3_consts, sig.z3_funcs, sig.z3_sorts))
+        zres = _z3_verdict(zsolver_ax)
+    if zres is not SolveResult.UNKNOWN:
+        assert ures is zres
     if ures is SolveResult.SAT:
         model = usolver.model()
         for f in formulas:

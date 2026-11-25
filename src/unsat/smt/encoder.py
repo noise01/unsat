@@ -28,7 +28,11 @@ _ARITH_OP_KINDS = frozenset(
         DeclKind.SUB,
         DeclKind.MUL,
         DeclKind.DIV,
+        DeclKind.IDIV,
+        DeclKind.MOD,
+        DeclKind.ABS,
         DeclKind.TO_REAL,
+        DeclKind.TO_INT,
     }
 )
 _BV_CMP_KINDS = frozenset(
@@ -140,6 +144,7 @@ class _PlaistedGreenbaumEncoder:
         self._universal_entries: list[tuple[Lit, Quantifier, set[Lit | None]]] = []
         self._encoding_quant_stack: list[Quantifier] = []
         self._quant_to_entry_indices: dict[Quantifier, list[int]] = {}
+        self._arith_axioms_emitted: set[Expr] = set()
 
     @property
     def internal_decls(self) -> frozenset[FuncDecl]:
@@ -338,6 +343,7 @@ class _PlaistedGreenbaumEncoder:
         """Walk ``term`` registering EUF/LRA/Array/BV subterms and non-Bool ITEs."""
         bool_args: list[Expr] = []
         non_bool_ites: list[App] = []
+        arith_axiom_nodes: list[App] = []
         stack: list[tuple[Expr, bool, bool]] = [(term, in_euf, False)]
 
         while stack:
@@ -400,17 +406,37 @@ class _PlaistedGreenbaumEncoder:
                 continue
 
             if kind in _ARITH_OP_KINDS:
+                div_congruent = kind in (
+                    DeclKind.IDIV,
+                    DeclKind.MOD,
+                    DeclKind.DIV,
+                ) and (not isinstance(node.args[1], Const) or node.args[1].value == 0)
+                eff_arith_euf = euf_flag or div_congruent
                 if not expanded:
-                    stack.append((node, euf_flag, True))
+                    stack.append((node, eff_arith_euf, True))
                     for arg in reversed(node.args):
-                        stack.append((arg, euf_flag, False))
+                        stack.append((arg, eff_arith_euf, False))
                     continue
-                if euf_flag:
+                if eff_arith_euf:
                     self._terms_euf.add(node)
+                    if div_congruent:
+                        self._euf.register_term(node)
                     if node.is_arith:
                         self._prop.add_shared_arith_term(node)
                 else:
                     self._terms_non_euf.add(node)
+                if (
+                    kind
+                    in (
+                        DeclKind.ABS,
+                        DeclKind.TO_INT,
+                        DeclKind.IDIV,
+                        DeclKind.MOD,
+                        DeclKind.DIV,
+                    )
+                    and node not in self._arith_axioms_emitted
+                ):
+                    arith_axiom_nodes.append(node)
                 continue
 
             if kind in _BV_OP_KINDS:
@@ -504,6 +530,69 @@ class _PlaistedGreenbaumEncoder:
             lit_else = self.encode(self._ctx.mk_eq(ite_node, else_b), polarity=1)
             self._emit_clause([negate(lit_c), lit_then])
             self._emit_clause([lit_c, lit_else])
+
+        for anode in arith_axiom_nodes:
+            self._emit_arith_node_axioms(anode)
+
+    def _emit_arith_node_axioms(self, anode: App) -> None:
+        if anode in self._arith_axioms_emitted:
+            return
+        ctx = self._ctx
+        akind = anode.decl.kind
+        if akind in (DeclKind.IDIV, DeclKind.MOD):
+            a, b = anode.args
+            q = ctx.mk_idiv(a, b)
+            r = ctx.mk_mod(a, b)
+            self._arith_axioms_emitted.add(q)
+            self._arith_axioms_emitted.add(r)
+            if isinstance(b, Const):
+                assert isinstance(b.value, int)
+                assert not isinstance(b.value, bool)
+                c = b.value
+                if c == 0:
+                    return
+                axioms = (
+                    ctx.mk_eq(a, ctx.mk_add(ctx.mk_mul(b, q), r)),
+                    ctx.mk_ge(r, ctx.mk_int_val(0)),
+                    ctx.mk_lt(r, ctx.mk_int_val(abs(c))),
+                )
+            else:
+                z0 = ctx.mk_int_val(0)
+                b0 = ctx.mk_eq(b, z0)
+                axioms = (
+                    ctx.mk_or(b0, ctx.mk_eq(a, ctx.mk_add(ctx.mk_mul(b, q), r))),
+                    ctx.mk_or(b0, ctx.mk_ge(r, z0)),
+                    ctx.mk_or(b0, ctx.mk_lt(b, z0), ctx.mk_lt(r, b)),
+                    ctx.mk_or(b0, ctx.mk_gt(b, z0), ctx.mk_lt(r, ctx.mk_neg(b))),
+                )
+            for ax in axioms:
+                self._emit_clause([self.encode(ax, polarity=1)])
+            return
+
+        self._arith_axioms_emitted.add(anode)
+        if akind is DeclKind.ABS:
+            x = anode.args[0]
+            z0 = ctx.mk_int_val(0)
+            for ax in (
+                ctx.mk_implies(ctx.mk_ge(x, z0), ctx.mk_eq(anode, x)),
+                ctx.mk_implies(ctx.mk_lt(x, z0), ctx.mk_eq(anode, ctx.mk_neg(x))),
+            ):
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif akind is DeclKind.TO_INT:
+            r = anode.args[0]
+            tr = ctx.mk_to_real(anode)
+            for ax in (
+                ctx.mk_le(tr, r),
+                ctx.mk_lt(r, ctx.mk_add(tr, ctx.mk_real_val(1))),
+            ):
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif akind is DeclKind.DIV:
+            num, den = anode.args
+            if isinstance(den, Const):
+                return
+            r0 = ctx.mk_real_val(0)
+            ax = ctx.mk_or(ctx.mk_eq(den, r0), ctx.mk_eq(ctx.mk_mul(anode, den), num))
+            self._emit_clause([self.encode(ax, polarity=1)])
 
     def _is_encoded(self, node: Expr, pol: int) -> bool:
         if pol > 0:
@@ -664,6 +753,34 @@ class _PlaistedGreenbaumEncoder:
                 continue
 
             kind = node.decl.kind
+            if kind is DeclKind.IS_INT:
+                arg = node.args[0]
+                reduced = self._ctx.mk_eq(
+                    arg, self._ctx.mk_to_real(self._ctx.mk_to_int(arg))
+                )
+                lit_red = self.encode(reduced, polarity=0)
+                lit_v = pos_lit(self.ensure_expr_var(node))
+                self._emit_clause([negate(lit_v), lit_red])
+                self._emit_clause([lit_v, negate(lit_red)])
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
+            if kind is DeclKind.DIVISIBLE:
+                mod_n = node.decl.params[0]
+                arg = node.args[0]
+                reduced = self._ctx.mk_eq(
+                    self._ctx.mk_mod(arg, self._ctx.mk_int_val(mod_n)),
+                    self._ctx.mk_int_val(0),
+                )
+                lit_red = self.encode(reduced, polarity=0)
+                lit_v = pos_lit(self.ensure_expr_var(node))
+                self._emit_clause([negate(lit_v), lit_red])
+                self._emit_clause([lit_v, negate(lit_red)])
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
             if kind in _CMP_KINDS:
                 self._register_term(node.args[0], in_euf=False)
                 self._register_term(node.args[1], in_euf=False)

@@ -14,6 +14,9 @@ from unsat.theories import (
     LIACutLemma,
     LIASplitLemma,
     LRASolver,
+    NLALemma,
+    NLASolver,
+    NLAUnknown,
     TheoryLit,
     find_lia_lemma,
 )
@@ -41,6 +44,7 @@ class _CombinedPropagator:
         lra_solver: LRASolver,
         array_solver: ArraySolver,
         bv_solver: BVSolver,
+        nla_solver: NLASolver,
         bitblaster: BitBlaster,
     ) -> None:
         self._ctx = ctx
@@ -49,6 +53,7 @@ class _CombinedPropagator:
         self._lra = lra_solver
         self._arrays = array_solver
         self._bv = bv_solver
+        self._nla = nla_solver
         self._bitblaster = bitblaster
         self._encoder: _LemmaEncoder | None = None
 
@@ -66,15 +71,25 @@ class _CombinedPropagator:
         self._shared_bv_terms: dict[Sort, list[Expr]] = {}
         self._shared_bv_set: set[Expr] = set()
         self._emitted_cuts: set[Expr] = set()
+        self._emitted_nla_lemmas: set[Expr] = set()
+        self._nla_unknown: bool = False
 
     def attach(self, sat_solver: SATSolver, encoder: _LemmaEncoder) -> None:
         """Bind the owning ``SATSolver`` and encoder after construction."""
         self._sat = sat_solver
         self._encoder = encoder
 
+    @property
+    def nla_unknown(self) -> bool:
+        """Whether ``NLASolver`` stopped conservatively with ``NLAUnknown``."""
+        return self._nla_unknown
+
     def reset_check_state(self) -> None:
         """Clear per-solve deduplication state before a fresh ``check()``."""
         self._emitted_cuts.clear()
+        self._emitted_nla_lemmas.clear()
+        self._nla_unknown = False
+        self._nla.reset_check_state()
 
     def add_shared_arith_term(self, term: Expr) -> None:
         """Record an ``Int``/``Real`` term participating in EUF for MBTC."""
@@ -316,6 +331,28 @@ class _CombinedPropagator:
             mbtc_lemmas = self._check_mbtc()
             if mbtc_lemmas:
                 return mbtc_lemmas
+
+        nla_res = self._nla.check(self._lra, emitted_lemmas=self._emitted_nla_lemmas)
+        if isinstance(nla_res, list) and nla_res:
+            assert self._encoder is not None
+            nla_out: list[list[Lit]] = []
+            for nla_lemma in nla_res:
+                assert isinstance(nla_lemma, NLALemma)
+                base = self._lra_conflict_to_clause(nla_lemma.reasons)
+                if nla_lemma.formula is self._ctx.false_expr:
+                    nla_out.append(base)
+                elif nla_lemma.formula is self._ctx.true_expr:
+                    continue
+                else:
+                    f_lit, def_clauses = self._encoder.encode_lemma(
+                        nla_lemma.formula, polarity=1
+                    )
+                    nla_out.extend(def_clauses)
+                    nla_out.append([*base, f_lit])
+            if nla_out:
+                return nla_out
+        if isinstance(nla_res, NLAUnknown):
+            self._nla_unknown = True
 
         bv_res: BVBlastRequest | list[TheoryLit] | None = None
         if self._bv_atom_to_pos_lit or self._shared_bv_set:

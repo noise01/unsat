@@ -39,6 +39,9 @@ _EUF_CONGRUENCE_KINDS = frozenset(
         DeclKind.SELECT,
         DeclKind.STORE,
         DeclKind.CONST_ARRAY,
+        DeclKind.DIV,
+        DeclKind.IDIV,
+        DeclKind.MOD,
     }
 )
 

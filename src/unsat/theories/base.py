@@ -113,6 +113,33 @@ class BVStats:
         }
 
 
+@dataclass(slots=True)
+class NLAStats:
+    """Instrumentation counters collected by an :class:`NLASolver`."""
+
+    checks: int = 0
+    zero_lemmas: int = 0
+    sign_lemmas: int = 0
+    tangent_lemmas: int = 0
+    icp_conflicts: int = 0
+    sturm_lemmas: int = 0
+    branch_splits: int = 0
+    unknowns: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Return counters as a plain dictionary."""
+        return {
+            "theory_nla_checks": self.checks,
+            "theory_nla_zero_lemmas": self.zero_lemmas,
+            "theory_nla_sign_lemmas": self.sign_lemmas,
+            "theory_nla_tangent_lemmas": self.tangent_lemmas,
+            "theory_nla_icp_conflicts": self.icp_conflicts,
+            "theory_nla_sturm_lemmas": self.sturm_lemmas,
+            "theory_nla_branch_splits": self.branch_splits,
+            "theory_nla_unknowns": self.unknowns,
+        }
+
+
 class TheorySolver(Protocol):
     """Protocol implemented by incremental congruence / background theory solvers."""
 

@@ -1,0 +1,7 @@
+(set-info :status unsat)
+(set-logic QF_NIA)
+(declare-fun n () Int)
+(assert (> (* n n) 1))
+(assert (< (* n n) 4))
+(check-sat)
+(exit)
