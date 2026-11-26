@@ -4,8 +4,30 @@ from collections.abc import Mapping, Sequence
 from fractions import Fraction
 
 from unsat.syntax import App, Const, DeclKind, Expr, FuncDecl, Sort
+from unsat.syntax.context_strings import expr_to_re
+from unsat.syntax.str_eval import re_diff, re_is_empty, re_union
 
-type Value = bool | int | Fraction | Expr
+type Value = bool | int | Fraction | str | Expr
+
+_CONCRETE_RE_KINDS = frozenset(
+    {
+        DeclKind.STR_TO_RE,
+        DeclKind.RE_NONE,
+        DeclKind.RE_ALL,
+        DeclKind.RE_ALLCHAR,
+        DeclKind.RE_CONCAT,
+        DeclKind.RE_UNION,
+        DeclKind.RE_INTER,
+        DeclKind.RE_STAR,
+        DeclKind.RE_PLUS,
+        DeclKind.RE_OPT,
+        DeclKind.RE_RANGE,
+        DeclKind.RE_COMP,
+        DeclKind.RE_DIFF,
+        DeclKind.RE_POWER,
+        DeclKind.RE_LOOP,
+    }
+)
 
 
 def _is_concrete_value(expr: Expr) -> bool:
@@ -14,9 +36,9 @@ def _is_concrete_value(expr: Expr) -> bool:
         node = stack.pop()
         if isinstance(node, Const):
             continue
-        if isinstance(node, App) and node.decl.kind in (
-            DeclKind.CONST_ARRAY,
-            DeclKind.STORE,
+        if isinstance(node, App) and (
+            node.decl.kind in (DeclKind.CONST_ARRAY, DeclKind.STORE)
+            or node.decl.kind in _CONCRETE_RE_KINDS
         ):
             stack.extend(node.args)
             continue
@@ -46,6 +68,16 @@ def _concrete_values_equal(
         return False
     if isinstance(a, Const) and isinstance(b, Const):
         return a is b
+    if a.is_reglan:
+        ra = expr_to_re(a)
+        rb = expr_to_re(b)
+        if ra is not None and rb is not None:
+            if ra == rb:
+                return True
+            eq = re_is_empty(re_union(re_diff(ra, rb), re_diff(rb, ra)))
+            if eq is not None:
+                return eq
+        return False
     if not a.is_array:
         return False
 

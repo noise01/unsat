@@ -43,6 +43,40 @@ from unsat.syntax.context_bv import (
     build_store,
     build_zero_ext,
 )
+from unsat.syntax.context_strings import (
+    build_re_all,
+    build_re_allchar,
+    build_re_comp,
+    build_re_concat,
+    build_re_diff,
+    build_re_inter,
+    build_re_loop,
+    build_re_none,
+    build_re_opt,
+    build_re_plus,
+    build_re_power,
+    build_re_range,
+    build_re_star,
+    build_re_union,
+    build_str_at,
+    build_str_cmp,
+    build_str_concat,
+    build_str_contains,
+    build_str_from_code,
+    build_str_from_int,
+    build_str_in_re,
+    build_str_indexof,
+    build_str_is_digit,
+    build_str_len,
+    build_str_prefixof,
+    build_str_replace,
+    build_str_replace_all,
+    build_str_substr,
+    build_str_suffixof,
+    build_str_to_code,
+    build_str_to_int,
+    build_str_to_re,
+)
 from unsat.syntax.expr import (
     App,
     BoundVar,
@@ -55,6 +89,7 @@ from unsat.syntax.expr import (
     _is_not_of,
 )
 from unsat.syntax.kinds import DeclKind, SortKind
+from unsat.syntax.str_eval import validate_smt2_string
 
 
 class Context:
@@ -90,6 +125,8 @@ class Context:
         self.bool_sort = self._intern_sort(SortKind.BOOL, "Bool")
         self.int_sort = self._intern_sort(SortKind.INT, "Int")
         self.real_sort = self._intern_sort(SortKind.REAL, "Real")
+        self.string_sort = self._intern_sort(SortKind.STRING, "String")
+        self.reglan_sort = self._intern_sort(SortKind.REGLAN, "RegLan")
         self.true_expr = self._intern_const(True, self.bool_sort)
         self.false_expr = self._intern_const(False, self.bool_sort)
 
@@ -148,7 +185,7 @@ class Context:
         self._decls[key] = decl
         return decl
 
-    def _intern_const(self, value: bool | int | Fraction, sort: Sort) -> Const:
+    def _intern_const(self, value: bool | int | Fraction | str, sort: Sort) -> Const:
         key: tuple[object, ...] = (Const, sort.id, type(value), value)
         existing = self._exprs.get(key)
         if existing is not None:
@@ -237,6 +274,14 @@ class Context:
         """Return this context's canonical ``Real`` sort."""
         return self.real_sort
 
+    def mk_string_sort(self) -> Sort:
+        """Return this context's canonical ``String`` sort."""
+        return self.string_sort
+
+    def mk_reglan_sort(self) -> Sort:
+        """Return this context's canonical ``RegLan`` sort."""
+        return self.reglan_sort
+
     def mk_bv_sort(self, width: int) -> Sort:
         """Create or retrieve the fixed-width ``(_ BitVec width)`` sort."""
         if isinstance(width, bool) or not isinstance(width, int) or width < 1:
@@ -302,6 +347,11 @@ class Context:
         sort = self.mk_bv_sort(width)
         return self._intern_const(value & _bv_mask(width), sort)
 
+    def mk_string_val(self, value: str) -> Const:
+        """Create or retrieve a hash-consed ``String`` literal constant."""
+        validate_smt2_string(value)
+        return self._intern_const(value, self.string_sort)
+
     def mk_true(self) -> Const:
         """Return this context's canonical ``true`` literal."""
         return self.true_expr
@@ -356,6 +406,14 @@ class Context:
     def mk_array(self, name: str, index_sort: Sort, element_sort: Sort) -> App:
         """Create or retrieve a 0-arity array symbolic constant."""
         return self.mk_const(name, self.mk_array_sort(index_sort, element_sort))
+
+    def mk_string(self, name: str) -> App:
+        """Create or retrieve a 0-arity ``String`` symbolic constant."""
+        return self.mk_const(name, self.string_sort)
+
+    def mk_reglan(self, name: str) -> App:
+        """Create or retrieve a 0-arity ``RegLan`` symbolic constant."""
+        return self.mk_const(name, self.reglan_sort)
 
     def mk_app(self, decl: FuncDecl, *args: Expr) -> Expr:
         """Apply ``decl`` to ``args``, validating sorts and normalizing built-ins."""
@@ -491,6 +549,72 @@ class Context:
                 return self.mk_store(args[0], args[1], args[2])
             case DeclKind.CONST_ARRAY:
                 return self.mk_const_array(decl.range_sort.index_sort, args[0])
+            case DeclKind.STR_CONCAT:
+                return self.mk_str_concat(*args)
+            case DeclKind.STR_LEN:
+                return self.mk_str_len(args[0])
+            case DeclKind.STR_AT:
+                return self.mk_str_at(args[0], args[1])
+            case DeclKind.STR_SUBSTR:
+                return self.mk_str_substr(args[0], args[1], args[2])
+            case DeclKind.STR_INDEXOF:
+                return self.mk_str_indexof(args[0], args[1], args[2])
+            case DeclKind.STR_REPLACE:
+                return self.mk_str_replace(args[0], args[1], args[2])
+            case DeclKind.STR_REPLACE_ALL:
+                return self.mk_str_replace_all(args[0], args[1], args[2])
+            case DeclKind.STR_CONTAINS:
+                return self.mk_str_contains(args[0], args[1])
+            case DeclKind.STR_PREFIXOF:
+                return self.mk_str_prefixof(args[0], args[1])
+            case DeclKind.STR_SUFFIXOF:
+                return self.mk_str_suffixof(args[0], args[1])
+            case DeclKind.STR_LT:
+                return self.mk_str_lt(args[0], args[1])
+            case DeclKind.STR_LE:
+                return self.mk_str_le(args[0], args[1])
+            case DeclKind.STR_TO_INT:
+                return self.mk_str_to_int(args[0])
+            case DeclKind.STR_FROM_INT:
+                return self.mk_str_from_int(args[0])
+            case DeclKind.STR_TO_CODE:
+                return self.mk_str_to_code(args[0])
+            case DeclKind.STR_FROM_CODE:
+                return self.mk_str_from_code(args[0])
+            case DeclKind.STR_IS_DIGIT:
+                return self.mk_str_is_digit(args[0])
+            case DeclKind.STR_IN_RE:
+                return self.mk_str_in_re(args[0], args[1])
+            case DeclKind.STR_TO_RE:
+                return self.mk_str_to_re(args[0])
+            case DeclKind.RE_NONE:
+                return self.mk_re_none()
+            case DeclKind.RE_ALL:
+                return self.mk_re_all()
+            case DeclKind.RE_ALLCHAR:
+                return self.mk_re_allchar()
+            case DeclKind.RE_CONCAT:
+                return self.mk_re_concat(*args)
+            case DeclKind.RE_UNION:
+                return self.mk_re_union(*args)
+            case DeclKind.RE_INTER:
+                return self.mk_re_inter(*args)
+            case DeclKind.RE_STAR:
+                return self.mk_re_star(args[0])
+            case DeclKind.RE_PLUS:
+                return self.mk_re_plus(args[0])
+            case DeclKind.RE_OPT:
+                return self.mk_re_opt(args[0])
+            case DeclKind.RE_RANGE:
+                return self.mk_re_range(args[0], args[1])
+            case DeclKind.RE_COMP:
+                return self.mk_re_comp(args[0])
+            case DeclKind.RE_DIFF:
+                return self.mk_re_diff(args[0], args[1])
+            case DeclKind.RE_POWER:
+                return self.mk_re_power(decl.params[0], args[0])
+            case DeclKind.RE_LOOP:
+                return self.mk_re_loop(decl.params[0], decl.params[1], args[0])
             case DeclKind.UNINTERPRETED:
                 return self._intern_app(decl, tuple(args))
 
@@ -908,6 +1032,142 @@ class Context:
     def mk_const_array(self, index_sort: Sort, value: Expr) -> App:
         """Construct constant array mapping every ``index_sort`` key to ``value``."""
         return build_const_array(self, index_sort, value)
+
+    # ------------------------------------------------------------------
+    # String & Regular-Expression constructors
+    # ------------------------------------------------------------------
+
+    def mk_str_concat(self, *args: Expr) -> Expr:
+        """Build normalized string concatenation ``(str.++ ...)``."""
+        return build_str_concat(self, *args)
+
+    def mk_str_len(self, arg: Expr) -> Expr:
+        """Build ``(str.len arg)``."""
+        return build_str_len(self, arg)
+
+    def mk_str_at(self, s: Expr, idx: Expr) -> Expr:
+        """Build ``(str.at s idx)``."""
+        return build_str_at(self, s, idx)
+
+    def mk_str_substr(self, s: Expr, offset: Expr, length: Expr) -> Expr:
+        """Build ``(str.substr s offset length)``."""
+        return build_str_substr(self, s, offset, length)
+
+    def mk_str_indexof(self, s: Expr, needle: Expr, offset: Expr) -> Expr:
+        """Build ``(str.indexof s needle offset)``."""
+        return build_str_indexof(self, s, needle, offset)
+
+    def mk_str_replace(self, s: Expr, src: Expr, dst: Expr) -> Expr:
+        """Build ``(str.replace s src dst)``."""
+        return build_str_replace(self, s, src, dst)
+
+    def mk_str_replace_all(self, s: Expr, src: Expr, dst: Expr) -> Expr:
+        """Build ``(str.replace_all s src dst)``."""
+        return build_str_replace_all(self, s, src, dst)
+
+    def mk_str_contains(self, s: Expr, needle: Expr) -> Expr:
+        """Build ``(str.contains s needle)``."""
+        return build_str_contains(self, s, needle)
+
+    def mk_str_prefixof(self, prefix: Expr, s: Expr) -> Expr:
+        """Build ``(str.prefixof prefix s)``."""
+        return build_str_prefixof(self, prefix, s)
+
+    def mk_str_suffixof(self, suffix: Expr, s: Expr) -> Expr:
+        """Build ``(str.suffixof suffix s)``."""
+        return build_str_suffixof(self, suffix, s)
+
+    def mk_str_lt(self, lhs: Expr, rhs: Expr) -> Expr:
+        """Build lexicographic strict less-than ``(str.< lhs rhs)``."""
+        return build_str_cmp(self, DeclKind.STR_LT, lhs, rhs)
+
+    def mk_str_le(self, lhs: Expr, rhs: Expr) -> Expr:
+        """Build lexicographic less-or-equal ``(str.<= lhs rhs)``."""
+        return build_str_cmp(self, DeclKind.STR_LE, lhs, rhs)
+
+    def mk_str_to_int(self, s: Expr) -> Expr:
+        """Build ``(str.to_int s)``."""
+        return build_str_to_int(self, s)
+
+    def mk_str_from_int(self, n: Expr) -> Expr:
+        """Build ``(str.from_int n)``."""
+        return build_str_from_int(self, n)
+
+    def mk_str_to_code(self, s: Expr) -> Expr:
+        """Build ``(str.to_code s)``."""
+        return build_str_to_code(self, s)
+
+    def mk_str_from_code(self, n: Expr) -> Expr:
+        """Build ``(str.from_code n)``."""
+        return build_str_from_code(self, n)
+
+    def mk_str_is_digit(self, s: Expr) -> Expr:
+        """Build ``(str.is_digit s)``."""
+        return build_str_is_digit(self, s)
+
+    def mk_str_in_re(self, s: Expr, reg: Expr) -> Expr:
+        """Build regex membership ``(str.in_re s reg)``."""
+        return build_str_in_re(self, s, reg)
+
+    def mk_str_to_re(self, s: Expr) -> Expr:
+        """Build singleton regex ``(str.to_re s)``."""
+        return build_str_to_re(self, s)
+
+    def mk_re_none(self) -> Expr:
+        """Return the empty regular language ``re.none``."""
+        return build_re_none(self)
+
+    def mk_re_all(self) -> Expr:
+        """Return the universal regular language ``re.all``."""
+        return build_re_all(self)
+
+    def mk_re_allchar(self) -> Expr:
+        """Return the single-character wildcard regex ``re.allchar``."""
+        return build_re_allchar(self)
+
+    def mk_re_concat(self, *args: Expr) -> Expr:
+        """Build regex concatenation ``(re.++ ...)``."""
+        return build_re_concat(self, *args)
+
+    def mk_re_union(self, *args: Expr) -> Expr:
+        """Build regex union ``(re.union ...)``."""
+        return build_re_union(self, *args)
+
+    def mk_re_inter(self, *args: Expr) -> Expr:
+        """Build regex intersection ``(re.inter ...)``."""
+        return build_re_inter(self, *args)
+
+    def mk_re_star(self, arg: Expr) -> Expr:
+        """Build Kleene star ``(re.* arg)``."""
+        return build_re_star(self, arg)
+
+    def mk_re_plus(self, arg: Expr) -> Expr:
+        """Build Kleene plus ``(re.+ arg)``."""
+        return build_re_plus(self, arg)
+
+    def mk_re_opt(self, arg: Expr) -> Expr:
+        """Build optional regex ``(re.opt arg)``."""
+        return build_re_opt(self, arg)
+
+    def mk_re_range(self, lo: Expr, hi: Expr) -> Expr:
+        """Build character-range regex ``(re.range lo hi)``."""
+        return build_re_range(self, lo, hi)
+
+    def mk_re_comp(self, arg: Expr) -> Expr:
+        """Build regex complement ``(re.comp arg)``."""
+        return build_re_comp(self, arg)
+
+    def mk_re_diff(self, lhs: Expr, rhs: Expr) -> Expr:
+        """Build regex difference ``(re.diff lhs rhs)``."""
+        return build_re_diff(self, lhs, rhs)
+
+    def mk_re_power(self, n: int, arg: Expr) -> Expr:
+        """Build bounded regex repetition ``((_ re.^ n) arg)``."""
+        return build_re_power(self, n, arg)
+
+    def mk_re_loop(self, lo: int, hi: int, arg: Expr) -> Expr:
+        """Build bounded regex loop ``((_ re.loop lo hi) arg)``."""
+        return build_re_loop(self, lo, hi, arg)
 
     # ------------------------------------------------------------------
     # Quantifier constructors

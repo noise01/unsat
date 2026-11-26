@@ -106,6 +106,37 @@ _BUILTIN_SMT2_NAMES: dict[DeclKind, str] = {
     DeclKind.BV_CONCAT: "concat",
     DeclKind.SELECT: "select",
     DeclKind.STORE: "store",
+    DeclKind.STR_CONCAT: "str.++",
+    DeclKind.STR_LEN: "str.len",
+    DeclKind.STR_AT: "str.at",
+    DeclKind.STR_SUBSTR: "str.substr",
+    DeclKind.STR_INDEXOF: "str.indexof",
+    DeclKind.STR_REPLACE: "str.replace",
+    DeclKind.STR_REPLACE_ALL: "str.replace_all",
+    DeclKind.STR_CONTAINS: "str.contains",
+    DeclKind.STR_PREFIXOF: "str.prefixof",
+    DeclKind.STR_SUFFIXOF: "str.suffixof",
+    DeclKind.STR_LT: "str.<",
+    DeclKind.STR_LE: "str.<=",
+    DeclKind.STR_TO_INT: "str.to_int",
+    DeclKind.STR_FROM_INT: "str.from_int",
+    DeclKind.STR_TO_CODE: "str.to_code",
+    DeclKind.STR_FROM_CODE: "str.from_code",
+    DeclKind.STR_IS_DIGIT: "str.is_digit",
+    DeclKind.STR_IN_RE: "str.in_re",
+    DeclKind.STR_TO_RE: "str.to_re",
+    DeclKind.RE_NONE: "re.none",
+    DeclKind.RE_ALL: "re.all",
+    DeclKind.RE_ALLCHAR: "re.allchar",
+    DeclKind.RE_CONCAT: "re.++",
+    DeclKind.RE_UNION: "re.union",
+    DeclKind.RE_INTER: "re.inter",
+    DeclKind.RE_STAR: "re.*",
+    DeclKind.RE_PLUS: "re.+",
+    DeclKind.RE_OPT: "re.opt",
+    DeclKind.RE_RANGE: "re.range",
+    DeclKind.RE_COMP: "re.comp",
+    DeclKind.RE_DIFF: "re.diff",
 }
 
 
@@ -119,6 +150,10 @@ def format_sort(sort: Sort) -> str:
         return "Real"
     if sort.kind is SortKind.BITVEC:
         return f"(_ BitVec {sort.size})"
+    if sort.kind is SortKind.STRING:
+        return "String"
+    if sort.kind is SortKind.REGLAN:
+        return "RegLan"
     if sort.kind is SortKind.ARRAY:
         return (
             f"(Array {format_sort(sort.index_sort)} {format_sort(sort.element_sort)})"
@@ -270,6 +305,9 @@ def format_expr(expr: Expr) -> str:
             elif kind is DeclKind.BV_EXTRACT:
                 hi, lo = node.decl.params
                 head = f"(_ extract {hi} {lo})"
+            elif kind is DeclKind.RE_LOOP:
+                lo_n, hi_n = node.decl.params
+                head = f"(_ re.loop {lo_n} {hi_n})"
             elif kind in (
                 DeclKind.DIVISIBLE,
                 DeclKind.BV_ZERO_EXT,
@@ -277,6 +315,7 @@ def format_expr(expr: Expr) -> str:
                 DeclKind.BV_ROTATE_LEFT,
                 DeclKind.BV_ROTATE_RIGHT,
                 DeclKind.BV_REPEAT,
+                DeclKind.RE_POWER,
             ):
                 head = f"(_ {kind.value} {node.decl.params[0]})"
             else:

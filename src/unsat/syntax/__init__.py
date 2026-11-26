@@ -15,6 +15,12 @@ from unsat.syntax.expr import (
     Sort,
 )
 from unsat.syntax.kinds import DeclKind, SortKind
+from unsat.syntax.str_eval import (
+    MAX_CHAR_CODE,
+    format_smt2_string,
+    unescape_smt2_string,
+    validate_smt2_string,
+)
 from unsat.syntax.walk import (
     abstract_vars,
     collect_const_decls,
@@ -32,6 +38,7 @@ from unsat.syntax.walk import (
 )
 
 __all__ = [
+    "MAX_CHAR_CODE",
     "App",
     "BoundVar",
     "Const",
@@ -46,6 +53,7 @@ __all__ = [
     "collect_const_decls",
     "collect_func_decls",
     "format_expr",
+    "format_smt2_string",
     "format_sort",
     "free_bound_var_indices",
     "has_bound_vars",
@@ -55,4 +63,6 @@ __all__ = [
     "quote_smt2_symbol",
     "shift_bound_vars",
     "substitute",
+    "unescape_smt2_string",
+    "validate_smt2_string",
 ]

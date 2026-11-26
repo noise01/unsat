@@ -24,6 +24,7 @@ from unsat.syntax import (
     SortKind,
     instantiate_quantifier,
     iter_subexprs,
+    validate_smt2_string,
 )
 
 
@@ -142,6 +143,35 @@ class Model:
                 raise TypeError(msg)
             return val
 
+        if kind is SortKind.STRING:
+            if isinstance(val, str):
+                validate_smt2_string(val)
+                return val
+            if isinstance(val, Const) and val.is_string:
+                if val.ctx is not self._ctx:
+                    msg = f"Value '{val}' belongs to a different Context"
+                    raise ValueError(msg)
+                assert isinstance(val.value, str)
+                validate_smt2_string(val.value)
+                return val.value
+            msg = f"Expected String value for '{decl}', got {val!r}"
+            raise TypeError(msg)
+
+        if kind is SortKind.REGLAN:
+            if not isinstance(val, Expr) or not _is_concrete_value(val):
+                msg = f"Expected concrete RegLan value for '{decl}', got {val!r}"
+                raise TypeError(msg)
+            if val.ctx is not self._ctx:
+                msg = f"Value '{val}' belongs to a different Context"
+                raise ValueError(msg)
+            if val.sort is not decl.range_sort:
+                msg = (
+                    f"Value sort '{val.sort}' does not match declaration sort "
+                    f"'{decl.range_sort}'"
+                )
+                raise TypeError(msg)
+            return val
+
         if not isinstance(val, Const):
             msg = f"Expected domain Const for '{decl}', got {val!r}"
             raise TypeError(msg)
@@ -208,6 +238,10 @@ class Model:
             val = self._ctx.mk_real_val(0)
         elif cur.kind is SortKind.BITVEC:
             val = self._ctx.mk_bv_val(0, cur.size)
+        elif cur.kind is SortKind.STRING:
+            val = self._ctx.mk_string_val("")
+        elif cur.kind is SortKind.REGLAN:
+            val = self._ctx.mk_re_none()
         else:
             universe = self._universes.get(cur)
             val = universe[0] if universe else self._ctx.mk_domain_val(cur, 0)
@@ -230,6 +264,9 @@ class Model:
             assert isinstance(val, int)
             assert not isinstance(val, bool)
             return self._ctx.mk_bv_val(val, sort.size)
+        if sort.kind is SortKind.STRING:
+            assert isinstance(val, str)
+            return self._ctx.mk_string_val(val)
         assert sort.kind is SortKind.REAL
         assert isinstance(val, (int, Fraction))
         return self._ctx.mk_real_val(val)
@@ -527,6 +564,39 @@ class Model:
                     | DeclKind.BV_REPEAT
                     | DeclKind.STORE
                     | DeclKind.CONST_ARRAY
+                    | DeclKind.STR_CONCAT
+                    | DeclKind.STR_LEN
+                    | DeclKind.STR_AT
+                    | DeclKind.STR_SUBSTR
+                    | DeclKind.STR_INDEXOF
+                    | DeclKind.STR_REPLACE
+                    | DeclKind.STR_REPLACE_ALL
+                    | DeclKind.STR_CONTAINS
+                    | DeclKind.STR_PREFIXOF
+                    | DeclKind.STR_SUFFIXOF
+                    | DeclKind.STR_LT
+                    | DeclKind.STR_LE
+                    | DeclKind.STR_TO_INT
+                    | DeclKind.STR_FROM_INT
+                    | DeclKind.STR_TO_CODE
+                    | DeclKind.STR_FROM_CODE
+                    | DeclKind.STR_IS_DIGIT
+                    | DeclKind.STR_IN_RE
+                    | DeclKind.STR_TO_RE
+                    | DeclKind.RE_NONE
+                    | DeclKind.RE_ALL
+                    | DeclKind.RE_ALLCHAR
+                    | DeclKind.RE_CONCAT
+                    | DeclKind.RE_UNION
+                    | DeclKind.RE_INTER
+                    | DeclKind.RE_STAR
+                    | DeclKind.RE_PLUS
+                    | DeclKind.RE_OPT
+                    | DeclKind.RE_RANGE
+                    | DeclKind.RE_COMP
+                    | DeclKind.RE_DIFF
+                    | DeclKind.RE_POWER
+                    | DeclKind.RE_LOOP
                 ):
                     memo[node] = self._ctx.mk_app(node.decl, *eval_args)
                 case DeclKind.UNINTERPRETED:
@@ -596,6 +666,19 @@ class Model:
         ):
             msg = (
                 f"Expression '{expr}' did not reduce to a BitVec constant: {evaluated}"
+            )
+            raise ValueError(msg)
+        return evaluated.value
+
+    def eval_str(self, expr: Expr, *, model_completion: bool = True) -> str:
+        """Evaluate ``String`` expression ``expr`` to a Python ``str``."""
+        if not expr.is_string:
+            msg = f"Expected String expression, got sort '{expr.sort}'"
+            raise TypeError(msg)
+        evaluated = self.eval(expr, model_completion=model_completion)
+        if not isinstance(evaluated, Const) or not isinstance(evaluated.value, str):
+            msg = (
+                f"Expression '{expr}' did not reduce to a String constant: {evaluated}"
             )
             raise ValueError(msg)
         return evaluated.value

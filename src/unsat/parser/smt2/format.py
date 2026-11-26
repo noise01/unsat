@@ -30,6 +30,10 @@ def _default_expr_for_model(model: Model, sort: Sort) -> Expr:
         val = model.ctx.mk_real_val(0)
     elif cur.kind is SortKind.BITVEC:
         val = model.ctx.mk_bv_val(0, cur.size)
+    elif cur.kind is SortKind.STRING:
+        val = model.ctx.mk_string_val("")
+    elif cur.kind is SortKind.REGLAN:
+        val = model.ctx.mk_re_none()
     else:
         universe = model.universe(cur)
         val = universe[0] if universe else model.ctx.mk_domain_val(cur, 0)
@@ -47,6 +51,8 @@ def _format_value_atom(ctx: Context, val: Value, sort: Sort) -> str:
         return format_expr(ctx.mk_int_val(val))
     if isinstance(val, Fraction):
         return format_expr(ctx.mk_real_val(val))
+    if isinstance(val, str):
+        return format_expr(ctx.mk_string_val(val))
     return format_expr(val)
 
 

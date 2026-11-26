@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from unsat.syntax.bv_eval import _format_real_fraction
 from unsat.syntax.kinds import DeclKind, SortKind
+from unsat.syntax.str_eval import format_smt2_string
 
 if TYPE_CHECKING:
     from unsat.syntax.context import Context
@@ -54,6 +55,16 @@ class Sort:
     def is_array(self) -> bool:
         """Whether this sort is an ``Array`` sort."""
         return self.kind is SortKind.ARRAY
+
+    @property
+    def is_string(self) -> bool:
+        """Whether this sort is ``String``."""
+        return self.kind is SortKind.STRING
+
+    @property
+    def is_reglan(self) -> bool:
+        """Whether this sort is ``RegLan``."""
+        return self.kind is SortKind.REGLAN
 
     @property
     def size(self) -> int:
@@ -161,6 +172,16 @@ class Expr:
         return self.sort.kind is SortKind.ARRAY
 
     @property
+    def is_string(self) -> bool:
+        """Whether this expression has ``String`` sort."""
+        return self.sort.kind is SortKind.STRING
+
+    @property
+    def is_reglan(self) -> bool:
+        """Whether this expression has ``RegLan`` sort."""
+        return self.sort.kind is SortKind.REGLAN
+
+    @property
     def bv_size(self) -> int:
         """Bit width of this ``BitVec`` expression."""
         return self.sort.size
@@ -206,6 +227,15 @@ class Expr:
             return None
         if isinstance(other, int):
             return self.ctx.mk_bv_val(other, self.sort.size)
+        return None
+
+    def _coerce_string(self, other: object) -> Expr | None:
+        if not self.is_string:
+            return None
+        if isinstance(other, Expr):
+            return other
+        if isinstance(other, str):
+            return self.ctx.mk_string_val(other)
         return None
 
     def __and__(self, other: object) -> Expr:
@@ -285,6 +315,11 @@ class Expr:
             if rhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_add(self, rhs)
+        if self.is_string:
+            rhs = self._coerce_string(other)
+            if rhs is None:
+                return NotImplemented
+            return self.ctx.mk_str_concat(self, rhs)
         rhs = self._coerce_arith(other)
         if rhs is None:
             return NotImplemented
@@ -296,6 +331,11 @@ class Expr:
             if lhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_add(lhs, self)
+        if self.is_string:
+            lhs = self._coerce_string(other)
+            if lhs is None:
+                return NotImplemented
+            return self.ctx.mk_str_concat(lhs, self)
         lhs = self._coerce_arith(other)
         if lhs is None:
             return NotImplemented
@@ -469,6 +509,11 @@ class Expr:
             if rhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_slt(self, rhs)
+        if self.is_string:
+            rhs = self._coerce_string(other)
+            if rhs is None:
+                return NotImplemented
+            return self.ctx.mk_str_lt(self, rhs)
         rhs = self._coerce_arith(other)
         if rhs is None:
             return NotImplemented
@@ -480,6 +525,11 @@ class Expr:
             if rhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_sle(self, rhs)
+        if self.is_string:
+            rhs = self._coerce_string(other)
+            if rhs is None:
+                return NotImplemented
+            return self.ctx.mk_str_le(self, rhs)
         rhs = self._coerce_arith(other)
         if rhs is None:
             return NotImplemented
@@ -491,6 +541,11 @@ class Expr:
             if rhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_sgt(self, rhs)
+        if self.is_string:
+            rhs = self._coerce_string(other)
+            if rhs is None:
+                return NotImplemented
+            return self.ctx.mk_str_lt(rhs, self)
         rhs = self._coerce_arith(other)
         if rhs is None:
             return NotImplemented
@@ -502,6 +557,11 @@ class Expr:
             if rhs is None:
                 return NotImplemented
             return self.ctx.mk_bv_sge(self, rhs)
+        if self.is_string:
+            rhs = self._coerce_string(other)
+            if rhs is None:
+                return NotImplemented
+            return self.ctx.mk_str_le(rhs, self)
         rhs = self._coerce_arith(other)
         if rhs is None:
             return NotImplemented
@@ -510,9 +570,9 @@ class Expr:
 
 @dataclass(frozen=True, slots=True, eq=False)
 class Const(Expr):
-    """Constant literal expression (Bool, Int, Real, BV, or domain element)."""
+    """Constant literal expression (Bool, Int, Real, BV, String, or domain element)."""
 
-    value: bool | int | Fraction
+    value: bool | int | Fraction | str
 
     def __str__(self) -> str:
         kind = self.sort.kind
@@ -533,6 +593,9 @@ class Const(Expr):
             if w % 4 == 0:
                 return f"#x{self.value:0{w // 4}x}"
             return f"#b{self.value:0{w}b}"
+        if kind is SortKind.STRING:
+            assert isinstance(self.value, str)
+            return format_smt2_string(self.value)
         return f"{self.sort.name}!val!{self.value}"
 
 

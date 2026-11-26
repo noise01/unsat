@@ -44,22 +44,27 @@ def _resolve_ctx(ctx: Context | None) -> Context:
 
 def _flatten_coercible_args(
     args: tuple[
-        Expr | bool | int | Fraction | Sequence[Expr | bool | int | Fraction],
+        Expr
+        | bool
+        | int
+        | Fraction
+        | str
+        | Sequence[Expr | bool | int | Fraction | str],
         ...,
     ],
-) -> tuple[Expr | bool | int | Fraction, ...]:
+) -> tuple[Expr | bool | int | Fraction | str, ...]:
     if (
         len(args) == 1
         and isinstance(args[0], Sequence)
         and not isinstance(args[0], (Expr, str, bytes, bytearray))
     ):
         return tuple(args[0])
-    flat: list[Expr | bool | int | Fraction] = []
+    flat: list[Expr | bool | int | Fraction | str] = []
     for item in args:
-        if isinstance(item, (str, bytes, bytearray)):
-            msg = f"Unsupported string/bytes argument: {item!r}"
+        if isinstance(item, (bytes, bytearray)):
+            msg = f"Unsupported bytes argument: {item!r}"
             raise TypeError(msg)
-        if isinstance(item, Sequence) and not isinstance(item, Expr):
+        if isinstance(item, Sequence) and not isinstance(item, (Expr, str)):
             flat.extend(item)
         else:
             flat.append(item)
@@ -68,12 +73,14 @@ def _flatten_coercible_args(
 
 def _coerce_literal_pair(
     ctx: Context,
-    then_val: bool | int | Fraction,
-    else_val: bool | int | Fraction,
+    then_val: bool | int | Fraction | str,
+    else_val: bool | int | Fraction | str,
 ) -> tuple[Expr, Expr]:
     if isinstance(then_val, bool) and isinstance(else_val, bool):
         return ctx.mk_bool_val(then_val), ctx.mk_bool_val(else_val)
-    if isinstance(then_val, bool) or isinstance(else_val, bool):
+    if isinstance(then_val, str) and isinstance(else_val, str):
+        return ctx.mk_string_val(then_val), ctx.mk_string_val(else_val)
+    if isinstance(then_val, (bool, str)) or isinstance(else_val, (bool, str)):
         msg = f"Cannot unify If branches {then_val!r} and {else_val!r}"
         raise TypeError(msg)
     if isinstance(then_val, int) and isinstance(else_val, int):
@@ -123,7 +130,7 @@ def _bv_coerce_pair(a: Expr | int, b: Expr | int, op_name: str) -> tuple[Expr, E
     raise TypeError(msg)
 
 
-def _coerce_arg_for_sort(sort: Sort, value: Expr | bool | int | Fraction) -> Expr:
+def _coerce_arg_for_sort(sort: Sort, value: Expr | bool | int | Fraction | str) -> Expr:
     if isinstance(value, Expr):
         return value
     if sort.is_bool and isinstance(value, bool):
@@ -138,6 +145,8 @@ def _coerce_arg_for_sort(sort: Sort, value: Expr | bool | int | Fraction) -> Exp
         return sort.ctx.mk_real_val(value)
     if sort.is_bv and isinstance(value, int) and not isinstance(value, bool):
         return sort.ctx.mk_bv_val(value, sort.size)
+    if sort.is_string and isinstance(value, str):
+        return sort.ctx.mk_string_val(value)
     msg = f"Cannot coerce value {value!r} to sort '{sort}'"
     raise TypeError(msg)
 
@@ -173,6 +182,33 @@ def ArraySort(domain: Sort, range_sort: Sort) -> Sort:
 def DeclareSort(name: str, ctx: Context | None = None) -> Sort:
     """Declare or retrieve an uninterpreted sort named ``name``."""
     return _resolve_ctx(ctx).mk_uninterpreted_sort(name)
+
+
+def StringSort(ctx: Context | None = None) -> Sort:
+    """Return the ``String`` sort in ``ctx`` (or the default context)."""
+    return _resolve_ctx(ctx).mk_string_sort()
+
+
+def RegLanSort(ctx: Context | None = None) -> Sort:
+    """Return the ``RegLan`` regular-expression sort in ``ctx``."""
+    return _resolve_ctx(ctx).mk_reglan_sort()
+
+
+def String(name: str, ctx: Context | None = None) -> App:
+    """Create a ``String`` symbolic constant named ``name``."""
+    return _resolve_ctx(ctx).mk_string(name)
+
+
+def Strings(names: str | Sequence[str], ctx: Context | None = None) -> list[App]:
+    """Create multiple ``String`` constants from whitespace-separated names."""
+    resolved = _resolve_ctx(ctx)
+    name_list = names.split() if isinstance(names, str) else list(names)
+    return [resolved.mk_string(name) for name in name_list]
+
+
+def StringVal(value: str, ctx: Context | None = None) -> Const:
+    """Create a ``String`` literal constant."""
+    return _resolve_ctx(ctx).mk_string_val(value)
 
 
 def Bool(name: str, ctx: Context | None = None) -> App:
@@ -424,13 +460,253 @@ def UGE(a: Expr | int, b: Expr | int) -> Expr:
     return lhs.ctx.mk_bv_uge(lhs, rhs)
 
 
-def Concat(*args: Expr | Sequence[Expr]) -> Expr:
-    """Concatenate bit-vectors from most-significant to least-significant."""
+def Concat(*args: Expr | str | Sequence[Expr | str]) -> Expr:
+    """Concatenate bit-vectors, strings, or regular expressions."""
+    flat: list[Expr | str] = []
+    for item in args:
+        if isinstance(item, (Expr, str)):
+            flat.append(item)
+        else:
+            flat.extend(item)
+    if not flat:
+        msg = "Concat requires at least one BitVec, String, or RegLan argument"
+        raise ValueError(msg)
+
+    anchor = next((item for item in flat if isinstance(item, Expr)), None)
+    if anchor is None:
+        strs = [_default_ctx.mk_string_val(str(item)) for item in flat]
+        return _default_ctx.mk_str_concat(*strs)
+
+    ctx = anchor.ctx
+    if anchor.is_string:
+        str_args = [
+            ctx.mk_string_val(item) if isinstance(item, str) else item for item in flat
+        ]
+        return ctx.mk_str_concat(*str_args)
+    if anchor.is_reglan:
+        re_args = [
+            ctx.mk_str_to_re(ctx.mk_string_val(item)) if isinstance(item, str) else item
+            for item in flat
+        ]
+        return ctx.mk_re_concat(*re_args)
+
+    bv_args: list[Expr] = []
+    for item in flat:
+        if not isinstance(item, Expr):
+            msg = f"Expected BitVec expression in Concat, got {item!r}"
+            raise TypeError(msg)
+        bv_args.append(item)
+    return ctx.mk_concat(*bv_args)
+
+
+def _coerce_str(arg: Expr | str, ctx: Context | None = None) -> Expr:
+    if isinstance(arg, Expr):
+        return arg
+    return _resolve_ctx(ctx).mk_string_val(arg)
+
+
+def _coerce_str_pair(a: Expr | str, b: Expr | str) -> tuple[Expr, Expr]:
+    if isinstance(a, Expr):
+        return a, _coerce_str(b, a.ctx)
+    if isinstance(b, Expr):
+        return _coerce_str(a, b.ctx), b
+    return _default_ctx.mk_string_val(a), _default_ctx.mk_string_val(b)
+
+
+def Length(expr: Expr | str) -> Expr:
+    """Return string length ``(str.len expr)``."""
+    s = _coerce_str(expr)
+    return s.ctx.mk_str_len(s)
+
+
+def At(s: Expr | str, index: Expr | int) -> Expr:
+    """Return single-character substring at ``index`` via ``(str.at s index)``."""
+    target = _coerce_str(s)
+    idx_expr = _coerce_arg_for_sort(target.ctx.int_sort, index)
+    return target.ctx.mk_str_at(target, idx_expr)
+
+
+def SubString(s: Expr | str, offset: Expr | int, length: Expr | int) -> Expr:
+    """Return substring ``(str.substr s offset length)``."""
+    target = _coerce_str(s)
+    ctx = target.ctx
+    return ctx.mk_str_substr(
+        target,
+        _coerce_arg_for_sort(ctx.int_sort, offset),
+        _coerce_arg_for_sort(ctx.int_sort, length),
+    )
+
+
+def IndexOf(s: Expr | str, substr: Expr | str, offset: Expr | int = 0) -> Expr:
+    """Return first index of ``substr`` in ``s`` from ``offset`` (default ``0``)."""
+    lhs, rhs = _coerce_str_pair(s, substr)
+    ctx = lhs.ctx
+    return ctx.mk_str_indexof(lhs, rhs, _coerce_arg_for_sort(ctx.int_sort, offset))
+
+
+def Replace(s: Expr | str, src: Expr | str, dst: Expr | str) -> Expr:
+    """Replace first occurrence of ``src`` with ``dst`` in ``s``."""
+    anchor = next((x for x in (s, src, dst) if isinstance(x, Expr)), None)
+    ctx = anchor.ctx if anchor is not None else _default_ctx
+    return ctx.mk_str_replace(
+        _coerce_str(s, ctx), _coerce_str(src, ctx), _coerce_str(dst, ctx)
+    )
+
+
+def ReplaceAll(s: Expr | str, src: Expr | str, dst: Expr | str) -> Expr:
+    """Replace all occurrences of ``src`` with ``dst`` in ``s``."""
+    anchor = next((x for x in (s, src, dst) if isinstance(x, Expr)), None)
+    ctx = anchor.ctx if anchor is not None else _default_ctx
+    return ctx.mk_str_replace_all(
+        _coerce_str(s, ctx), _coerce_str(src, ctx), _coerce_str(dst, ctx)
+    )
+
+
+def Contains(s: Expr | str, substr: Expr | str) -> Expr:
+    """Build substring predicate ``(str.contains s substr)``."""
+    lhs, rhs = _coerce_str_pair(s, substr)
+    return lhs.ctx.mk_str_contains(lhs, rhs)
+
+
+def PrefixOf(prefix: Expr | str, s: Expr | str) -> Expr:
+    """Build prefix predicate ``(str.prefixof prefix s)``."""
+    lhs, rhs = _coerce_str_pair(prefix, s)
+    return lhs.ctx.mk_str_prefixof(lhs, rhs)
+
+
+def SuffixOf(suffix: Expr | str, s: Expr | str) -> Expr:
+    """Build suffix predicate ``(str.suffixof suffix s)``."""
+    lhs, rhs = _coerce_str_pair(suffix, s)
+    return lhs.ctx.mk_str_suffixof(lhs, rhs)
+
+
+def StrToInt(s: Expr | str) -> Expr:
+    """Convert decimal digit string ``s`` to ``Int`` via ``str.to_int``."""
+    target = _coerce_str(s)
+    return target.ctx.mk_str_to_int(target)
+
+
+def IntToStr(n: Expr | int) -> Expr:
+    """Convert non-negative integer ``n`` to ``String`` via ``str.from_int``."""
+    if isinstance(n, bool):
+        msg = "IntToStr does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(n, int):
+        return _default_ctx.mk_str_from_int(_default_ctx.mk_int_val(n))
+    return n.ctx.mk_str_from_int(n)
+
+
+def StrToCode(s: Expr | str) -> Expr:
+    """Return Unicode code point of single-character ``s`` via ``str.to_code``."""
+    target = _coerce_str(s)
+    return target.ctx.mk_str_to_code(target)
+
+
+def StrFromCode(n: Expr | int) -> Expr:
+    """Return 1-character string for code point ``n`` via ``str.from_code``."""
+    if isinstance(n, bool):
+        msg = "StrFromCode does not accept Bool operands"
+        raise TypeError(msg)
+    if isinstance(n, int):
+        return _default_ctx.mk_str_from_code(_default_ctx.mk_int_val(n))
+    return n.ctx.mk_str_from_code(n)
+
+
+def IsDigit(s: Expr | str) -> Expr:
+    """Build ASCII digit predicate ``(str.is_digit s)``."""
+    target = _coerce_str(s)
+    return target.ctx.mk_str_is_digit(target)
+
+
+def InRe(s: Expr | str, re: Expr) -> Expr:
+    """Build regular-expression membership ``(str.in_re s re)``."""
+    if isinstance(s, Expr):
+        return s.ctx.mk_str_in_re(s, re)
+    return re.ctx.mk_str_in_re(re.ctx.mk_string_val(s), re)
+
+
+def Re(s: Expr | str, ctx: Context | None = None) -> Expr:
+    """Lift a string into singleton regular expression ``(str.to_re s)``."""
+    if isinstance(s, Expr):
+        return s.ctx.mk_str_to_re(s)
+    resolved = _resolve_ctx(ctx)
+    return resolved.mk_str_to_re(resolved.mk_string_val(s))
+
+
+def Union(*args: Expr | Sequence[Expr]) -> Expr:
+    """Build regular-expression union ``(re.union ...)``."""
     flat = _flatten_expr_args(args)
     if not flat:
-        msg = "Concat requires at least one BitVec expression"
-        raise ValueError(msg)
-    return flat[0].ctx.mk_concat(*flat)
+        return _default_ctx.mk_re_none()
+    return flat[0].ctx.mk_re_union(*flat)
+
+
+def Intersect(*args: Expr | Sequence[Expr]) -> Expr:
+    """Build regular-expression intersection ``(re.inter ...)``."""
+    flat = _flatten_expr_args(args)
+    if not flat:
+        return _default_ctx.mk_re_all()
+    return flat[0].ctx.mk_re_inter(*flat)
+
+
+def Complement(re: Expr) -> Expr:
+    """Build regular-expression complement ``(re.comp re)``."""
+    return re.ctx.mk_re_comp(re)
+
+
+def ReDiff(lhs: Expr, rhs: Expr) -> Expr:
+    """Build regular-expression difference ``(re.diff lhs rhs)``."""
+    return lhs.ctx.mk_re_diff(lhs, rhs)
+
+
+def Star(re: Expr) -> Expr:
+    """Build Kleene closure ``(re.* re)``."""
+    return re.ctx.mk_re_star(re)
+
+
+def Plus(re: Expr) -> Expr:
+    """Build non-empty Kleene closure ``(re.+ re)``."""
+    return re.ctx.mk_re_plus(re)
+
+
+def Option(re: Expr) -> Expr:
+    """Build optional regular expression ``(re.opt re)``."""
+    return re.ctx.mk_re_opt(re)
+
+
+def Range(lo: Expr | str, hi: Expr | str, ctx: Context | None = None) -> Expr:
+    """Build single-character range regular expression ``(re.range lo hi)``."""
+    if isinstance(lo, Expr):
+        return lo.ctx.mk_re_range(lo, _coerce_str(hi, lo.ctx))
+    if isinstance(hi, Expr):
+        return hi.ctx.mk_re_range(_coerce_str(lo, hi.ctx), hi)
+    resolved = _resolve_ctx(ctx)
+    return resolved.mk_re_range(resolved.mk_string_val(lo), resolved.mk_string_val(hi))
+
+
+def ReEmpty(ctx: Context | None = None) -> Expr:
+    """Return the empty regular language ``re.none``."""
+    return _resolve_ctx(ctx).mk_re_none()
+
+
+def ReFull(ctx: Context | None = None) -> Expr:
+    """Return the universal regular language ``re.all``."""
+    return _resolve_ctx(ctx).mk_re_all()
+
+
+def ReAllChar(ctx: Context | None = None) -> Expr:
+    """Return the single-character wildcard regex ``re.allchar``."""
+    return _resolve_ctx(ctx).mk_re_allchar()
+
+
+def RePower(re: Expr, n: int) -> Expr:
+    """Build bounded regex repetition ``((_ re.^ n) re)``."""
+    return re.ctx.mk_re_power(n, re)
+
+
+def Loop(re: Expr, lo: int, hi: int) -> Expr:
+    """Build bounded regex loop ``((_ re.loop lo hi) re)``."""
+    return re.ctx.mk_re_loop(lo, hi, re)
 
 
 def Extract(high: int, low: int, a: Expr) -> Expr:
@@ -486,7 +762,7 @@ def Store(
     return array.ctx.mk_store(array, idx_expr, val_expr)
 
 
-def K(domain: Sort, value: Expr | bool | int | Fraction) -> App:
+def K(domain: Sort, value: Expr | bool | int | Fraction | str) -> App:
     """Construct a constant array mapping every key in ``domain`` to ``value``."""
     if isinstance(value, Expr):
         return domain.ctx.mk_const_array(domain, value)
@@ -496,6 +772,8 @@ def K(domain: Sort, value: Expr | bool | int | Fraction) -> App:
         return domain.ctx.mk_const_array(domain, domain.ctx.mk_int_val(value))
     if isinstance(value, Fraction):
         return domain.ctx.mk_const_array(domain, domain.ctx.mk_real_val(value))
+    if isinstance(value, str):
+        return domain.ctx.mk_const_array(domain, domain.ctx.mk_string_val(value))
     msg = f"Unsupported constant array value: {value!r}"
     raise TypeError(msg)
 
@@ -540,8 +818,8 @@ def Xor(lhs: Expr, rhs: Expr) -> Expr:
 
 
 def Eq(
-    lhs: Expr | bool | int | Fraction,
-    rhs: Expr | bool | int | Fraction,
+    lhs: Expr | bool | int | Fraction | str,
+    rhs: Expr | bool | int | Fraction | str,
 ) -> Expr:
     """Build the formula-level equality ``lhs = rhs``."""
     if isinstance(lhs, Expr):
@@ -553,7 +831,12 @@ def Eq(
 
 
 def Distinct(
-    *args: Expr | bool | int | Fraction | Sequence[Expr | bool | int | Fraction],
+    *args: Expr
+    | bool
+    | int
+    | Fraction
+    | str
+    | Sequence[Expr | bool | int | Fraction | str],
 ) -> Expr:
     """Build a pairwise-distinct constraint over ``args``."""
     flat = _flatten_coercible_args(args)
@@ -569,8 +852,8 @@ def Distinct(
 
 def If(
     cond: Expr,
-    then_branch: Expr | bool | int | Fraction,
-    else_branch: Expr | bool | int | Fraction,
+    then_branch: Expr | bool | int | Fraction | str,
+    else_branch: Expr | bool | int | Fraction | str,
 ) -> Expr:
     """Build an if-then-else expression ``ite(cond, then_branch, else_branch)``."""
     if not isinstance(cond, Expr):
@@ -710,6 +993,7 @@ __all__ = [
     "App",
     "Array",
     "ArraySort",
+    "At",
     "BitVec",
     "BitVecSort",
     "BitVecVal",
@@ -719,10 +1003,12 @@ __all__ = [
     "BoolVal",
     "Bools",
     "BoundVar",
+    "Complement",
     "Concat",
     "Const",
     "Constant",
     "Constants",
+    "Contains",
     "Context",
     "DeclareSort",
     "Distinct",
@@ -738,24 +1024,44 @@ __all__ = [
     "IDiv",
     "If",
     "Implies",
+    "InRe",
+    "IndexOf",
     "Int",
     "IntSort",
+    "IntToStr",
     "IntVal",
+    "Intersect",
     "Ints",
+    "IsDigit",
     "IsInt",
     "K",
     "LShR",
+    "Length",
+    "Loop",
     "Mod",
     "Model",
     "MultiPattern",
     "Not",
+    "Option",
     "Or",
+    "Plus",
+    "PrefixOf",
     "Quantifier",
+    "Range",
+    "Re",
+    "ReAllChar",
+    "ReDiff",
+    "ReEmpty",
+    "ReFull",
+    "RePower",
     "Real",
     "RealSort",
     "RealVal",
     "Reals",
+    "RegLanSort",
     "Repeat",
+    "Replace",
+    "ReplaceAll",
     "RotateLeft",
     "RotateRight",
     "SDiv",
@@ -766,12 +1072,23 @@ __all__ = [
     "SolveResult",
     "Solver",
     "Sort",
+    "Star",
     "Store",
+    "StrFromCode",
+    "StrToCode",
+    "StrToInt",
+    "String",
+    "StringSort",
+    "StringVal",
+    "Strings",
+    "SubString",
+    "SuffixOf",
     "Sum",
     "ToInt",
     "ToReal",
     "UDiv",
     "URem",
+    "Union",
     "Xor",
     "ZeroExt",
     "default_context",

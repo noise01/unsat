@@ -147,6 +147,74 @@ def simplify(expr: Expr) -> Expr:
                     memo[node] = ctx.mk_store(arr_a, idx_a, val_a)
             case DeclKind.CONST_ARRAY:
                 memo[node] = ctx.mk_const_array(node.sort.index_sort, args[0])
+            case DeclKind.STR_CONCAT:
+                memo[node] = ctx.mk_str_concat(*args)
+            case DeclKind.STR_LEN:
+                memo[node] = ctx.mk_str_len(args[0])
+            case DeclKind.STR_AT:
+                memo[node] = ctx.mk_str_at(args[0], args[1])
+            case DeclKind.STR_SUBSTR:
+                memo[node] = ctx.mk_str_substr(args[0], args[1], args[2])
+            case DeclKind.STR_INDEXOF:
+                memo[node] = ctx.mk_str_indexof(args[0], args[1], args[2])
+            case DeclKind.STR_REPLACE:
+                memo[node] = ctx.mk_str_replace(args[0], args[1], args[2])
+            case DeclKind.STR_REPLACE_ALL:
+                memo[node] = ctx.mk_str_replace_all(args[0], args[1], args[2])
+            case DeclKind.STR_CONTAINS:
+                memo[node] = ctx.mk_str_contains(args[0], args[1])
+            case DeclKind.STR_PREFIXOF:
+                memo[node] = ctx.mk_str_prefixof(args[0], args[1])
+            case DeclKind.STR_SUFFIXOF:
+                memo[node] = ctx.mk_str_suffixof(args[0], args[1])
+            case DeclKind.STR_LT:
+                memo[node] = ctx.mk_str_lt(args[0], args[1])
+            case DeclKind.STR_LE:
+                memo[node] = ctx.mk_str_le(args[0], args[1])
+            case DeclKind.STR_TO_INT:
+                memo[node] = ctx.mk_str_to_int(args[0])
+            case DeclKind.STR_FROM_INT:
+                memo[node] = ctx.mk_str_from_int(args[0])
+            case DeclKind.STR_TO_CODE:
+                memo[node] = ctx.mk_str_to_code(args[0])
+            case DeclKind.STR_FROM_CODE:
+                memo[node] = ctx.mk_str_from_code(args[0])
+            case DeclKind.STR_IS_DIGIT:
+                memo[node] = ctx.mk_str_is_digit(args[0])
+            case DeclKind.STR_IN_RE:
+                memo[node] = ctx.mk_str_in_re(args[0], args[1])
+            case DeclKind.STR_TO_RE:
+                memo[node] = ctx.mk_str_to_re(args[0])
+            case DeclKind.RE_NONE:
+                memo[node] = ctx.mk_re_none()
+            case DeclKind.RE_ALL:
+                memo[node] = ctx.mk_re_all()
+            case DeclKind.RE_ALLCHAR:
+                memo[node] = ctx.mk_re_allchar()
+            case DeclKind.RE_CONCAT:
+                memo[node] = ctx.mk_re_concat(*args)
+            case DeclKind.RE_UNION:
+                memo[node] = ctx.mk_re_union(*args)
+            case DeclKind.RE_INTER:
+                memo[node] = ctx.mk_re_inter(*args)
+            case DeclKind.RE_STAR:
+                memo[node] = ctx.mk_re_star(args[0])
+            case DeclKind.RE_PLUS:
+                memo[node] = ctx.mk_re_plus(args[0])
+            case DeclKind.RE_OPT:
+                memo[node] = ctx.mk_re_opt(args[0])
+            case DeclKind.RE_RANGE:
+                memo[node] = ctx.mk_re_range(args[0], args[1])
+            case DeclKind.RE_COMP:
+                memo[node] = ctx.mk_re_comp(args[0])
+            case DeclKind.RE_DIFF:
+                memo[node] = ctx.mk_re_diff(args[0], args[1])
+            case DeclKind.RE_POWER:
+                memo[node] = ctx.mk_re_power(node.decl.params[0], args[0])
+            case DeclKind.RE_LOOP:
+                memo[node] = ctx.mk_re_loop(
+                    node.decl.params[0], node.decl.params[1], args[0]
+                )
             case (
                 DeclKind.BV_NOT
                 | DeclKind.BV_AND

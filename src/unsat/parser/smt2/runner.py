@@ -27,6 +27,7 @@ from unsat.syntax import (
     format_expr,
     quote_smt2_symbol,
     substitute,
+    unescape_smt2_string,
 )
 
 _SUPPORTED_LOGICS = frozenset(
@@ -85,6 +86,20 @@ _SUPPORTED_LOGICS = frozenset(
         "AUFNRA",
         "AUFNIA",
         "AUFNIRA",
+        "QF_S",
+        "QF_SLIA",
+        "QF_SNIA",
+        "QF_UFS",
+        "QF_UFSLIA",
+        "QF_AS",
+        "QF_AUFSLIA",
+        "S",
+        "SLIA",
+        "SNIA",
+        "UFS",
+        "UFSLIA",
+        "AS",
+        "AUFSLIA",
         "ALL",
     }
 )
@@ -268,6 +283,10 @@ class SMT2Runner:
                 return self.ctx.int_sort
             if sym.name == "Real":
                 return self.ctx.real_sort
+            if sym.name == "String":
+                return self.ctx.string_sort
+            if sym.name == "RegLan":
+                return self.ctx.reglan_sort
         if sort_env is not None and sym.name in sort_env:
             return sort_env[sym.name]
         if sym.name in resolving:
@@ -338,7 +357,13 @@ class SMT2Runner:
                         "supported"
                     )
                     raise ValueError(msg)
-                if not sym.quoted and sym.name in ("Bool", "Int", "Real"):
+                if not sym.quoted and sym.name in (
+                    "Bool",
+                    "Int",
+                    "Real",
+                    "String",
+                    "RegLan",
+                ):
                     msg = f"Cannot redeclare built-in sort '{sym.name}'"
                     raise ValueError(msg)
                 if (
@@ -360,6 +385,8 @@ class SMT2Runner:
                     "Bool",
                     "Int",
                     "Real",
+                    "String",
+                    "RegLan",
                     "BitVec",
                     "Array",
                 ):
@@ -384,6 +411,8 @@ class SMT2Runner:
                         "Bool",
                         "Int",
                         "Real",
+                        "String",
+                        "RegLan",
                     ):
                         msg = (
                             f"Cannot use built-in sort '{param_sym.name}' as "
@@ -747,12 +776,21 @@ class SMT2Runner:
         if isinstance(sexpr, _BVLiteral):
             return self.ctx.mk_bv_val(sexpr.value, sexpr.width)
 
+        if isinstance(sexpr, _StringLit):
+            return self.ctx.mk_string_val(unescape_smt2_string(sexpr.value))
+
         if isinstance(sexpr, _Symbol):
             if not sexpr.quoted:
                 if sexpr.name == "true":
                     return self.ctx.mk_true()
                 if sexpr.name == "false":
                     return self.ctx.mk_false()
+                if sexpr.name in ("re.none", "re.nostr"):
+                    return self.ctx.mk_re_none()
+                if sexpr.name == "re.all":
+                    return self.ctx.mk_re_all()
+                if sexpr.name == "re.allchar":
+                    return self.ctx.mk_re_allchar()
                 if sexpr.name.isdigit():
                     if self._logic in (
                         "QF_LRA",
@@ -1267,6 +1305,149 @@ class SMT2Runner:
                     ):
                         val = self.ctx.mk_to_real(val)
                 return self.ctx.mk_store(arr, idx, val)
+            case "str.++":
+                if not parsed:
+                    msg = "'str.++' expects at least 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_concat(*parsed)
+            case "str.len":
+                if len(parsed) != 1:
+                    msg = "'str.len' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_len(parsed[0])
+            case "str.at":
+                if len(parsed) != 2:
+                    msg = "'str.at' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_at(parsed[0], parsed[1])
+            case "str.substr":
+                if len(parsed) != 3:
+                    msg = "'str.substr' expects 3 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_substr(parsed[0], parsed[1], parsed[2])
+            case "str.indexof":
+                if len(parsed) != 3:
+                    msg = "'str.indexof' expects 3 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_indexof(parsed[0], parsed[1], parsed[2])
+            case "str.replace":
+                if len(parsed) != 3:
+                    msg = "'str.replace' expects 3 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_replace(parsed[0], parsed[1], parsed[2])
+            case "str.replace_all":
+                if len(parsed) != 3:
+                    msg = "'str.replace_all' expects 3 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_replace_all(parsed[0], parsed[1], parsed[2])
+            case "str.contains":
+                if len(parsed) != 2:
+                    msg = "'str.contains' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_contains(parsed[0], parsed[1])
+            case "str.prefixof":
+                if len(parsed) != 2:
+                    msg = "'str.prefixof' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_prefixof(parsed[0], parsed[1])
+            case "str.suffixof":
+                if len(parsed) != 2:
+                    msg = "'str.suffixof' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_suffixof(parsed[0], parsed[1])
+            case "str.<" | "str.<=":
+                if len(parsed) < 2:
+                    msg = f"'{op}' expects at least 2 arguments"
+                    raise ValueError(msg)
+                mk_scmp = self.ctx.mk_str_lt if op == "str.<" else self.ctx.mk_str_le
+                if len(parsed) == 2:
+                    return mk_scmp(parsed[0], parsed[1])
+                return self.ctx.mk_and(
+                    *(mk_scmp(parsed[i], parsed[i + 1]) for i in range(len(parsed) - 1))
+                )
+            case "str.to_int" | "str.to.int":
+                if len(parsed) != 1:
+                    msg = f"'{op}' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_to_int(parsed[0])
+            case "str.from_int" | "int.to.str":
+                if len(parsed) != 1:
+                    msg = f"'{op}' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_from_int(parsed[0])
+            case "str.to_code":
+                if len(parsed) != 1:
+                    msg = "'str.to_code' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_to_code(parsed[0])
+            case "str.from_code":
+                if len(parsed) != 1:
+                    msg = "'str.from_code' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_from_code(parsed[0])
+            case "str.is_digit":
+                if len(parsed) != 1:
+                    msg = "'str.is_digit' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_is_digit(parsed[0])
+            case "str.in_re" | "str.in.re":
+                if len(parsed) != 2:
+                    msg = f"'{op}' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_in_re(parsed[0], parsed[1])
+            case "str.to_re" | "str.to.re":
+                if len(parsed) != 1:
+                    msg = f"'{op}' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_str_to_re(parsed[0])
+            case "re.++":
+                if not parsed:
+                    msg = "'re.++' expects at least 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_concat(*parsed)
+            case "re.union":
+                if not parsed:
+                    msg = "'re.union' expects at least 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_union(*parsed)
+            case "re.inter":
+                if not parsed:
+                    msg = "'re.inter' expects at least 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_inter(*parsed)
+            case "re.*":
+                if len(parsed) != 1:
+                    msg = "'re.*' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_star(parsed[0])
+            case "re.+":
+                if len(parsed) != 1:
+                    msg = "'re.+' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_plus(parsed[0])
+            case "re.opt":
+                if len(parsed) != 1:
+                    msg = "'re.opt' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_opt(parsed[0])
+            case "re.range":
+                if len(parsed) != 2:
+                    msg = "'re.range' expects 2 arguments"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_range(parsed[0], parsed[1])
+            case "re.comp":
+                if len(parsed) != 1:
+                    msg = "'re.comp' expects 1 argument"
+                    raise ValueError(msg)
+                return self.ctx.mk_re_comp(parsed[0])
+            case "re.diff":
+                if len(parsed) < 2:
+                    msg = "'re.diff' expects at least 2 arguments"
+                    raise ValueError(msg)
+                acc = parsed[0]
+                for item in parsed[1:]:
+                    acc = self.ctx.mk_re_diff(acc, item)
+                return acc
             case _:
                 target = self._lookup_callable(op)
                 if isinstance(target, _FuncDef):
@@ -1323,6 +1504,13 @@ class SMT2Runner:
                 hi = self._parse_nonneg_int(head_tuple[2], "extract high")
                 lo = self._parse_nonneg_int(head_tuple[3], "extract low")
                 return self.ctx.mk_extract(hi, lo, arg)
+            if op_name == "re.loop":
+                if len(head_tuple) != 4:
+                    msg = "'(_ re.loop lo hi)' expects 2 indices"
+                    raise ValueError(msg)
+                lo = self._parse_nonneg_int(head_tuple[2], "re.loop low")
+                hi = self._parse_nonneg_int(head_tuple[3], "re.loop high")
+                return self.ctx.mk_re_loop(lo, hi, arg)
             if len(head_tuple) != 3:
                 msg = f"'(_ {op_name} n)' expects 1 index"
                 raise ValueError(msg)
@@ -1330,6 +1518,8 @@ class SMT2Runner:
             match op_name:
                 case "divisible":
                     return self.ctx.mk_divisible(param, arg)
+                case "re.^":
+                    return self.ctx.mk_re_power(param, arg)
                 case "zero_extend":
                     return self.ctx.mk_zero_ext(param, arg)
                 case "sign_extend":
