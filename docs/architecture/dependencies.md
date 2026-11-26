@@ -9,7 +9,7 @@ This document defines the package boundary contracts enforced automatically by `
 | `unsat.syntax` | Stateless sorts, function declarations, AST/terms, formulas, and explicit AST contexts | None |
 | `unsat.sat` | Pure propositional CDCL SAT core (integer variables, literals, clauses, and theory-hook protocols) | None |
 | `unsat.model` | Model representation, formula evaluation, and model reconstruction (`ModelConverter`) | `syntax` |
-| `unsat.theories` | Theory solver implementations (`EUF`, `LRA`, `LIA`, `Arrays`, and future solvers) | `syntax`, `model` |
+| `unsat.theories` | Theory solver implementations (`EUF`, `LRA`, `LIA`, `NLA`, `BV`, `Arrays`, and `Strings`) | `syntax`, `model` |
 | `unsat.tactics` | Pure AST-to-AST preprocessing, simplification, reduction tactics, and model converters (excludes SAT clausification) | `syntax`, `model` |
 | `unsat.quantifiers` | Quantifier instantiation and reasoning (`E-matching`, `MBQI` via injected sub-solver protocols) | `syntax`, `theories`, `model` |
 | `unsat.smt` | CDCL(T) orchestrator bridging `syntax` and `sat`, Tseitin clausification, push/pop, theory combination, callback injection, and `solve_with_tactic` | `syntax`, `sat`, `theories`, `tactics`, `quantifiers`, `model` |

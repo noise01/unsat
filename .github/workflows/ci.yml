@@ -61,7 +61,7 @@ jobs:
         run: uv run pytest tests
 
       - name: Run benchmark suite check
-        run: uv run python benchmarks/run.py --check
+        run: uv run python benchmarks/run.py --suite all --check
 
       - name: Build and smoke-test wheel
         if: ${{ !inputs.skip-build-smoke }}
