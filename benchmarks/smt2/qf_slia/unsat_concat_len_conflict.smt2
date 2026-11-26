@@ -1,0 +1,8 @@
+(set-logic QF_SLIA)
+(set-info :status unsat)
+(declare-const a String)
+(declare-const b String)
+(assert (= (str.++ a "xy" b) (str.++ b "zw" a)))
+(assert (= (str.len a) 2))
+(assert (= (str.len b) 2))
+(check-sat)

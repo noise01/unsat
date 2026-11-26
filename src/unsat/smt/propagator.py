@@ -17,6 +17,9 @@ from unsat.theories import (
     NLALemma,
     NLASolver,
     NLAUnknown,
+    StringLemma,
+    StringSolver,
+    StringUnknown,
     TheoryLit,
     find_lia_lemma,
 )
@@ -45,6 +48,7 @@ class _CombinedPropagator:
         array_solver: ArraySolver,
         bv_solver: BVSolver,
         nla_solver: NLASolver,
+        string_solver: StringSolver,
         bitblaster: BitBlaster,
     ) -> None:
         self._ctx = ctx
@@ -54,6 +58,7 @@ class _CombinedPropagator:
         self._arrays = array_solver
         self._bv = bv_solver
         self._nla = nla_solver
+        self._strings = string_solver
         self._bitblaster = bitblaster
         self._encoder: _LemmaEncoder | None = None
 
@@ -66,13 +71,18 @@ class _CombinedPropagator:
         self._bv_lit_to_atoms: dict[Lit, list[tuple[Expr, bool]]] = {}
         self._bv_atom_to_pos_lit: dict[Expr, Lit] = {}
 
+        self._str_lit_to_atoms: dict[Lit, list[tuple[Expr, bool]]] = {}
+        self._str_atom_to_pos_lit: dict[Expr, Lit] = {}
+
         self._shared_arith_terms: dict[Sort, list[Expr]] = {}
         self._shared_arith_set: set[Expr] = set()
         self._shared_bv_terms: dict[Sort, list[Expr]] = {}
         self._shared_bv_set: set[Expr] = set()
         self._emitted_cuts: set[Expr] = set()
         self._emitted_nla_lemmas: set[Expr] = set()
+        self._emitted_str_lemmas: set[Expr] = set()
         self._nla_unknown: bool = False
+        self._string_unknown: bool = False
 
     def attach(self, sat_solver: SATSolver, encoder: _LemmaEncoder) -> None:
         """Bind the owning ``SATSolver`` and encoder after construction."""
@@ -84,12 +94,20 @@ class _CombinedPropagator:
         """Whether ``NLASolver`` stopped conservatively with ``NLAUnknown``."""
         return self._nla_unknown
 
+    @property
+    def string_unknown(self) -> bool:
+        """Whether ``StringSolver`` stopped conservatively with ``StringUnknown``."""
+        return self._string_unknown
+
     def reset_check_state(self) -> None:
         """Clear per-solve deduplication state before a fresh ``check()``."""
         self._emitted_cuts.clear()
         self._emitted_nla_lemmas.clear()
+        self._emitted_str_lemmas.clear()
         self._nla_unknown = False
+        self._string_unknown = False
         self._nla.reset_check_state()
+        self._strings.reset_check_state()
 
     def add_shared_arith_term(self, term: Expr) -> None:
         """Record an ``Int``/``Real`` term participating in EUF for MBTC."""
@@ -217,15 +235,32 @@ class _CombinedPropagator:
                 ]
                 self._sat.add_clause(lemma)
 
+    def bind_string(self, lit: Lit, atom: Expr, *, catch_up: bool = True) -> None:
+        """Bind positive ``lit`` to String predicate atom ``(atom, True)``."""
+        if atom in self._str_atom_to_pos_lit:
+            return
+        self._str_atom_to_pos_lit[atom] = lit
+        self._str_lit_to_atoms.setdefault(lit, []).append((atom, True))
+        self._str_lit_to_atoms.setdefault(negate(lit), []).append((atom, False))
+
+        if not catch_up:
+            return
+        assert self._sat is not None
+        val = self._sat.value(lit)
+        if val is not None:
+            self._strings.assert_atom(atom, val)
+
     def push(self) -> None:
         self._euf.push()
         self._lra.push()
         self._bv.push()
+        self._strings.push()
 
     def pop(self, num_levels: int) -> None:
         self._euf.pop(num_levels)
         self._lra.pop(num_levels)
         self._bv.pop(num_levels)
+        self._strings.pop(num_levels)
 
     def on_assign(self, lit: Lit) -> None:
         euf_entries = self._euf_lit_to_atoms.get(lit)
@@ -240,6 +275,10 @@ class _CombinedPropagator:
         if bv_entries is not None:
             for atom, sign in bv_entries:
                 self._bv.assert_atom(atom, sign)
+        str_entries = self._str_lit_to_atoms.get(lit)
+        if str_entries is not None:
+            for atom, sign in str_entries:
+                self._strings.assert_atom(atom, sign)
 
     def propagate(self) -> tuple[Sequence[Lit], Sequence[Lit] | None]:
         euf_props, euf_conflict = self._euf.propagate()
@@ -387,7 +426,52 @@ class _CombinedPropagator:
         if isinstance(bv_res, BVBlastRequest):
             return self._blast_bv_request(bv_res)
 
+        str_res = self._strings.check(
+            self._euf, self._lra, emitted_lemmas=self._emitted_str_lemmas
+        )
+        if isinstance(str_res, list) and str_res:
+            assert self._encoder is not None
+            vars_before = self._sat.num_vars if self._sat is not None else 0
+            str_out: list[list[Lit]] = []
+            for str_lemma in str_res:
+                assert isinstance(str_lemma, StringLemma)
+                base = [negate(self._mixed_lit_to_sat(tl)) for tl in str_lemma.reasons]
+                if str_lemma.formula is self._ctx.false_expr:
+                    str_out.append(base)
+                elif str_lemma.formula is self._ctx.true_expr:
+                    continue
+                else:
+                    f_lit, def_clauses = self._encoder.encode_lemma(
+                        str_lemma.formula, polarity=1
+                    )
+                    str_out.extend(def_clauses)
+                    str_out.append([*base, f_lit])
+            if str_out:
+                if self._sat is not None and self._sat.num_vars == vars_before:
+                    has_unsat_or_unassigned = any(
+                        not any(self._sat.value(lit) is True for lit in clause)
+                        for clause in str_out
+                    )
+                    if not has_unsat_or_unassigned:
+                        self._string_unknown = True
+                        return ()
+                return str_out
+        if isinstance(str_res, StringUnknown):
+            self._string_unknown = True
+
         return ()
+
+    def _mixed_lit_to_sat(self, tlit: TheoryLit) -> Lit:
+        pos = self._str_atom_to_pos_lit.get(tlit.atom)
+        if pos is None:
+            pos = self._euf_atom_to_pos_lit.get(tlit.atom)
+        if pos is None:
+            pos = self._lra_atom_to_pos_lit.get(tlit.atom)
+        if pos is None:
+            assert self._encoder is not None
+            lit, _ = self._encoder.encode_lemma(tlit.atom, polarity=0)
+            pos = lit
+        return pos if tlit.sign else negate(pos)
 
     def _sat_bit_lookup(self) -> Callable[[Expr], bool]:
         assert self._sat is not None

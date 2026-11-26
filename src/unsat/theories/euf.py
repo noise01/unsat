@@ -42,6 +42,17 @@ _EUF_CONGRUENCE_KINDS = frozenset(
         DeclKind.DIV,
         DeclKind.IDIV,
         DeclKind.MOD,
+        DeclKind.STR_CONCAT,
+        DeclKind.STR_LEN,
+        DeclKind.STR_AT,
+        DeclKind.STR_SUBSTR,
+        DeclKind.STR_INDEXOF,
+        DeclKind.STR_REPLACE,
+        DeclKind.STR_REPLACE_ALL,
+        DeclKind.STR_TO_INT,
+        DeclKind.STR_FROM_INT,
+        DeclKind.STR_TO_CODE,
+        DeclKind.STR_FROM_CODE,
     }
 )
 
@@ -469,6 +480,17 @@ class EUFSolver:
             if self._rep[nid] == nid and self._id_to_expr[nid].sort is sort
         ]
 
+    def asserted_disequalities(self) -> list[tuple[Expr, Expr, Expr]]:
+        """Return asserted ``(eq_atom, lhs, rhs)`` triples asserted False."""
+        self._drain()
+        out: list[tuple[Expr, Expr, Expr]] = []
+        for lhs_id, rhs_id, eq_expr in self._eq_atoms:
+            if self._asserted_atoms.get(eq_expr) is False:
+                out.append(
+                    (eq_expr, self._id_to_expr[lhs_id], self._id_to_expr[rhs_id])
+                )
+        return out
+
     def _assign_root_values(
         self,
         external_values: Mapping[Expr, Expr] | None = None,
@@ -477,6 +499,8 @@ class EUFSolver:
         int_roots: list[int] = []
         real_roots: list[int] = []
         bv_roots: dict[Sort, list[int]] = {}
+        string_roots: list[int] = []
+        reglan_roots: list[int] = []
         array_roots: dict[Sort, list[int]] = {}
         for nid, expr in enumerate(self._id_to_expr):
             if self._rep[nid] != nid:
@@ -490,6 +514,10 @@ class EUFSolver:
                 real_roots.append(nid)
             elif kind is SortKind.BITVEC:
                 bv_roots.setdefault(expr.sort, []).append(nid)
+            elif kind is SortKind.STRING:
+                string_roots.append(nid)
+            elif kind is SortKind.REGLAN:
+                reglan_roots.append(nid)
             elif kind is SortKind.ARRAY:
                 array_roots.setdefault(expr.sort, []).append(nid)
 
@@ -621,6 +649,53 @@ class EUFSolver:
                 fixed = self._class_const[nid]
                 root_val[nid] = fixed if fixed is not None else self._ctx.mk_false()
 
+        used_strs: set[str] = set()
+        for r in string_roots:
+            fixed = self._class_const[r]
+            if fixed is not None:
+                assert isinstance(fixed.value, str)
+                root_val[r] = fixed
+                used_strs.add(fixed.value)
+            elif external_values is not None:
+                for member in self._class_members[r]:
+                    ext = external_values.get(self._id_to_expr[member])
+                    if isinstance(ext, Const) and ext.is_string:
+                        assert isinstance(ext.value, str)
+                        root_val[r] = ext
+                        used_strs.add(ext.value)
+                        break
+
+        next_str_idx = 0
+        for r in string_roots:
+            if r not in root_val:
+                while f"s_{next_str_idx}" in used_strs:
+                    next_str_idx += 1
+                cand_s = f"s_{next_str_idx}" if used_strs or next_str_idx > 0 else ""
+                if cand_s in used_strs:
+                    while f"s_{next_str_idx}" in used_strs:
+                        next_str_idx += 1
+                    cand_s = f"s_{next_str_idx}"
+                root_val[r] = self._ctx.mk_string_val(cand_s)
+                used_strs.add(cand_s)
+                next_str_idx += 1
+
+        for r in reglan_roots:
+            if external_values is not None:
+                for member in self._class_members[r]:
+                    ext = external_values.get(self._id_to_expr[member])
+                    if ext is not None and ext.is_reglan:
+                        root_val[r] = ext
+                        break
+            if r not in root_val:
+                expr_r = self._id_to_expr[r]
+                root_val[r] = (
+                    expr_r
+                    if expr_r.is_reglan
+                    and isinstance(expr_r, App)
+                    and not expr_r.decl.is_uninterpreted
+                    else self._ctx.mk_re_none()
+                )
+
         for arr_sort, roots in array_roots.items():
             for offset, r in enumerate(roots):
                 if external_values is not None:
@@ -657,6 +732,10 @@ class EUFSolver:
             elem = self._ctx.mk_real_val(tag)
         elif cur.kind is SortKind.BITVEC:
             elem = self._ctx.mk_bv_val(tag, cur.size)
+        elif cur.kind is SortKind.STRING:
+            elem = self._ctx.mk_string_val("" if tag == 0 else f"s_{tag}")
+        elif cur.kind is SortKind.REGLAN:
+            elem = self._ctx.mk_re_none()
         else:
             sort_univ = universes.setdefault(cur, [])
             if tag < len(sort_univ):

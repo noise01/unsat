@@ -17,8 +17,9 @@ from unsat.syntax import (
     instantiate_quantifier,
     iter_subexprs,
 )
+from unsat.syntax.str_eval import MAX_CHAR_CODE
 from unsat.tactics import BitBlaster, bv_simplify, simplify, skolemize
-from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver
+from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver, StringSolver
 
 _CMP_KINDS = frozenset({DeclKind.LT, DeclKind.LE, DeclKind.GT, DeclKind.GE})
 _ARITH_OP_KINDS = frozenset(
@@ -33,6 +34,48 @@ _ARITH_OP_KINDS = frozenset(
         DeclKind.ABS,
         DeclKind.TO_REAL,
         DeclKind.TO_INT,
+        DeclKind.STR_LEN,
+        DeclKind.STR_INDEXOF,
+        DeclKind.STR_TO_INT,
+        DeclKind.STR_TO_CODE,
+    }
+)
+_STRING_TERM_KINDS = frozenset(
+    {
+        DeclKind.STR_CONCAT,
+        DeclKind.STR_AT,
+        DeclKind.STR_SUBSTR,
+        DeclKind.STR_REPLACE,
+        DeclKind.STR_REPLACE_ALL,
+        DeclKind.STR_FROM_INT,
+        DeclKind.STR_FROM_CODE,
+    }
+)
+_STRING_PRED_KINDS = frozenset(
+    {
+        DeclKind.STR_IN_RE,
+        DeclKind.STR_CONTAINS,
+        DeclKind.STR_LT,
+        DeclKind.STR_LE,
+    }
+)
+_RE_OP_KINDS = frozenset(
+    {
+        DeclKind.STR_TO_RE,
+        DeclKind.RE_NONE,
+        DeclKind.RE_ALL,
+        DeclKind.RE_ALLCHAR,
+        DeclKind.RE_CONCAT,
+        DeclKind.RE_UNION,
+        DeclKind.RE_INTER,
+        DeclKind.RE_STAR,
+        DeclKind.RE_PLUS,
+        DeclKind.RE_OPT,
+        DeclKind.RE_RANGE,
+        DeclKind.RE_COMP,
+        DeclKind.RE_DIFF,
+        DeclKind.RE_POWER,
+        DeclKind.RE_LOOP,
     }
 )
 _BV_CMP_KINDS = frozenset(
@@ -88,6 +131,8 @@ class _PropSink(Protocol):
 
     def bind_bv(self, lit: Lit, atom: Expr, *, catch_up: bool = True) -> None: ...
 
+    def bind_string(self, lit: Lit, atom: Expr, *, catch_up: bool = True) -> None: ...
+
 
 def _strip_nots(expr: Expr) -> tuple[Expr, bool]:
     flip = False
@@ -118,6 +163,7 @@ class _PlaistedGreenbaumEncoder:
         lra_solver: LRASolver,
         array_solver: ArraySolver,
         bv_solver: BVSolver,
+        string_solver: StringSolver,
         bitblaster: BitBlaster,
         prop: _PropSink,
     ) -> None:
@@ -127,6 +173,7 @@ class _PlaistedGreenbaumEncoder:
         self._lra = lra_solver
         self._arrays = array_solver
         self._bv = bv_solver
+        self._strings = string_solver
         self._bitblaster = bitblaster
         self._prop = prop
         self._expr_to_var: dict[Expr, Var] = {}
@@ -145,6 +192,7 @@ class _PlaistedGreenbaumEncoder:
         self._encoding_quant_stack: list[Quantifier] = []
         self._quant_to_entry_indices: dict[Quantifier, list[int]] = {}
         self._arith_axioms_emitted: set[Expr] = set()
+        self._str_axioms_emitted: set[Expr] = set()
 
     @property
     def internal_decls(self) -> frozenset[FuncDecl]:
@@ -344,6 +392,7 @@ class _PlaistedGreenbaumEncoder:
         bool_args: list[Expr] = []
         non_bool_ites: list[App] = []
         arith_axiom_nodes: list[App] = []
+        str_axiom_nodes: list[Expr] = []
         stack: list[tuple[Expr, bool, bool]] = [(term, in_euf, False)]
 
         while stack:
@@ -355,13 +404,15 @@ class _PlaistedGreenbaumEncoder:
                 continue
 
             if isinstance(node, Const):
-                if euf_flag:
+                if euf_flag or node.is_string or node.is_reglan:
                     self._terms_euf.add(node)
                     self._euf.register_term(node)
                     if node.is_arith:
                         self._prop.add_shared_arith_term(node)
                     elif node.is_bv:
                         self._prop.add_shared_bv_term(node)
+                    elif node.is_string:
+                        self._strings.register_term(node)
                 else:
                     self._terms_non_euf.add(node)
                 continue
@@ -402,6 +453,10 @@ class _PlaistedGreenbaumEncoder:
                         self._bv.register_term(node)
                 if node.is_arith:
                     self._lra.register_term(node)
+                if node.is_string:
+                    self._strings.register_term(node)
+                    if node not in self._str_axioms_emitted:
+                        str_axiom_nodes.append(node)
                 non_bool_ites.append(node)
                 continue
 
@@ -411,7 +466,13 @@ class _PlaistedGreenbaumEncoder:
                     DeclKind.MOD,
                     DeclKind.DIV,
                 ) and (not isinstance(node.args[1], Const) or node.args[1].value == 0)
-                eff_arith_euf = euf_flag or div_congruent
+                str_arith = kind in (
+                    DeclKind.STR_LEN,
+                    DeclKind.STR_INDEXOF,
+                    DeclKind.STR_TO_INT,
+                    DeclKind.STR_TO_CODE,
+                )
+                eff_arith_euf = euf_flag or div_congruent or str_arith
                 if not expanded:
                     stack.append((node, eff_arith_euf, True))
                     for arg in reversed(node.args):
@@ -419,12 +480,16 @@ class _PlaistedGreenbaumEncoder:
                     continue
                 if eff_arith_euf:
                     self._terms_euf.add(node)
-                    if div_congruent:
+                    if div_congruent or str_arith:
                         self._euf.register_term(node)
                     if node.is_arith:
                         self._prop.add_shared_arith_term(node)
                 else:
                     self._terms_non_euf.add(node)
+                if str_arith:
+                    self._strings.register_term(node)
+                    if node not in self._str_axioms_emitted:
+                        str_axiom_nodes.append(node)
                 if (
                     kind
                     in (
@@ -437,6 +502,30 @@ class _PlaistedGreenbaumEncoder:
                     and node not in self._arith_axioms_emitted
                 ):
                     arith_axiom_nodes.append(node)
+                continue
+
+            if kind in _STRING_TERM_KINDS:
+                if not expanded:
+                    stack.append((node, True, True))
+                    for arg in reversed(node.args):
+                        stack.append((arg, True, False))
+                    continue
+                self._terms_euf.add(node)
+                self._euf.register_term(node)
+                if node.is_string:
+                    self._strings.register_term(node)
+                    if node not in self._str_axioms_emitted:
+                        str_axiom_nodes.append(node)
+                continue
+
+            if kind in _RE_OP_KINDS:
+                if not expanded and node.args:
+                    stack.append((node, True, True))
+                    for arg in reversed(node.args):
+                        stack.append((arg, True, False))
+                    continue
+                self._terms_euf.add(node)
+                self._euf.register_term(node)
                 continue
 
             if kind in _BV_OP_KINDS:
@@ -469,6 +558,10 @@ class _PlaistedGreenbaumEncoder:
                     self._prop.add_shared_arith_term(node)
                 elif node.is_bv:
                     self._prop.add_shared_bv_term(node)
+                elif node.is_string:
+                    self._strings.register_term(node)
+                    if node not in self._str_axioms_emitted:
+                        str_axiom_nodes.append(node)
                 continue
 
             if node.decl.is_uninterpreted:
@@ -490,8 +583,12 @@ class _PlaistedGreenbaumEncoder:
                         self._prop.add_shared_bv_term(node)
                     elif node.is_array:
                         self._arrays.register_term(node)
+                    elif node.is_string:
+                        self._strings.register_term(node)
+                        if node not in self._str_axioms_emitted:
+                            str_axiom_nodes.append(node)
                 else:
-                    if euf_flag:
+                    if euf_flag or node.is_string or node.is_reglan:
                         self._terms_euf.add(node)
                         self._euf.register_term(node)
                         if node.is_arith:
@@ -500,6 +597,10 @@ class _PlaistedGreenbaumEncoder:
                             self._prop.add_shared_bv_term(node)
                         elif node.is_array:
                             self._arrays.register_term(node)
+                        elif node.is_string:
+                            self._strings.register_term(node)
+                            if node not in self._str_axioms_emitted:
+                                str_axiom_nodes.append(node)
                     else:
                         self._terms_non_euf.add(node)
                 continue
@@ -533,6 +634,234 @@ class _PlaistedGreenbaumEncoder:
 
         for anode in arith_axiom_nodes:
             self._emit_arith_node_axioms(anode)
+
+        for snode in str_axiom_nodes:
+            self._emit_str_node_axioms(snode)
+
+    def _emit_str_node_axioms(self, node: Expr) -> None:
+        if node in self._str_axioms_emitted:
+            return
+        self._str_axioms_emitted.add(node)
+        ctx = self._ctx
+
+        if node.is_string and not isinstance(node, Const):
+            len_node = ctx.mk_str_len(node)
+            empty_s = ctx.mk_string_val("")
+            self._emit_clause(
+                [self.encode(ctx.mk_ge(len_node, ctx.mk_int_val(0)), polarity=1)]
+            )
+            self._emit_clause(
+                [
+                    self.encode(
+                        ctx.mk_eq(
+                            ctx.mk_eq(node, empty_s),
+                            ctx.mk_eq(len_node, ctx.mk_int_val(0)),
+                        ),
+                        polarity=1,
+                    )
+                ]
+            )
+            if isinstance(node, App) and node.decl.kind is DeclKind.STR_CONCAT:
+                self._emit_clause(
+                    [
+                        self.encode(
+                            ctx.mk_eq(
+                                len_node,
+                                ctx.mk_add(*(ctx.mk_str_len(a) for a in node.args)),
+                            ),
+                            polarity=1,
+                        )
+                    ]
+                )
+
+        if not isinstance(node, App):
+            return
+        skind = node.decl.kind
+        if skind is DeclKind.STR_AT:
+            s, idx = node.args
+            ax = ctx.mk_eq(node, ctx.mk_str_substr(s, idx, ctx.mk_int_val(1)))
+            self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_SUBSTR:
+            s, idx, n = node.args
+            z0 = ctx.mk_int_val(0)
+            len_s = ctx.mk_str_len(s)
+            len_r = ctx.mk_str_len(node)
+            rem = ctx.mk_sub(len_s, idx)
+            valid = ctx.mk_and(
+                ctx.mk_ge(idx, z0), ctx.mk_lt(idx, len_s), ctx.mk_gt(n, z0)
+            )
+            sk_pre = self._alloc_skolem_const(ctx.string_sort)
+            sk_suf = self._alloc_skolem_const(ctx.string_sort)
+            exp_len = ctx.mk_ite(ctx.mk_le(n, rem), n, rem)
+            ax_valid = ctx.mk_implies(
+                valid,
+                ctx.mk_and(
+                    ctx.mk_eq(s, ctx.mk_str_concat(sk_pre, node, sk_suf)),
+                    ctx.mk_eq(ctx.mk_str_len(sk_pre), idx),
+                    ctx.mk_eq(len_r, exp_len),
+                ),
+            )
+            ax_invalid = ctx.mk_implies(
+                ctx.mk_not(valid), ctx.mk_eq(node, ctx.mk_string_val(""))
+            )
+            for ax in (ax_valid, ax_invalid):
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_INDEXOF:
+            s, t, i = node.args
+            z0 = ctx.mk_int_val(0)
+            zm1 = ctx.mk_int_val(-1)
+            z1 = ctx.mk_int_val(1)
+            len_s = ctx.mk_str_len(s)
+            len_t = ctx.mk_str_len(t)
+            in_bounds = ctx.mk_and(ctx.mk_ge(i, z0), ctx.mk_le(i, len_s))
+            t_empty = ctx.mk_eq(t, ctx.mk_string_val(""))
+            nonempty_t = ctx.mk_not(t_empty)
+            k = node
+            # Span before earliest match that cannot contain t when t != "".
+            pre_span = ctx.mk_str_substr(
+                s,
+                i,
+                ctx.mk_sub(ctx.mk_add(ctx.mk_sub(k, i), len_t), z1),
+            )
+            rest_span = ctx.mk_str_substr(s, i, ctx.mk_sub(len_s, i))
+            axioms = (
+                ctx.mk_implies(ctx.mk_not(in_bounds), ctx.mk_eq(k, zm1)),
+                ctx.mk_implies(ctx.mk_and(in_bounds, t_empty), ctx.mk_eq(k, i)),
+                ctx.mk_implies(
+                    ctx.mk_and(in_bounds, nonempty_t),
+                    ctx.mk_or(
+                        ctx.mk_eq(k, zm1),
+                        ctx.mk_and(
+                            ctx.mk_ge(k, i),
+                            ctx.mk_le(ctx.mk_add(k, len_t), len_s),
+                        ),
+                    ),
+                ),
+                ctx.mk_implies(
+                    ctx.mk_and(in_bounds, nonempty_t, ctx.mk_ge(k, z0)),
+                    ctx.mk_and(
+                        ctx.mk_eq(ctx.mk_str_substr(s, k, len_t), t),
+                        ctx.mk_not(ctx.mk_str_contains(pre_span, t)),
+                    ),
+                ),
+                ctx.mk_implies(
+                    ctx.mk_and(in_bounds, nonempty_t, ctx.mk_eq(k, zm1)),
+                    ctx.mk_not(ctx.mk_str_contains(rest_span, t)),
+                ),
+            )
+            for ax in axioms:
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_REPLACE:
+            s, src, dst = node.args
+            z0 = ctx.mk_int_val(0)
+            src_empty = ctx.mk_eq(src, ctx.mk_string_val(""))
+            k = ctx.mk_str_indexof(s, src, z0)
+            tail_start = ctx.mk_add(k, ctx.mk_str_len(src))
+            tail_len = ctx.mk_sub(ctx.mk_str_len(s), tail_start)
+            replaced = ctx.mk_str_concat(
+                ctx.mk_str_substr(s, z0, k),
+                dst,
+                ctx.mk_str_substr(s, tail_start, tail_len),
+            )
+            axioms_rep = (
+                ctx.mk_implies(src_empty, ctx.mk_eq(node, ctx.mk_str_concat(dst, s))),
+                ctx.mk_implies(
+                    ctx.mk_and(ctx.mk_not(src_empty), ctx.mk_lt(k, z0)),
+                    ctx.mk_eq(node, s),
+                ),
+                ctx.mk_implies(
+                    ctx.mk_and(ctx.mk_not(src_empty), ctx.mk_ge(k, z0)),
+                    ctx.mk_eq(node, replaced),
+                ),
+            )
+            for ax in axioms_rep:
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_REPLACE_ALL:
+            s, src, _dst = node.args
+            axioms_ra = (
+                ctx.mk_implies(
+                    ctx.mk_eq(src, ctx.mk_string_val("")), ctx.mk_eq(node, s)
+                ),
+                ctx.mk_implies(
+                    ctx.mk_not(ctx.mk_str_contains(s, src)), ctx.mk_eq(node, s)
+                ),
+            )
+            for ax in axioms_ra:
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_TO_CODE:
+            s = node.args[0]
+            len_s = ctx.mk_str_len(s)
+            z0 = ctx.mk_int_val(0)
+            for ax in (
+                ctx.mk_ge(node, ctx.mk_int_val(-1)),
+                ctx.mk_le(node, ctx.mk_int_val(MAX_CHAR_CODE)),
+                ctx.mk_eq(ctx.mk_eq(len_s, ctx.mk_int_val(1)), ctx.mk_ge(node, z0)),
+            ):
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_FROM_CODE:
+            n = node.args[0]
+            in_rng = ctx.mk_and(
+                ctx.mk_ge(n, ctx.mk_int_val(0)),
+                ctx.mk_le(n, ctx.mk_int_val(MAX_CHAR_CODE)),
+            )
+            for ax in (
+                ctx.mk_implies(
+                    in_rng,
+                    ctx.mk_and(
+                        ctx.mk_eq(ctx.mk_str_len(node), ctx.mk_int_val(1)),
+                        ctx.mk_eq(ctx.mk_str_to_code(node), n),
+                    ),
+                ),
+                ctx.mk_implies(
+                    ctx.mk_not(in_rng), ctx.mk_eq(node, ctx.mk_string_val(""))
+                ),
+            ):
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_TO_INT:
+            s = node.args[0]
+            digits_re = ctx.mk_re_plus(
+                ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9"))
+            )
+            in_digits = ctx.mk_str_in_re(s, digits_re)
+            for ax in (
+                ctx.mk_ge(node, ctx.mk_int_val(-1)),
+                ctx.mk_eq(ctx.mk_ge(node, ctx.mk_int_val(0)), in_digits),
+                ctx.mk_implies(
+                    ctx.mk_and(
+                        ctx.mk_eq(ctx.mk_str_len(s), ctx.mk_int_val(1)),
+                        ctx.mk_ge(node, ctx.mk_int_val(0)),
+                    ),
+                    ctx.mk_eq(
+                        node, ctx.mk_sub(ctx.mk_str_to_code(s), ctx.mk_int_val(48))
+                    ),
+                ),
+            ):
+                self._emit_clause([self.encode(ax, polarity=1)])
+        elif skind is DeclKind.STR_FROM_INT:
+            n = node.args[0]
+            canonical_nat = ctx.mk_re_union(
+                ctx.mk_str_to_re(ctx.mk_string_val("0")),
+                ctx.mk_re_concat(
+                    ctx.mk_re_range(ctx.mk_string_val("1"), ctx.mk_string_val("9")),
+                    ctx.mk_re_star(
+                        ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9"))
+                    ),
+                ),
+            )
+            z0 = ctx.mk_int_val(0)
+            for ax in (
+                ctx.mk_implies(
+                    ctx.mk_lt(n, z0), ctx.mk_eq(node, ctx.mk_string_val(""))
+                ),
+                ctx.mk_implies(
+                    ctx.mk_ge(n, z0),
+                    ctx.mk_and(
+                        ctx.mk_str_in_re(node, canonical_nat),
+                        ctx.mk_eq(ctx.mk_str_to_int(node), n),
+                    ),
+                ),
+            ):
+                self._emit_clause([self.encode(ax, polarity=1)])
 
     def _emit_arith_node_axioms(self, anode: App) -> None:
         if anode in self._arith_axioms_emitted:
@@ -779,6 +1108,100 @@ class _PlaistedGreenbaumEncoder:
                 self._emit_clause([lit_v, negate(lit_red)])
                 self._pos_encoded.add(node)
                 self._neg_encoded.add(node)
+                continue
+
+            if kind is DeclKind.STR_PREFIXOF:
+                p_arg, s_arg = node.args
+                lp = self._ctx.mk_str_len(p_arg)
+                reduced = self._ctx.mk_and(
+                    self._ctx.mk_le(lp, self._ctx.mk_str_len(s_arg)),
+                    self._ctx.mk_eq(
+                        self._ctx.mk_str_substr(s_arg, self._ctx.mk_int_val(0), lp),
+                        p_arg,
+                    ),
+                )
+                lit_red = self.encode(reduced, polarity=0)
+                lit_v = pos_lit(self.ensure_expr_var(node))
+                self._emit_clause([negate(lit_v), lit_red])
+                self._emit_clause([lit_v, negate(lit_red)])
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
+            if kind is DeclKind.STR_SUFFIXOF:
+                suf_arg, s_arg = node.args
+                lsuf = self._ctx.mk_str_len(suf_arg)
+                ls = self._ctx.mk_str_len(s_arg)
+                reduced = self._ctx.mk_and(
+                    self._ctx.mk_le(lsuf, ls),
+                    self._ctx.mk_eq(
+                        self._ctx.mk_str_substr(
+                            s_arg, self._ctx.mk_sub(ls, lsuf), lsuf
+                        ),
+                        suf_arg,
+                    ),
+                )
+                lit_red = self.encode(reduced, polarity=0)
+                lit_v = pos_lit(self.ensure_expr_var(node))
+                self._emit_clause([negate(lit_v), lit_red])
+                self._emit_clause([lit_v, negate(lit_red)])
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
+            if kind is DeclKind.STR_IS_DIGIT:
+                s_arg = node.args[0]
+                tc = self._ctx.mk_str_to_code(s_arg)
+                reduced = self._ctx.mk_and(
+                    self._ctx.mk_eq(
+                        self._ctx.mk_str_len(s_arg), self._ctx.mk_int_val(1)
+                    ),
+                    self._ctx.mk_ge(tc, self._ctx.mk_int_val(48)),
+                    self._ctx.mk_le(tc, self._ctx.mk_int_val(57)),
+                )
+                lit_red = self.encode(reduced, polarity=0)
+                lit_v = pos_lit(self.ensure_expr_var(node))
+                self._emit_clause([negate(lit_v), lit_red])
+                self._emit_clause([lit_v, negate(lit_red)])
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                continue
+
+            if kind in _STRING_PRED_KINDS:
+                for arg in node.args:
+                    self._register_term(arg, in_euf=True)
+                self._strings.register_atom(node)
+                var = self.ensure_expr_var(node)
+                self._prop.bind_string(pos_lit(var), node, catch_up=catch_up)
+                self._pos_encoded.add(node)
+                self._neg_encoded.add(node)
+                if (
+                    kind is DeclKind.STR_CONTAINS
+                    and node not in self._str_axioms_emitted
+                ):
+                    self._str_axioms_emitted.add(node)
+                    s_arg, t_arg = node.args
+                    sk1 = self._alloc_skolem_const(self._ctx.string_sort)
+                    sk2 = self._alloc_skolem_const(self._ctx.string_sort)
+                    for ax in (
+                        self._ctx.mk_implies(
+                            node,
+                            self._ctx.mk_eq(
+                                s_arg, self._ctx.mk_str_concat(sk1, t_arg, sk2)
+                            ),
+                        ),
+                        self._ctx.mk_implies(
+                            self._ctx.mk_eq(t_arg, self._ctx.mk_string_val("")), node
+                        ),
+                        self._ctx.mk_implies(
+                            self._ctx.mk_lt(
+                                self._ctx.mk_str_len(s_arg),
+                                self._ctx.mk_str_len(t_arg),
+                            ),
+                            self._ctx.mk_not(node),
+                        ),
+                    ):
+                        self._emit_clause([self.encode(ax, polarity=1)])
                 continue
 
             if kind in _CMP_KINDS:

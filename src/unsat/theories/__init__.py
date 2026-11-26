@@ -10,6 +10,7 @@ from unsat.theories.base import (
     EUFStats,
     LRAStats,
     NLAStats,
+    StringStats,
     TheoryLit,
     TheorySolver,
 )
@@ -18,6 +19,12 @@ from unsat.theories.euf import EUFSolver
 from unsat.theories.lia import LIACutLemma, LIASplitLemma, find_lia_lemma
 from unsat.theories.lra import DeltaRational, LRASolver
 from unsat.theories.nla import NLALemma, NLASolver, NLAUnknown, NLBudget
+from unsat.theories.strings import (
+    StringBudget,
+    StringLemma,
+    StringSolver,
+    StringUnknown,
+)
 
 __all__ = [
     "ArrayLemma",
@@ -39,6 +46,11 @@ __all__ = [
     "NLAStats",
     "NLAUnknown",
     "NLBudget",
+    "StringBudget",
+    "StringLemma",
+    "StringSolver",
+    "StringStats",
+    "StringUnknown",
     "TheoryLit",
     "TheorySolver",
     "find_lia_lemma",

@@ -83,7 +83,7 @@ def test_complete_integer_operators_and_div0() -> None:
     assert m.eval_bool(f_sat, model_completion=True) is True
     assert m[y] == -3
     assert m[z] == 2
-    assert Fraction(-2) < m[r] < Fraction(-1)
+    assert Fraction(-2) < m.eval_real(r) < Fraction(-1)
 
     # Variable divisor UNSAT property: mod(x, y) < abs(y) whenever y != 0
     s.reset()

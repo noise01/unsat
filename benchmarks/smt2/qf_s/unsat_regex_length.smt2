@@ -1,0 +1,7 @@
+(set-logic QF_S)
+(set-info :status unsat)
+(declare-const s String)
+(assert (str.in_re s (re.inter ((_ re.^ 3) (re.range "a" "c")) (re.* (re.range "b" "d")))))
+(assert (str.in_re s (re.comp (re.++ re.all (str.to_re "c") re.all))))
+(assert (= (str.len s) 2))
+(check-sat)

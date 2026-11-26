@@ -1,0 +1,8 @@
+(set-logic QF_S)
+(set-info :status sat)
+(declare-const x String)
+(declare-const y String)
+(assert (= (str.++ "pre_" x) (str.++ y "_suf")))
+(assert (str.in_re x (re.++ (re.+ (re.range "a" "z")) (str.to_re "_suf"))))
+(assert (>= (str.len y) 6))
+(check-sat)

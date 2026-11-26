@@ -18,7 +18,14 @@ from unsat.smt.encoder import _PlaistedGreenbaumEncoder
 from unsat.smt.propagator import _CombinedPropagator
 from unsat.syntax import App, Const, Context, DeclKind, Expr, FuncDecl, Quantifier
 from unsat.tactics import BitBlaster, Tactic, bv_simplify, simplify
-from unsat.theories import ArraySolver, BVSolver, EUFSolver, LRASolver, NLASolver
+from unsat.theories import (
+    ArraySolver,
+    BVSolver,
+    EUFSolver,
+    LRASolver,
+    NLASolver,
+    StringSolver,
+)
 
 
 def _validate_timeout(timeout: float | None) -> None:
@@ -126,6 +133,7 @@ class SMTSolver:
         self._arrays = ArraySolver(self._ctx)
         self._bv = BVSolver(self._ctx)
         self._nla = NLASolver(self._ctx)
+        self._strings = StringSolver(self._ctx)
         self._bitblaster = BitBlaster(self._ctx)
         self._propagator = _CombinedPropagator(
             self._ctx,
@@ -134,6 +142,7 @@ class SMTSolver:
             self._arrays,
             self._bv,
             self._nla,
+            self._strings,
             self._bitblaster,
         )
         self._sat = SATSolver(propagator=self._propagator)
@@ -144,6 +153,7 @@ class SMTSolver:
             self._lra,
             self._arrays,
             self._bv,
+            self._strings,
             self._bitblaster,
             self._propagator,
         )
@@ -333,7 +343,11 @@ class SMTSolver:
                         core.append(mapped[0])
                 self._unsat_core = list(dict.fromkeys(core))
                 return SolveResult.UNSAT
-            if result is SolveResult.UNKNOWN or self._propagator.nla_unknown:
+            if (
+                result is SolveResult.UNKNOWN
+                or self._propagator.nla_unknown
+                or self._propagator.string_unknown
+            ):
                 self._last_result = SolveResult.UNKNOWN
                 self._unsat_core = []
                 return SolveResult.UNKNOWN
@@ -434,6 +448,7 @@ class SMTSolver:
             | self._arrays.internal_decls
             | self._encoder.internal_decls
             | self._mbqi.internal_decls
+            | self._strings.internal_decls
         )
 
     def _build_model(self, *, strip_internal: bool) -> Model:
@@ -484,6 +499,10 @@ class SMTSolver:
             if decl not in internal_decls:
                 external_vals[decl()] = self._ctx.mk_bool_val(sat_model[var])
 
+        str_conc = self._strings.concrete_values()
+        for expr, s_val in str_conc.items():
+            external_vals[expr] = self._ctx.mk_string_val(s_val)
+
         scalar_vals = self._euf.resolve_scalar_values(external_values=external_vals)
         array_input = {**scalar_vals, **external_vals}
         array_vals = self._arrays.build_array_values(self._euf, array_input)
@@ -505,6 +524,13 @@ class SMTSolver:
                 elif expr.is_real:
                     values[expr.decl] = frac
         values.update(bv_decl_vals)
+        for expr, s_val in str_conc.items():
+            if (
+                isinstance(expr, App)
+                and expr.is_const_symbol
+                and expr.decl not in internal_decls
+            ):
+                values[expr.decl] = s_val
         for decl, var in self._encoder.decl_to_var.items():
             if decl not in internal_decls:
                 values[decl] = sat_model[var]
@@ -582,6 +608,7 @@ class SMTSolver:
         stats.update(self._arrays.stats.to_dict())
         stats.update(self._bv.stats.to_dict())
         stats.update(self._nla.stats.to_dict())
+        stats.update(self._strings.stats.to_dict())
         stats.update(self._quant_stats.to_dict())
         return stats
 

@@ -140,6 +140,29 @@ class NLAStats:
         }
 
 
+@dataclass(slots=True)
+class StringStats:
+    """Instrumentation counters collected by a :class:`StringSolver`."""
+
+    checks: int = 0
+    word_splits: int = 0
+    length_lemmas: int = 0
+    regex_lemmas: int = 0
+    ext_lemmas: int = 0
+    unknowns: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Return counters as a plain dictionary."""
+        return {
+            "theory_str_checks": self.checks,
+            "theory_str_word_splits": self.word_splits,
+            "theory_str_length_lemmas": self.length_lemmas,
+            "theory_str_regex_lemmas": self.regex_lemmas,
+            "theory_str_ext_lemmas": self.ext_lemmas,
+            "theory_str_unknowns": self.unknowns,
+        }
+
+
 class TheorySolver(Protocol):
     """Protocol implemented by incremental congruence / background theory solvers."""
 

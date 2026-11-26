@@ -840,6 +840,10 @@ class LRASolver:
                 DeclKind.MOD,
                 DeclKind.ABS,
                 DeclKind.TO_INT,
+                DeclKind.STR_LEN,
+                DeclKind.STR_INDEXOF,
+                DeclKind.STR_TO_INT,
+                DeclKind.STR_TO_CODE,
             ):
                 vid = self._alloc_orig_var(node)
                 memo[node] = ({vid: _FRAC_ONE}, _FRAC_ZERO)
