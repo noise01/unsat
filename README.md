@@ -2,24 +2,25 @@
 
 A Z3-inspired SMT solver written in pure Python 3.14+ with zero runtime dependencies.
 
-`unsat` pairs a standalone CDCL SAT core with online CDCL(T) theory solvers (`EUF`, `LRA`, `LIA`, `Arrays`), eager bit-vector bit-blasting with shared-term propagation, Model-Based Theory Combination (`MBTC`), E-matching and MBQI quantifier instantiation, AST preprocessing tactics, a Z3Py-style Python DSL, and an SMT-LIB2 / DIMACS CLI.
+`unsat` pairs a standalone CDCL SAT core with online CDCL(T) theory solvers (`EUF`, `LRA`, `LIA`, `NLA` for `QF_NRA`/`QF_NIA`, lazy word-level `BV` with on-demand bit-blasting, `Arrays`, and `Strings`/`RegLan` for `QF_S`/`QF_SLIA`), Model-Based Theory Combination (`MBTC`), E-matching and MBQI quantifier instantiation, AST preprocessing tactics, a Z3Py-style Python DSL, and an SMT-LIB2 / DIMACS CLI.
 
 ## Features
 
 - **CDCL SAT solver (`unsat.sat`)**: Two-watched literals (dedicated binary watches + blocker literals), 1-UIP conflict learning with recursive minimization, EVSIDS, phase saving, Glucose LBD restarts and DB reduction, incremental assumptions, assumption-based `unsat_core()`, lazy theory explanation hooks, and resource budgets (`max_conflicts`, `deadline`).
 - **Theories & Combination (`unsat.theories`, `unsat.smt`)**:
   - **EUF**: Congruence closure with signature table, copy-free trail-undo log, and proof forest minimal conflict explanations.
-  - **LRA / LIA**: Exact rational `fractions.Fraction` Simplex with infinitesimals (`a + b * delta`), branch-and-bound, and Gomory cuts.
-  - **Bit-Vectors**: Word-level simplification and Tseitin/AIG bit-blasting with shared-term bit propagation.
+  - **LRA / LIA / NLA**: Exact rational `fractions.Fraction` Simplex with infinitesimals (`a + b * delta`), branch-and-bound, Gomory cuts, nonlinear `QF_NRA`/`QF_NIA` solving (interval constraint propagation, Sturm real-root isolation, linearization lemmas), and complete Euclidean integer operators (`div`, `mod`, `abs`, `to_int`, `is_int`, `(_ divisible n)`).
+  - **Bit-Vectors**: Word-level `BVDomain` propagation (`BVSolver`) with on-demand `BitBlaster` escalation and explicit `BitBlastTactic` / `ModelConverter` support.
   - **Arrays**: Lazy Read-over-Write (`select` / `store`), constant arrays (`const`), and extensionality lemmas.
-  - **MBTC**: Model-Based Theory Combination across EUF, arithmetic, bit-vectors, and arrays.
+  - **Strings & Regular Expressions**: `String` / `RegLan` sorts, full SMT-LIB2 2.6 string and regex operators (`\u{...}` / `\uXXXX` escapes up to `0x2FFFF`), Brzozowski derivative regex analysis, word-equation alignment and Nielsen splitting, and concrete `str` model synthesis.
+  - **MBTC**: Model-Based Theory Combination across EUF, arithmetic, bit-vectors, arrays, and strings.
 - **Quantifiers (`unsat.quantifiers`)**: E-matching with pattern tables and Model-Based Quantifier Instantiation (`MBQI`) bounded by configurable round/match/conflict/timeout budgets.
 - **Tactics (`unsat.tactics`)**: Composable AST preprocessing (`SimplifyTactic`, `NNFTactic`, `BitBlastTactic`, `SkolemizeTactic`, `CtxSimplifyTactic`, `GaussianElimTactic`, `PropagateBoundsTactic`) with `ModelConverter` reconstruction via `solve_with_tactic`.
-- **Frontends (`unsat.api`, `unsat.parser`, `unsat.cli`)**: Python DSL (`Solver`, `Int`, `Real`, `BitVec`, `Array`, `Bool`, `Function`, `ForAll`, `Exists`), DIMACS CNF parser/formatter, and interactive SMT-LIB2 command runner.
+- **Frontends (`unsat.api`, `unsat.parser`, `unsat.cli`)**: Python DSL (`Solver`, `Int`, `Real`, `BitVec`, `Array`, `String`, `RegLan`, `Bool`, `Function`, `ForAll`, `Exists`), DIMACS CNF parser/formatter, and interactive SMT-LIB2 command runner.
 
 ## Supported SMT-LIB2 Logics & Commands
 
-- **Logics**: `QF_BOOL`, `QF_UF`, `QF_LRA`, `QF_LIA`, `QF_UFLRA`, `QF_UFLIA`, `QF_LIRA`, `QF_BV`, `QF_UFBV`, `QF_AX`, `QF_ABV`, `QF_AUFBV`, `QF_ALIA`, `QF_ALRA`, `QF_AUFLIA`, `QF_AUFLRA`, `QF_AUFLIRA`, `UF`, `LIA`, `LRA`, `LIRA`, `UFLIA`, `UFLRA`, `UFLIRA`, `BV`, `UFBV`, `AX`, `ABV`, `AUFBV`, `ALIA`, `ALRA`, `AUFLIA`, `AUFLRA`, `AUFLIRA`, `ALL`.
+- **Logics**: `QF_BOOL`, `QF_UF`, `QF_LRA`, `QF_LIA`, `QF_UFLRA`, `QF_UFLIA`, `QF_LIRA`, `QF_NRA`, `QF_NIA`, `QF_NIRA`, `QF_UFNRA`, `QF_UFNIA`, `QF_UFNIRA`, `QF_BV`, `QF_UFBV`, `QF_AX`, `QF_ABV`, `QF_AUFBV`, `QF_ALIA`, `QF_ALRA`, `QF_ANRA`, `QF_ANIA`, `QF_AUFLIA`, `QF_AUFLRA`, `QF_AUFLIRA`, `QF_AUFNRA`, `QF_AUFNIA`, `QF_AUFNIRA`, `QF_S`, `QF_SLIA`, `QF_SNIA`, `QF_UFS`, `QF_UFSLIA`, `QF_AS`, `QF_AUFSLIA`, `UF`, `LIA`, `LRA`, `LIRA`, `NRA`, `NIA`, `NIRA`, `UFLIA`, `UFLRA`, `UFLIRA`, `UFNRA`, `UFNIA`, `UFNIRA`, `BV`, `UFBV`, `AX`, `ABV`, `AUFBV`, `ALIA`, `ALRA`, `AUFLIA`, `AUFLRA`, `AUFLIRA`, `AUFNRA`, `AUFNIA`, `AUFNIRA`, `S`, `SLIA`, `SNIA`, `UFS`, `UFSLIA`, `AS`, `AUFSLIA`, `ALL`.
 - **Commands**: `set-logic`, `set-option`, `set-info`, `declare-sort`, `define-sort`, `declare-const`, `declare-fun`, `define-fun`, `assert` (with top-level `:named`), `check-sat`, `check-sat-assuming`, `get-model`, `get-value`, `get-unsat-core`, `get-assertions`, `push`, `pop`, `reset`, `reset-assertions`, `echo`, `exit`.
 
 ## Installation

@@ -8,7 +8,7 @@ Engineering guide for coding agents working in `unsat` (pure Python 3.14+ SMT so
   - `syntax/`: Hash-consed AST (`Context`, `Sort`, `FuncDecl`, `Expr`, `Quantifier`)
   - `sat/`: Standalone propositional CDCL SAT solver (`SATSolver`)
   - `model/`: `Model`, recursive evaluator, and `ModelConverter`
-  - `theories/`: `EUF`, `LRA`, `LIA`, and `Arrays` theory solvers
+  - `theories/`: `EUF`, `LRA`, `LIA`, `NLA`, `BV`, `Arrays`, and `Strings` theory solvers
   - `tactics/`: Pure AST-to-AST preprocessing tactics (`SimplifyTactic`, `NNFTactic`, `BitBlastTactic`, `SkolemizeTactic`, `CtxSimplifyTactic`, `GaussianElimTactic`, `PropagateBoundsTactic`)
   - `quantifiers/`: `EMatcher` and `MBQI` engines (`QuantifierBudget`)
   - `smt/`: CDCL(T) orchestrator (`SMTSolver`, `solve_with_tactic`)
