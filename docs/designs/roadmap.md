@@ -2,7 +2,7 @@
 
 This document tracks detailed milestone scopes and exit criteria for `unsat`. For the summary table, see [Solver Designs & Roadmap](README.md).
 
-## Completed Milestones (M1–M9)
+## Completed Milestones (M1–M10)
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -102,13 +102,12 @@ This document tracks detailed milestone scopes and exit criteria for `unsat`. Fo
 - **Exit criteria**:
   - Sound `SAT`/`UNSAT`/`UNKNOWN` handling, `model.eval_bool(...)` validation on `SAT`, and Z3 differential agreement across complete integer operator suites and decidable `QF_NRA`/`QF_NIA` test cases and benchmarks.
 
-## Planned Milestones (M10)
-
 ### M10 — Theory of Strings & Regular Expressions (`QF_S`, `QF_SLIA`)
 
 - **Primary modules**: `syntax`, `theories`, `parser`, `model`
 - **Scope**:
-  - Add `String` and `RegLan` sorts and SMT-LIB2 string/regex operators (`str.++`, `str.len`, `str.at`, `str.substr`, `str.indexof`, `str.replace`, `str.contains`, `str.in_re`, `str.to_re`, regex combinators).
-  - Implement a word-equation and regular-expression derivative solver coupled with `LIA` length constraints and `EUF`.
+  - Added `String` and `RegLan` sorts, full SMT-LIB2 2.6 string/regex operators (`str.++`, `str.len`, `str.at`, `str.substr`, `str.indexof`, `str.replace`, `str.replace_all`, `str.contains`, `str.prefixof`, `str.suffixof`, `str.<`, `str.<=`, `str.to_int`, `str.from_int`, `str.to_code`, `str.from_code`, `str.is_digit`, `str.in_re`, `str.to_re`, regex combinators `re.none`/`all`/`allchar`/`++`/`union`/`inter`/`*`/`+`/`opt`/`range`/`comp`/`diff`/`^`/`loop`), and `\u{...}` / `\uXXXX` Unicode escape handling (`0..0x2FFFF`) across `syntax`, `model`, `tactics`, `api`, and `parser` (including polymorphic `Concat` and `+`/`<`/`<=`/`>`/`>=` on `String`).
+  - Implemented [`StringSolver`](../../src/unsat/theories/strings.py) and `StringStats` cooperating with `EUF` and `LRA`/`LIA` via Brzozowski derivative regex analysis, word-equation alignment and Nielsen splitting, character-slot model synthesis, sound defining axioms, and conservative `StringUnknown` handling.
+  - Registered `QF_S`/`QF_SLIA` logic families in SMT-LIB2 and added curated `benchmarks/smt2/{qf_s,qf_slia}/` benchmarks.
 - **Exit criteria**:
-  - Representative `QF_S` and `QF_SLIA` benchmarks solve with concrete `str` model evaluation checks and Z3 differential agreement.
+  - `QF_S` and `QF_SLIA` tests and benchmarks pass with concrete `str` model evaluation checks (`model.eval_bool(..., model_completion=True)`) and Z3 differential agreement.

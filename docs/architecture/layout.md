@@ -28,9 +28,11 @@ This document describes the repository layout and module organization convention
 │   │   ├── __init__.py              # Public syntax exports
 │   │   ├── kinds.py                 # SortKind / DeclKind enums
 │   │   ├── bv_eval.py               # Pure bit-vector concrete evaluation helpers
+│   │   ├── str_eval.py              # SMT-LIB2 string escapes, ops & Brzozowski regex engine
 │   │   ├── expr.py                  # Immutable hash-consed Sort, FuncDecl, Expr, Quantifier nodes
 │   │   ├── context_arith.py         # Arithmetic builder helpers mixed into Context
 │   │   ├── context_bv.py            # Bit-vector builder helpers mixed into Context
+│   │   ├── context_strings.py       # String & RegLan builder helpers mixed into Context
 │   │   ├── context.py               # WeakValueDictionary-backed AST Context
 │   │   └── walk.py                  # Iterative traversal, substitution, de Bruijn, SMT-LIB2 formatting
 │   ├── sat/
@@ -52,6 +54,7 @@ This document describes the repository layout and module organization convention
 │   │   ├── lia.py                   # Branch-and-bound and Gomory cuts over LRA
 │   │   ├── nla.py                   # Nonlinear ICP, Sturm real-root isolation & linearization
 │   │   ├── bv.py                    # Word-level known-bits/interval BV solver & blast requests
+│   │   ├── strings.py               # Word-equation, Brzozowski regex & LIA/EUF string solver
 │   │   └── arrays.py                # Lazy Read-over-Write and extensionality solver
 │   ├── tactics/
 │   │   ├── __init__.py              # Tactic exports
