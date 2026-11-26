@@ -2,7 +2,7 @@
 
 This document tracks detailed milestone scopes and exit criteria for `unsat`. For the summary table, see [Solver Designs & Roadmap](README.md).
 
-## Completed Milestones (M1–M10)
+## Completed Milestones (M1–M11)
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -111,3 +111,47 @@ This document tracks detailed milestone scopes and exit criteria for `unsat`. Fo
   - Registered `QF_S`/`QF_SLIA` logic families in SMT-LIB2 and added curated `benchmarks/smt2/{qf_s,qf_slia}/` benchmarks.
 - **Exit criteria**:
   - `QF_S` and `QF_SLIA` tests and benchmarks pass with concrete `str` model evaluation checks (`model.eval_bool(..., model_completion=True)`) and Z3 differential agreement.
+
+### M11 — Legacy Solver Archival (`packages/unsat-legacy`) & Differential Baseline
+
+- **Primary location**: `packages/unsat-legacy`, `docs/designs`
+- **Scope**:
+  - Archived the pre-extraction SMT solver from `endoxa` (`EUF`, CDCL SAT, E-matching, `lark`-based TPTP FOF parser) and its unit/Z3-differential test suites into the isolated `unsat-legacy` `uv` workspace package (`packages/unsat-legacy/`), decoupled via `unsat_legacy.errors`, while keeping `unsat` strictly zero-runtime-dependency (`dependencies = []`).
+  - Established an `unsat` vs. `unsat_legacy` differential comparison baseline across propositional, EUF, assumption-based `unsat_core()`, and quantified E-matching workloads, plus import-isolation checks.
+- **Exit criteria**:
+  - `packages/unsat-legacy/tests` (including ported unit/differential suites and `unsat` vs. `unsat_legacy` differential checks) pass in CI.
+  - Shipped `unsat` wheel remains strictly zero-dependency and free of `lark` and `unsat_legacy`.
+
+## Planned Milestones (M12–M13)
+
+### M12 — Zero-Dependency TPTP FOF Frontend (`unsat.parser.tptp`) & `endoxa` Integration
+
+- **Primary modules**: `parser`, `cli`, `smt`, `api` (plus downstream migration in `endoxa`)
+- **Scope**:
+  - Implement a zero-dependency recursive-descent TPTP FOF parser and formatter (`parse_fof`, `to_tptp_expr`) under `unsat.parser.tptp`.
+  - Ensure `endoxa`'s checking contracts (per-check quantifier budgets, assumption `unsat_core`, conservative `UNKNOWN` semantics) are cleanly satisfied.
+  - Migrate `endoxa` to depend directly on `unsat` (removing `endoxa.solver` and `lark` in a pre-1.0 release, adopting `unsat.Expr` at the public boundary for `parse_premise_fof`/`parse_query_fof`/`endoxa.instruments.coverage`, and wrapping solver/parser exceptions into `EndoxaError` in a thin internal adapter).
+- **Exit criteria**:
+  - Zero-dependency TPTP FOF round-trip and Z3 differential tests pass in `unsat`.
+  - `endoxa` test suite passes against `unsat` with `endoxa.solver` and `lark` removed.
+
+### M13 — Post-M10 Verification & Scale Benchmark Hardening
+
+- **Primary modules**: `tests`, `benchmarks`, `theories`
+- **Scope**:
+  - Add SMT-level Hypothesis Z3-differential property suites for M8–M10 (`QF_UFBV`/`QF_ABV` lazy BV, `QF_NRA`/`QF_NIA` NLA, `QF_S`/`QF_SLIA` Strings).
+  - Expand `benchmarks/scale/` with medium-to-large M8–M10 instances and profiling/allocation telemetry.
+- **Exit criteria**:
+  - New property suites and expanded scale benchmarks pass with Z3 differential agreement and independently verified models (`model.eval_bool(..., model_completion=True)`).
+
+## Future Backlog (Post-M13 Directions)
+
+- **Direction A — Deepening & Optimizing Existing Theories**:
+  - Stronger `NLA` (`unsat.theories.nla`): multivariate NLSAT / CAD techniques and algebraic real handling to reduce `UNKNOWN` outcomes.
+  - Faster, more complete `Strings` (`unsat.theories.strings`): long word equations, complex regexes, `str.replace_all` / `str.to_int`, and tighter quantifier/array combinations.
+  - Deeper word-level `BV` propagation (`unsat.theories.bv`) to further minimize on-demand bit-blasting escalation.
+  - Tighter quantifier + theory integration (`E-matching` and `MBQI` combined with `LIA`, `BV`, and `Strings`).
+- **Direction B — New Theories, Solver Capabilities & `v1.0.0` Readiness**:
+  - New theories: Algebraic Datatypes (`declare-datatype` / `declare-datatypes`) and Floating-Point arithmetic (`QF_FP`).
+  - Advanced solver features: Optimization / MaxSMT (`Optimize`, `minimize` / `maximize`), proof generation (DRAT / SMT proofs), Craig interpolants, and additional SMT-LIB2 commands (`get-proof`, `get-assignment`, `define-fun-rec`, `simplify`).
+  - `v1.0.0` readiness: public API stabilization, user guide, and API reference documentation.

@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Zero-dependency TPTP FOF parser, formatter, and solver helpers (`TPTPParseError`, `FofStatement`, `parse_fof`, `parse_tptp`, `parse_tptp_file`, `to_tptp_expr`, `format_fof`, `solve_tptp`) in [`unsat.parser.tptp`](src/unsat/parser/tptp.py), exported from [`unsat.parser`](src/unsat/parser/__init__.py) and wired into the CLI via `--format tptp` (`.p` / `.tptp` auto-detection).
+- Per-check quantifier budget overrides (`max_quantifier_rounds`, `max_quantifier_matches`) on `SMTSolver.check()` and `Solver.check()`, preserving conservative `UNKNOWN` when E-matching is truncated by an explicit match cap.
+- Post-M10 roadmap (`M11`–`M13` and post-M13 backlog) in [`docs/designs/roadmap.md`](docs/designs/roadmap.md) and [`docs/designs/README.md`](docs/designs/README.md).
+- Archived pre-extraction solver (`unsat_legacy`, including `EUF`, CDCL SAT, `E-matching`, `lark`-backed TPTP FOF parser, standalone `unsat_legacy.errors`, ported unit/Z3-differential suites, and `unsat` vs. `unsat_legacy` differential checks) in [`packages/unsat-legacy/`](packages/unsat-legacy/README.md), isolated as a `dev`-only `uv` workspace member so `unsat` keeps zero runtime dependencies.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

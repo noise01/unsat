@@ -14,7 +14,7 @@ This document defines the package boundary contracts enforced automatically by `
 | `unsat.quantifiers` | Quantifier instantiation and reasoning (`E-matching`, `MBQI` via injected sub-solver protocols) | `syntax`, `theories`, `model` |
 | `unsat.smt` | CDCL(T) orchestrator bridging `syntax` and `sat`, Tseitin clausification, push/pop, theory combination, callback injection, and `solve_with_tactic` | `syntax`, `sat`, `theories`, `tactics`, `quantifiers`, `model` |
 | `unsat.api` | Thin Z3Py-style Python DSL builders, syntactic sugar, and default context (`Solver`, `Int`, `Bool`, `And`, ...) without duplicate AST wrappers | `syntax`, `smt`, `model` |
-| `unsat.parser` | SMT-LIB2 and DIMACS parsers, formatters, and command execution frontends | `syntax`, `sat`, `smt`, `model` |
+| `unsat.parser` | SMT-LIB2, DIMACS, and TPTP FOF parsers, formatters, and command execution frontends | `syntax`, `sat`, `smt`, `model` |
 | `unsat.cli` | Command-line executable | `parser`, `smt`, `sat` |
 | `unsat.__main__` | Delegates `python -m unsat` exclusively to `cli` | `cli` |
 | `unsat.__init__` | Curated public exports (`__all__`) | `api` |

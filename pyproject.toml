@@ -44,6 +44,9 @@ build-backend = "uv_build"
 [tool.uv.workspace]
 members = ["packages/*"]
 
+[tool.uv.sources]
+unsat-legacy = { workspace = true }
+
 [dependency-groups]
 dev = [
     "hypothesis>=6.170.17",
@@ -53,6 +56,7 @@ dev = [
     "ruff>=0.17.6",
     "rumdl>=0.3.5",
     "ty>=0.0.107",
+    "unsat-legacy",
     "z3-solver>=4.13",
 ]
 

@@ -16,7 +16,7 @@ A Z3-inspired SMT solver written in pure Python 3.14+ with zero runtime dependen
   - **MBTC**: Model-Based Theory Combination across EUF, arithmetic, bit-vectors, arrays, and strings.
 - **Quantifiers (`unsat.quantifiers`)**: E-matching with pattern tables and Model-Based Quantifier Instantiation (`MBQI`) bounded by configurable round/match/conflict/timeout budgets.
 - **Tactics (`unsat.tactics`)**: Composable AST preprocessing (`SimplifyTactic`, `NNFTactic`, `BitBlastTactic`, `SkolemizeTactic`, `CtxSimplifyTactic`, `GaussianElimTactic`, `PropagateBoundsTactic`) with `ModelConverter` reconstruction via `solve_with_tactic`.
-- **Frontends (`unsat.api`, `unsat.parser`, `unsat.cli`)**: Python DSL (`Solver`, `Int`, `Real`, `BitVec`, `Array`, `String`, `RegLan`, `Bool`, `Function`, `ForAll`, `Exists`), DIMACS CNF parser/formatter, and interactive SMT-LIB2 command runner.
+- **Frontends (`unsat.api`, `unsat.parser`, `unsat.cli`)**: Python DSL (`Solver`, `Int`, `Real`, `BitVec`, `Array`, `String`, `RegLan`, `Bool`, `Function`, `ForAll`, `Exists`), DIMACS CNF parser/formatter, zero-dependency TPTP FOF parser/formatter (`parse_fof`, `to_tptp_expr`, `solve_tptp`), and interactive SMT-LIB2 command runner.
 
 ## Supported SMT-LIB2 Logics & Commands
 
@@ -88,7 +88,7 @@ unsat problem.cnf --stats --timeout 5.0 --max-conflicts 5000
 python -m unsat - --format smt2 < script.smt2
 ```
 
-Available CLI options include `--format {auto,dimacs,smt2}`, `--stats`, `--timeout`, `--max-conflicts`, `--max-quantifier-rounds`, `--max-quantifier-matches`, and `--version`.
+Available CLI options include `--format {auto,dimacs,smt2,tptp}`, `--stats`, `--timeout`, `--max-conflicts`, `--max-quantifier-rounds`, `--max-quantifier-matches`, and `--version`.
 
 ## Development & Benchmarks
 

@@ -6,7 +6,7 @@ Design documentation and phased milestones for `unsat`. See [Architecture](../ar
 
 - [Core Solver Design](core.md) — SAT core, hash-consed AST & Python DSL, CDCL(T), theories, tactics, and quantifiers
 - [Verification & Soundness Strategy](verification.md) — differential Z3 fuzzing, model checking, and packaging invariants
-- [Milestones & Roadmap](roadmap.md) — completed M1–M10 scopes and milestones
+- [Milestones & Roadmap](roadmap.md) — completed M1–M11 milestones, planned M12–M13 milestones, and post-M13 backlog
 
 ## Milestone Overview
 
@@ -22,3 +22,6 @@ Design documentation and phased milestones for `unsat`. See [Architecture](../ar
 | M8 | Completed | Lazy Bit-Vector Theory Solver (`unsat.theories.bv`) | `theories`, `smt`, `tactics` |
 | M9 | Completed | Nonlinear Arithmetic (`QF_NRA`, `QF_NIA`) & Complete Integer Ops | `syntax`, `theories`, `parser`, `model` |
 | M10 | Completed | Theory of Strings & Regular Expressions (`QF_S`, `QF_SLIA`) | `syntax`, `theories`, `parser`, `model` |
+| M11 | Completed | Legacy Solver Archival & Differential Baseline | `packages/unsat-legacy`, `docs/designs` |
+| M12 | Planned | Zero-Dependency TPTP FOF Frontend & `endoxa` Integration | `parser`, `cli`, `smt`, `api` |
+| M13 | Planned | Post-M10 Verification & Scale Benchmark Hardening | `tests`, `benchmarks`, `theories` |

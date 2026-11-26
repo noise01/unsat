@@ -17,7 +17,7 @@ This document describes the repository layout and module organization convention
 │   ├── architecture/                # Repository layout and dependency DAG documentation
 │   └── designs/                     # Core solver designs, verification strategy, and roadmap
 ├── packages/
-│   └── unsat-legacy/                # Reserved workspace slot for archived legacy implementations
+│   └── unsat-legacy/                # Frozen pre-extraction solver archive (`unsat_legacy`) with lark TPTP parser & tests
 ├── src/unsat/
 │   ├── __init__.py                  # Public API façade (`__all__` re-exports from api.py; no CLI main)
 │   ├── __main__.py                  # `python -m unsat` entry point delegating exclusively to cli.main
@@ -78,6 +78,7 @@ This document describes the repository layout and module organization convention
 │   └── parser/
 │       ├── __init__.py              # Parser and runner exports
 │       ├── dimacs.py                # DIMACS CNF parser, solver helper, formatter
+│       ├── tptp.py                  # Zero-dependency TPTP FOF parser, formatter, solver helper
 │       └── smt2/
 │           ├── __init__.py          # SMT-LIB2 parser/runner exports
 │           ├── lexer.py             # Lexer and S-expression parser
@@ -98,4 +99,4 @@ Tests under `tests/` mirror `src/unsat/` cleanly (for example, `tests/sat/`, `te
 - **Thin DSL layer (`api.py`)**: `api.py` provides user-facing builders, syntactic sugar, and default-context management directly over `syntax` objects (avoiding a redundant wrapper AST hierarchy) so `syntax` stays stateless and pure.
 - **Public visibility**: Subpackages do not use a leading underscore (`unsat.sat`, `unsat.theories`, etc.), making standalone SAT usage and external theory/tactic extensions straightforward. `unsat/__init__.py` curates the everyday user-facing API via `__all__` by re-exporting from `unsat.api`.
 - **CLI separation**: CLI concerns live in `unsat.cli` and `unsat.__main__` (`unsat = "unsat.cli:main"`), with `__main__` delegating exclusively to `cli`, keeping `import unsat` free of CLI parsing overhead.
-- **Legacy archive slot (`packages/unsat-legacy/`)**: Isolated `uv` workspace member reserved for archived legacy implementations and differential reference comparisons, independent from the shipped `unsat` distribution.
+- **Legacy archive (`packages/unsat-legacy/`)**: Isolated `uv` workspace member holding the frozen pre-extraction solver (`unsat_legacy`), its `lark`-backed TPTP FOF parser, and its unit/Z3-differential test suites for reference and `unsat`-vs-`unsat_legacy` differential benchmarking, completely independent from the shipped zero-dependency `unsat` distribution.

@@ -60,6 +60,9 @@ jobs:
       - name: Run tests
         run: uv run pytest tests
 
+      - name: Run unsat-legacy tests
+        run: uv run pytest packages/unsat-legacy/tests
+
       - name: Run benchmark suite check
         run: uv run python benchmarks/run.py --suite all --check
 

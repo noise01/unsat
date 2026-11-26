@@ -288,6 +288,8 @@ class SMTSolver:
         *assumptions: Expr,
         timeout: float | None = None,
         max_conflicts: int | None = None,
+        max_quantifier_rounds: int | None = None,
+        max_quantifier_matches: int | None = None,
     ) -> SolveResult:
         """Check satisfiability of asserted formulas under ``assumptions``."""
         _validate_timeout(timeout)
@@ -296,6 +298,24 @@ class SMTSolver:
         eff_max_conflicts = (
             self._max_conflicts if max_conflicts is None else max_conflicts
         )
+        if max_quantifier_rounds is None and max_quantifier_matches is None:
+            eff_quant_budget = self._quant_budget
+        else:
+            eff_quant_budget = QuantifierBudget(
+                max_rounds=(
+                    self._quant_budget.max_rounds
+                    if max_quantifier_rounds is None
+                    else max_quantifier_rounds
+                ),
+                max_matches=(
+                    self._quant_budget.max_matches
+                    if max_quantifier_matches is None
+                    else max_quantifier_matches
+                ),
+                max_instantiations=self._quant_budget.max_instantiations,
+                max_mbqi_rounds=self._quant_budget.max_mbqi_rounds,
+                max_ematch_depth=self._quant_budget.max_ematch_depth,
+            )
         deadline = None if eff_timeout is None else time.monotonic() + eff_timeout
         budget = _SearchBudget(deadline=deadline, remaining_conflicts=eff_max_conflicts)
 
@@ -375,7 +395,7 @@ class SMTSolver:
                 )
             active_quants = list(q_to_guards)
 
-            if total_rounds >= self._quant_budget.max_rounds:
+            if total_rounds >= eff_quant_budget.max_rounds:
                 self._quant_stats.budget_exhausted += 1
                 self._last_result = SolveResult.UNKNOWN
                 return SolveResult.UNKNOWN
@@ -384,7 +404,7 @@ class SMTSolver:
                 return SolveResult.UNKNOWN
 
             ematch_res = self._ematcher.match_round(
-                self._euf, active_quants, self._quant_budget, self._quant_stats
+                self._euf, active_quants, eff_quant_budget, self._quant_stats
             )
             if ematch_res.instantiations:
                 to_encode: list[tuple[Lit, Expr, frozenset[Lit | None]]] = []
@@ -397,8 +417,11 @@ class SMTSolver:
                     self._add_guarded_instantiation(guard_lit, inst_expr, guard_owners)
                 total_rounds += 1
                 continue
+            if ematch_res.truncated:
+                self._last_result = SolveResult.UNKNOWN
+                return SolveResult.UNKNOWN
 
-            if mbqi_rounds >= self._quant_budget.max_mbqi_rounds:
+            if mbqi_rounds >= eff_quant_budget.max_mbqi_rounds:
                 self._quant_stats.budget_exhausted += 1
                 self._last_result = SolveResult.UNKNOWN
                 return SolveResult.UNKNOWN
@@ -412,7 +435,7 @@ class SMTSolver:
                 ground_model,
                 self._euf,
                 sub_solver,
-                self._quant_budget,
+                eff_quant_budget,
                 self._quant_stats,
                 already_emitted=self._ematcher.emitted,
             )

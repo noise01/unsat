@@ -227,3 +227,61 @@ def test_unsat_resource_limit_flags() -> None:
     )
     assert bad_timeout.returncode == 1
     assert "error:" in bad_timeout.stderr
+
+
+def test_unsat_solves_tptp_files_and_stdin(tmp_path: Path) -> None:
+    tptp_unsat = (
+        "fof(r1, axiom, ![X] : (human(X) => mortal(X))).\n"
+        "fof(f1, axiom, human(socrates)).\n"
+        "fof(c1, conjecture, mortal(socrates)).\n"
+    )
+    tptp_file = tmp_path / "syllogism.tptp"
+    tptp_file.write_text(tptp_unsat, encoding="utf-8")
+
+    file_res = subprocess.run(
+        [_cli_command(), str(tptp_file), "--stats"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "% quantifier_ematch_rounds:" in file_res.stdout
+    assert file_res.stdout.strip().splitlines()[-1] == "unsat"
+
+    stdin_res = subprocess.run(
+        [_cli_command(), "-", "--format", "tptp"],
+        input="fof(a1, axiom, (a = b) & p(a)).\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert stdin_res.stdout.strip() == "sat"
+
+    auto_stdin = subprocess.run(
+        [_cli_command(), "-"],
+        input=(
+            "% TPTP comment\n"
+            "fof(loop, axiom, ![X] : (p(X) => p(f(X)))).\n"
+            "fof(s, axiom, p(a)).\n"
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert auto_stdin.returncode == 0
+    assert auto_stdin.stdout.strip() in {"sat", "unknown"}
+
+    bounded_tptp = subprocess.run(
+        [
+            _cli_command(),
+            "-",
+            "--format",
+            "tptp",
+            "--max-quantifier-rounds",
+            "1",
+        ],
+        input="fof(loop, axiom, ![X] : (p(X) => p(f(X)))).\nfof(s, axiom, p(a)).\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert bounded_tptp.stdout.strip() == "unknown"

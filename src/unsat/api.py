@@ -944,10 +944,16 @@ class Solver:
         *assumptions: Expr,
         timeout: float | None = None,
         max_conflicts: int | None = None,
+        max_quantifier_rounds: int | None = None,
+        max_quantifier_matches: int | None = None,
     ) -> SolveResult:
         """Check satisfiability under optional assumption formulas."""
         return self._solver.check(
-            *assumptions, timeout=timeout, max_conflicts=max_conflicts
+            *assumptions,
+            timeout=timeout,
+            max_conflicts=max_conflicts,
+            max_quantifier_rounds=max_quantifier_rounds,
+            max_quantifier_matches=max_quantifier_matches,
         )
 
     def model(self) -> Model:

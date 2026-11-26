@@ -14,6 +14,7 @@ from unsat.parser import (
     format_dimacs_result,
     parse_dimacs,
     solve_dimacs,
+    solve_tptp,
 )
 
 
@@ -32,6 +33,8 @@ def _detect_format(input_arg: str, text: str, explicit: str) -> str:
         suffix = Path(input_arg).suffix.lower()
         if suffix in (".smt2", ".smt"):
             return "smt2"
+        if suffix in (".p", ".tptp"):
+            return "tptp"
         if suffix in (".cnf", ".dimacs"):
             return "dimacs"
 
@@ -42,6 +45,10 @@ def _detect_format(input_arg: str, text: str, explicit: str) -> str:
             continue
         if line.startswith(("(", ";")):
             return "smt2"
+        if line.startswith("%"):
+            continue
+        if line.startswith("fof(") or line.startswith("fof "):
+            return "tptp"
         return "dimacs"
     return "dimacs"
 
@@ -55,11 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "input",
         nargs="?",
-        help="Path to an SMT-LIB2 or DIMACS CNF file, or '-' for standard input.",
+        help="Path to an SMT-LIB2, DIMACS CNF, or TPTP FOF file, or '-' for stdin.",
     )
     parser.add_argument(
         "--format",
-        choices=("auto", "dimacs", "smt2"),
+        choices=("auto", "dimacs", "smt2", "tptp"),
         default="auto",
         help="Input format (default: auto-detect by extension or content).",
     )
@@ -129,6 +136,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"; {key}: {val}")
             for line in outputs:
                 print(line)
+            return 0
+        if fmt == "tptp":
+            verdict, stats = solve_tptp(
+                text,
+                timeout=args.timeout,
+                max_conflicts=args.max_conflicts,
+                max_quantifier_rounds=args.max_quantifier_rounds,
+                max_quantifier_matches=args.max_quantifier_matches,
+            )
+            if args.stats:
+                for key, val in stats.items():
+                    print(f"% {key}: {val}")
+            print(verdict.value.lower())
             return 0
 
         cnf = parse_dimacs(text)
