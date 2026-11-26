@@ -17,7 +17,7 @@ class QuantifierBudget:
     """Resource caps for E-matching and MBQI rounds before returning ``UNKNOWN``."""
 
     max_rounds: int = 8
-    max_matches: int = 256
+    max_matches: int = 1024
     max_instantiations: int = 1024
     max_mbqi_rounds: int = 8
     max_ematch_depth: int = 4
@@ -41,6 +41,7 @@ class QuantifierStats:
     """Instrumentation counters collected across E-matching and MBQI."""
 
     ematch_rounds: int = 0
+    ematch_candidates: int = 0
     ematch_instantiations: int = 0
     mbqi_rounds: int = 0
     mbqi_instantiations: int = 0
@@ -51,6 +52,7 @@ class QuantifierStats:
         """Return counters as a plain dictionary."""
         return {
             "quantifier_ematch_rounds": self.ematch_rounds,
+            "quantifier_ematch_candidates": self.ematch_candidates,
             "quantifier_ematch_instantiations": self.ematch_instantiations,
             "quantifier_mbqi_rounds": self.mbqi_rounds,
             "quantifier_mbqi_instantiations": self.mbqi_instantiations,

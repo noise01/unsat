@@ -91,13 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-quantifier-rounds",
         type=int,
         default=None,
-        help="Maximum quantifier instantiation rounds per check (SMT-LIB2 only).",
+        help="Maximum quantifier instantiation rounds per check (SMT-LIB2 and TPTP).",
     )
     parser.add_argument(
         "--max-quantifier-matches",
         type=int,
         default=None,
-        help="Maximum E-matching instantiations per check (SMT-LIB2 only).",
+        help="Maximum E-matching candidate inspections per check (SMT-LIB2 and TPTP).",
     )
     parser.add_argument(
         "--version",
