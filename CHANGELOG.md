@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-26
+
 ### Added
 
 - Zero-dependency TPTP FOF parser, formatter, and solver helpers (`TPTPParseError`, `FofStatement`, `parse_fof`, `parse_tptp`, `parse_tptp_file`, `to_tptp_expr`, `format_fof`, `solve_tptp`) in [`unsat.parser.tptp`](src/unsat/parser/tptp.py), exported from [`unsat.parser`](src/unsat/parser/__init__.py) and wired into the CLI via `--format tptp` (`.p` / `.tptp` auto-detection).
