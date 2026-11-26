@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 
 - Full SMT-LIB2 2.6 `String` and `RegLan` sorts, Unicode escape parsing/formatting (`\u{...}`, `\uXXXX`), operators (`str.++`, `str.len`, `str.at`, `str.substr`, `str.indexof`, `str.replace`, `str.replace_all`, `str.contains`, `str.prefixof`, `str.suffixof`, `str.<`, `str.<=`, `str.to_int`, `str.from_int`, `str.to_code`, `str.from_code`, `str.is_digit`, `str.in_re`, `str.to_re`, `re.*` / `re.+` / `re.opt` / `re.range` / `re.comp` / `re.diff` / `re.^` / `re.loop`), polymorphic Python `Concat` + `+`/`<`/`<=`/`>`/`>=` DSL builders, and `StringSolver` ([`unsat.theories.strings`](src/unsat/theories/strings.py)) combining Brzozowski regex derivatives, word-equation Nielsen splitting, character-slot model synthesis, and `EUF`/`LIA` integration with curated [`benchmarks/smt2/qf_s/`](benchmarks/smt2/qf_s/sat_word_eq_regex.smt2) and [`benchmarks/smt2/qf_slia/`](benchmarks/smt2/qf_slia/sat_substr_indexof.smt2) benchmarks.
@@ -17,7 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Reserved [`packages/unsat-legacy/`](packages/unsat-legacy/README.md) `uv` workspace package slot for future archived/legacy solver implementations.
 - Repository [`AGENTS.md`](AGENTS.md) and restructured architecture/design documentation under [`docs/architecture/`](docs/architecture/README.md) and [`docs/designs/`](docs/designs/README.md).
 - Automated GitHub Release creation job in [`publish.yml`](.github/workflows/publish.yml) gated on PyPI publish success.
-- Isolated wheel smoke testing (`import unsat`, `py.typed`, `Solver`, `unsat --version`, stdin SMT-LIB2), `benchmarks/run.py --check` in CI, full commit SHA Action pinning, concurrency guards, and [`.github/dependabot.yml`](.github/dependabot.yml).
+- Isolated wheel smoke testing (`import unsat`, `py.typed`, `Solver`, `unsat --version`, stdin SMT-LIB2), `benchmarks/run.py --suite all --check` in CI, full commit SHA Action pinning, concurrency guards, and [`.github/dependabot.yml`](.github/dependabot.yml).
 
 ### Changed
 
