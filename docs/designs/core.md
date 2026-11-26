@@ -6,7 +6,7 @@ This document records the core architectural and algorithmic decisions in `unsat
 
 - **Goal**: A pure Python 3.14 (`requires-python = ">=3.14"`) Z3-inspired SMT solver balancing a practical, production-style CDCL(T) architecture with algorithmic clarity and extensibility, targeting reliable solving on small-to-medium instances.
 - **Target scope**: Seven theory families (`EUF`, `LRA`, `LIA`, `NLA`, `BV`, `Arrays`, and `Strings`/`RegLan`), multi-theory combination via Model-Based Theory Combination (`MBTC`), and quantifier reasoning (`E-matching` and `MBQI`).
-- **Frontends**: The Python DSL (`unsat.api`) and text format frontends (`DIMACS` and `SMT-LIB2` in `unsat.parser`) evolve in parallel. `unsat.api` aims for Z3Py-like ergonomics while prioritizing Pythonic clarity and static type safety (`ty`) over strict 100% Z3Py API compatibility.
+- **Frontends**: The Python DSL (`unsat.api`) and text format frontends (`DIMACS`, `SMT-LIB2`, and `TPTP FOF` in `unsat.parser`) evolve in parallel. `unsat.api` aims for Z3Py-like ergonomics while prioritizing Pythonic clarity and static type safety (`ty`) over strict 100% Z3Py API compatibility.
 
 ## SAT Core (`unsat.sat`)
 

@@ -2,7 +2,7 @@
 
 A Z3-inspired SMT solver written in pure Python 3.14+ with zero runtime dependencies.
 
-`unsat` pairs a standalone CDCL SAT core with online CDCL(T) theory solvers (`EUF`, `LRA`, `LIA`, `NLA` for `QF_NRA`/`QF_NIA`, lazy word-level `BV` with on-demand bit-blasting, `Arrays`, and `Strings`/`RegLan` for `QF_S`/`QF_SLIA`), Model-Based Theory Combination (`MBTC`), E-matching and MBQI quantifier instantiation, AST preprocessing tactics, a Z3Py-style Python DSL, and an SMT-LIB2 / DIMACS CLI.
+`unsat` pairs a standalone CDCL SAT core with online CDCL(T) theory solvers (`EUF`, `LRA`, `LIA`, `NLA` for `QF_NRA`/`QF_NIA`, lazy word-level `BV` with on-demand bit-blasting, `Arrays`, and `Strings`/`RegLan` for `QF_S`/`QF_SLIA`), Model-Based Theory Combination (`MBTC`), E-matching and MBQI quantifier instantiation, AST preprocessing tactics, a Z3Py-style Python DSL, and an SMT-LIB2 / DIMACS / TPTP FOF CLI.
 
 ## Features
 
