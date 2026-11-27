@@ -8,7 +8,7 @@ Depends on: ``syntax``, ``model``, ``theories.base``, ``theories.euf``.
 """
 
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from unsat.syntax import App, Const, Context, DeclKind, Expr, FuncDecl, Sort, SortKind
@@ -203,6 +203,9 @@ class ArraySolver:
                     )
                     if _add(base_reasons, formula):
                         self._stats.row2_lemmas += 1
+
+        # 3b. Propagate Const-index reads across transparent Const stores.
+        self._propagate_const_index_reads(euf, _add)
 
         if lemmas:
             return lemmas
@@ -409,6 +412,191 @@ class ArraySolver:
             cur_node = to_term
         reasons.extend(euf.explain_terms_equal(cur_node, dst_c))
         return tuple(dict.fromkeys(reasons))
+
+    def _propagate_const_index_reads(
+        self,
+        euf: EUFSolver,
+        emit: Callable[[tuple[TheoryLit, ...], Expr], bool],
+    ) -> None:
+        """Bridge ``Const``-index reads across ``store(_, Const, _)`` nodes.
+
+        ``Context.mk_select`` eagerly simplifies ``select(store(a, c1, v), c2)``
+        for distinct ``Const`` indices ``c1 != c2`` to ``select(a, c2)`` and
+        ``select(store(a, c, v), c)`` to ``v``. That bypasses EUF equalities on
+        intermediate ``store`` terms; this pass restores propagation across
+        transparent ``Const`` store edges.
+        """
+        seeds: dict[tuple[Sort, Expr], list[tuple[Expr, Expr, bool]]] = {}
+        for sel in self._selects:
+            b, j = sel.args
+            if isinstance(j, Const):
+                seeds.setdefault((b.sort, j), []).append((b, sel, False))
+        for st in self._stores:
+            _, i, v = st.args
+            if isinstance(i, Const):
+                seeds.setdefault((st.sort, i), []).append((st, v, True))
+        if not seeds:
+            return
+
+        stores_by_sort: dict[Sort, list[App]] = {}
+        stores_by_res_rep: dict[Sort, dict[Expr, list[App]]] = {}
+        stores_by_base_rep: dict[Sort, dict[Expr, list[App]]] = {}
+        for st in self._stores:
+            sort = st.sort
+            stores_by_sort.setdefault(sort, []).append(st)
+            stores_by_res_rep.setdefault(sort, {}).setdefault(
+                euf.rep_expr(st), []
+            ).append(st)
+            stores_by_base_rep.setdefault(sort, {}).setdefault(
+                euf.rep_expr(st.args[0]), []
+            ).append(st)
+
+        consts_by_sort_rep: dict[Sort, dict[Expr, list[App]]] = {}
+        for c_arr in self._const_arrays:
+            consts_by_sort_rep.setdefault(c_arr.sort, {}).setdefault(
+                euf.rep_expr(c_arr), []
+            ).append(c_arr)
+
+        selects_by_sort_rep: dict[Sort, dict[Expr, list[App]]] = {}
+        for sel in self._selects:
+            arr_arg = sel.args[0]
+            selects_by_sort_rep.setdefault(arr_arg.sort, {}).setdefault(
+                euf.rep_expr(arr_arg), []
+            ).append(sel)
+
+        for (sort, j), seed_list in seeds.items():
+            adj_j: dict[Expr, list[tuple[Expr, Expr, Expr]]] = {}
+            for st in stores_by_sort.get(sort, ()):
+                a, i, _ = st.args
+                if isinstance(i, Const) and i is not j:
+                    rep_a = euf.rep_expr(a)
+                    rep_s = euf.rep_expr(st)
+                    if rep_a is not rep_s:
+                        adj_j.setdefault(rep_a, []).append((rep_s, a, st))
+                        adj_j.setdefault(rep_s, []).append((rep_a, st, a))
+
+            sort_consts = consts_by_sort_rep.get(sort, {})
+            sort_selects = selects_by_sort_rep.get(sort, {})
+            sort_stores_res = stores_by_res_rep.get(sort, {})
+            sort_stores_base = stores_by_base_rep.get(sort, {})
+
+            for src_arr, src_val, is_store_self in seed_list:
+                start_rep = euf.rep_expr(src_arr)
+                parent: dict[Expr, tuple[Expr, Expr, Expr]] = {}
+                reached: list[Expr] = [start_rep]
+                seen: set[Expr] = {start_rep}
+                queue: deque[Expr] = deque([start_rep])
+                while queue:
+                    cur = queue.popleft()
+                    for nxt_rep, from_term, to_term in adj_j.get(cur, ()):
+                        if nxt_rep not in seen:
+                            seen.add(nxt_rep)
+                            parent[nxt_rep] = (cur, from_term, to_term)
+                            reached.append(nxt_rep)
+                            queue.append(nxt_rep)
+
+                def _explain(
+                    target_rep: Expr,
+                    target_term: Expr,
+                    *,
+                    _start_rep: Expr = start_rep,
+                    _src_arr: Expr = src_arr,
+                    _parent: dict[Expr, tuple[Expr, Expr, Expr]] = parent,
+                ) -> tuple[TheoryLit, ...]:
+                    if target_rep is _start_rep:
+                        return tuple(
+                            dict.fromkeys(
+                                euf.explain_terms_equal(_src_arr, target_term)
+                            )
+                        )
+                    edges: list[tuple[Expr, Expr]] = []
+                    walk = target_rep
+                    while walk is not _start_rep:
+                        prev, from_term, to_term = _parent[walk]
+                        edges.append((from_term, to_term))
+                        walk = prev
+                    edges.reverse()
+                    reasons: list[TheoryLit] = []
+                    cur_node = _src_arr
+                    for from_term, to_term in edges:
+                        reasons.extend(euf.explain_terms_equal(cur_node, from_term))
+                        cur_node = to_term
+                    reasons.extend(euf.explain_terms_equal(cur_node, target_term))
+                    return tuple(dict.fromkeys(reasons))
+
+                for target_rep in reached:
+                    if target_rep is start_rep:
+                        if is_store_self:
+                            for st_up in sort_stores_base.get(target_rep, ()):
+                                a2, i2, _ = st_up.args
+                                if isinstance(i2, Const) or euf.are_equal(i2, j):
+                                    continue
+                                sel_up = self._ctx.mk_select(st_up, j)
+                                if not euf.are_equal(src_val, sel_up):
+                                    formula = self._ctx.mk_or(
+                                        self._ctx.mk_eq(i2, j),
+                                        self._ctx.mk_eq(src_val, sel_up),
+                                    )
+                                    if emit(_explain(target_rep, a2), formula):
+                                        self._stats.row2_lemmas += 1
+                        continue
+
+                    for c_arr in sort_consts.get(target_rep, ()):
+                        v_c = c_arr.args[0]
+                        if not euf.are_equal(src_val, v_c) and emit(
+                            _explain(target_rep, c_arr),
+                            self._ctx.mk_eq(src_val, v_c),
+                        ):
+                            self._stats.const_lemmas += 1
+
+                    for sel2 in sort_selects.get(target_rep, ()):
+                        b2, j2 = sel2.args
+                        if euf.are_equal(j2, j) and not euf.are_equal(src_val, sel2):
+                            reasons = tuple(
+                                dict.fromkeys(
+                                    [
+                                        *_explain(target_rep, b2),
+                                        *euf.explain_terms_equal(j, j2),
+                                    ]
+                                )
+                            )
+                            if emit(reasons, self._ctx.mk_eq(src_val, sel2)):
+                                self._stats.row2_lemmas += 1
+
+                    for st2 in sort_stores_res.get(target_rep, ()):
+                        _, i2, v2 = st2.args
+                        if euf.are_equal(i2, j):
+                            if not euf.are_equal(src_val, v2):
+                                reasons = tuple(
+                                    dict.fromkeys(
+                                        [
+                                            *_explain(target_rep, st2),
+                                            *euf.explain_terms_equal(i2, j),
+                                        ]
+                                    )
+                                )
+                                if emit(reasons, self._ctx.mk_eq(src_val, v2)):
+                                    self._stats.row1_lemmas += 1
+                        elif not isinstance(i2, Const):
+                            sel_st2 = self._ctx.mk_select(st2, j)
+                            if not euf.are_equal(src_val, sel_st2) and emit(
+                                _explain(target_rep, st2),
+                                self._ctx.mk_eq(src_val, sel_st2),
+                            ):
+                                self._stats.row2_lemmas += 1
+
+                    for st_up in sort_stores_base.get(target_rep, ()):
+                        a2, i2, _ = st_up.args
+                        if isinstance(i2, Const) or euf.are_equal(i2, j):
+                            continue
+                        sel_up = self._ctx.mk_select(st_up, j)
+                        if not euf.are_equal(src_val, sel_up):
+                            formula = self._ctx.mk_or(
+                                self._ctx.mk_eq(i2, j),
+                                self._ctx.mk_eq(src_val, sel_up),
+                            )
+                            if emit(_explain(target_rep, a2), formula):
+                                self._stats.row2_lemmas += 1
 
     def _check_extensionality(self, euf: EUFSolver, emit) -> None:
         const_val_by_rep: dict[Expr, Expr] = {}

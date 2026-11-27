@@ -89,3 +89,51 @@ def test_array_solver_extensionality_and_store_chain_model() -> None:
     assert m.eval_int(ctx.mk_select(b, ctx.mk_int_val(1))) == 7
     assert m.eval_int(ctx.mk_select(b, ctx.mk_int_val(2))) == 9
     assert m.eval_int(sel_a2) == 9
+
+
+def test_array_solver_const_index_transparent_propagation() -> None:
+    ctx = Context()
+    arr_sort = ctx.mk_array_sort(ctx.int_sort, ctx.int_sort)
+    a = ctx.mk_const("a_trans", arr_sort)
+    x = ctx.mk_int("x_trans")
+    y = ctx.mk_int("y_trans")
+    c0 = ctx.mk_int_val(0)
+    c1 = ctx.mk_int_val(1)
+    c2 = ctx.mk_int_val(2)
+    c5 = ctx.mk_int_val(5)
+
+    # 1. (= (const 0) (store a 0 x)) with (select a 1) emits (= (select a 1) 0).
+    euf = EUFSolver(ctx)
+    arr_solver = ArraySolver(ctx)
+    k0 = ctx.mk_const_array(ctx.int_sort, c0)
+    st = ctx.mk_store(a, c0, x)
+    sel_a1 = ctx.mk_select(a, c1)
+    eq_k0_st = ctx.mk_eq(k0, st)
+    for t in (k0, st, sel_a1):
+        euf.register_term(t)
+        arr_solver.register_term(t)
+    euf.register_eq(eq_k0_st)
+    euf.assert_atom(eq_k0_st, True)
+    euf.propagate()
+    lemmas = arr_solver.check(euf)
+    expected_eq = ctx.mk_eq(sel_a1, c0)
+    matching = [lm for lm in lemmas if lm.formula is expected_eq]
+    assert matching
+    assert any(tl.atom is eq_k0_st and tl.sign for tl in matching[0].reasons)
+
+    # 2. Nested stores without select:
+    #    (= (const 5) (store (store a 0 x) 2 y)) emits (= x 5).
+    euf2 = EUFSolver(ctx)
+    arr2 = ArraySolver(ctx)
+    k5 = ctx.mk_const_array(ctx.int_sort, c5)
+    st_nested = ctx.mk_store(ctx.mk_store(a, c0, x), c2, y)
+    eq_k5_st = ctx.mk_eq(k5, st_nested)
+    for t in (k5, st_nested):
+        euf2.register_term(t)
+        arr2.register_term(t)
+    euf2.register_eq(eq_k5_st)
+    euf2.assert_atom(eq_k5_st, True)
+    euf2.propagate()
+    lemmas2 = arr2.check(euf2)
+    expected_x5 = ctx.mk_eq(x, c5)
+    assert any(lm.formula is expected_x5 for lm in lemmas2)
