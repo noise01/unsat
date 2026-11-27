@@ -181,3 +181,43 @@ def test_quantifiers_incremental_push_pop_cores_and_unknown_budget() -> None:
     assert s_nested.check() is unsat.UNKNOWN
     s_nested.pop(1)
     assert s_nested.check() is unsat.SAT
+
+
+def test_ematch_check_wide_budget_partial_truncation_and_disjunction() -> None:
+    unsat.reset_default_context()
+    u = unsat.DeclareSort("U")
+    x = unsat.Constant("x", u)
+    a, b = unsat.Constants("a b", u)
+    f = unsat.Function("f", u, u)
+    p = unsat.Function("P", u, unsat.BoolSort())
+    q = unsat.Function("Q", u, unsat.BoolSort())
+    flag = unsat.Bool("flag")
+
+    # 1. Check-wide match budget is shared across rounds (not reset per round).
+    s_chain = unsat.Solver()
+    s_chain.add(
+        unsat.ForAll([x], unsat.Implies(p(x), p(f(x))), patterns=[p(x)]),
+        p(a),
+    )
+    assert (
+        s_chain.check(max_quantifier_rounds=10, max_quantifier_matches=2)
+        is unsat.UNKNOWN
+    )
+    assert s_chain.statistics()["quantifier_ematch_candidates"] <= 2
+
+    # 2. Partial round-1 truncation still allows ground UNSAT when contradicted,
+    #    and stays conservative UNKNOWN (not SAT) without a contradiction.
+    rule = unsat.ForAll([x], unsat.Implies(p(x), q(x)), patterns=[p(x)])
+    s_partial_unsat = unsat.Solver()
+    s_partial_unsat.add(rule, p(a), p(b), unsat.Not(q(a)))
+    assert s_partial_unsat.check(max_quantifier_matches=1) is unsat.UNSAT
+
+    s_partial_unk = unsat.Solver()
+    s_partial_unk.add(rule, p(a), p(b))
+    assert s_partial_unk.check(max_quantifier_matches=1) is unsat.UNKNOWN
+
+    # 3. Disjunction-disabled quantifier remains SAT even with a tight match budget.
+    s_disj = unsat.Solver()
+    s_disj.add(unsat.Or(flag, rule), p(a), unsat.Not(q(a)))
+    assert s_disj.check(max_quantifier_matches=1) is unsat.SAT
+    assert s_disj.model().eval_bool(flag) is True

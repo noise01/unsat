@@ -2,7 +2,7 @@
 
 This document tracks detailed milestone scopes and exit criteria for `unsat`. For the summary table, see [Solver Designs & Roadmap](README.md).
 
-## Completed Milestones (M1–M11)
+## Completed Milestones (M1–M12)
 
 ### M1 — Standalone CDCL SAT Core & DIMACS Frontend
 
@@ -122,18 +122,18 @@ This document tracks detailed milestone scopes and exit criteria for `unsat`. Fo
   - `packages/unsat-legacy/tests` (including ported unit/differential suites and `unsat` vs. `unsat_legacy` differential checks) pass in CI.
   - Shipped `unsat` wheel remains strictly zero-dependency and free of `lark` and `unsat_legacy`.
 
-## Planned Milestones (M12–M13)
-
 ### M12 — Zero-Dependency TPTP FOF Frontend (`unsat.parser.tptp`) & `endoxa` Integration
 
 - **Primary modules**: `parser`, `cli`, `smt`, `api` (plus downstream migration in `endoxa`)
 - **Scope**:
-  - Implement a zero-dependency recursive-descent TPTP FOF parser and formatter (`parse_fof`, `to_tptp_expr`) under `unsat.parser.tptp`.
-  - Ensure `endoxa`'s checking contracts (per-check quantifier budgets, assumption `unsat_core`, conservative `UNKNOWN` semantics) are cleanly satisfied.
-  - Migrate `endoxa` to depend directly on `unsat` (removing `endoxa.solver` and `lark` in a pre-1.0 release, adopting `unsat.Expr` at the public boundary for `parse_premise_fof`/`parse_query_fof`/`endoxa.instruments.coverage`, and wrapping solver/parser exceptions into `EndoxaError` in a thin internal adapter).
+  - Implemented a zero-dependency recursive-descent TPTP FOF parser and formatter (`parse_fof`, `parse_tptp`, `to_tptp_expr`, `format_fof`, `solve_tptp`) under `unsat.parser.tptp` and `--format tptp` CLI support.
+  - Added per-check `max_quantifier_rounds`/`max_quantifier_matches` overrides on `SMTSolver.check()`/`Solver.check()` and preserved conservative `UNKNOWN` when E-matching truncates on an explicit match cap.
+  - Migrated `endoxa` onto `unsat>=0.3.0` (removing `endoxa.solver` and `lark`, adopting `unsat.Expr` at the public boundary for `parse_premise_fof`/`parse_query_fof`/`endoxa.instruments.coverage`, and wrapping parser errors into `EndoxaError` in `endoxa.governance._solver`).
 - **Exit criteria**:
-  - Zero-dependency TPTP FOF round-trip and Z3 differential tests pass in `unsat`.
-  - `endoxa` test suite passes against `unsat` with `endoxa.solver` and `lark` removed.
+  - Zero-dependency TPTP FOF round-trip, Z3 differential, and `unsat`-vs-`unsat_legacy` tests pass in `unsat`.
+  - `endoxa` test suite, `lint-imports`, `mypy`, and `ruff` checks pass against `unsat>=0.3.0` with `endoxa.solver` and `lark` removed.
+
+## Planned Milestones (M13)
 
 ### M13 — Post-M10 Verification & Scale Benchmark Hardening
 

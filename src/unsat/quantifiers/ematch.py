@@ -34,6 +34,24 @@ class EMatchResult:
 
     instantiations: tuple[tuple[Quantifier, tuple[Expr, ...], Expr], ...]
     truncated: bool = False
+    matches_used: int = 0
+
+
+@dataclass(slots=True)
+class _MatchWorkBudget:
+    """Shared candidate-inspection work budget for one ``match_round`` call."""
+
+    remaining: int
+    used: int = 0
+    exhausted: bool = False
+
+    def spend(self) -> bool:
+        if self.remaining <= 0:
+            self.exhausted = True
+            return False
+        self.remaining -= 1
+        self.used += 1
+        return True
 
 
 def _collect_trigger_candidates(
@@ -214,6 +232,7 @@ class EMatcher:
         target: Expr,
         env: tuple[Expr | None, ...],
         k: int,
+        work: _MatchWorkBudget,
     ) -> Iterator[tuple[tuple[Expr | None, ...], tuple[Expr, ...]]]:
         if isinstance(pat, BoundVar):
             if pat.index >= k:
@@ -239,15 +258,19 @@ class EMatcher:
                     yield env, ()
                 return
             for member in euf.eclass_members(target):
+                if not work.spend():
+                    return
                 if (
                     isinstance(member, App)
                     and member.decl is pat.decl
                     and len(member.args) == len(pat.args)
                 ):
                     for out_env, sub_matched in self._match_args(
-                        euf, pat.args, member.args, env, k
+                        euf, pat.args, member.args, env, k, work
                     ):
                         yield out_env, (member, *sub_matched)
+                    if work.exhausted:
+                        return
 
     def _match_args(
         self,
@@ -256,17 +279,20 @@ class EMatcher:
         term_args: tuple[Expr, ...],
         env: tuple[Expr | None, ...],
         k: int,
+        work: _MatchWorkBudget,
     ) -> Iterator[tuple[tuple[Expr | None, ...], tuple[Expr, ...]]]:
         if not pat_args:
             yield env, ()
             return
         for env1, matched1 in self._match_subterm(
-            euf, pat_args[0], term_args[0], env, k
+            euf, pat_args[0], term_args[0], env, k, work
         ):
             for env2, matched2 in self._match_args(
-                euf, pat_args[1:], term_args[1:], env1, k
+                euf, pat_args[1:], term_args[1:], env1, k, work
             ):
                 yield env2, (*matched1, *matched2)
+            if work.exhausted:
+                return
 
     def _match_pattern_tuple(
         self,
@@ -274,6 +300,7 @@ class EMatcher:
         pat_terms: tuple[Expr, ...],
         env: tuple[Expr | None, ...],
         k: int,
+        work: _MatchWorkBudget,
     ) -> Iterator[tuple[tuple[Expr, ...], tuple[Expr, ...]]]:
         if not pat_terms:
             if all(item is not None for item in env):
@@ -283,15 +310,21 @@ class EMatcher:
         if not isinstance(head_pat, App) or not head_pat.args:
             return
         for cand in euf.apps_by_decl(head_pat.decl):
+            if not work.spend():
+                return
             if cand.sort is not head_pat.sort or len(cand.args) != len(head_pat.args):
                 continue
             for env1, matched1 in self._match_args(
-                euf, head_pat.args, cand.args, env, k
+                euf, head_pat.args, cand.args, env, k, work
             ):
                 for full_env, matched_rest in self._match_pattern_tuple(
-                    euf, pat_terms[1:], env1, k
+                    euf, pat_terms[1:], env1, k, work
                 ):
                     yield full_env, (cand, *matched1, *matched_rest)
+                if work.exhausted:
+                    return
+            if work.exhausted:
+                return
 
     def match_round(
         self,
@@ -299,22 +332,34 @@ class EMatcher:
         quantifiers: Sequence[Quantifier],
         budget: QuantifierBudget,
         stats: QuantifierStats,
+        *,
+        max_matches: int | None = None,
     ) -> EMatchResult:
         """Run one bounded E-matching round across ``quantifiers``."""
+        if max_matches is not None and (
+            isinstance(max_matches, bool)
+            or not isinstance(max_matches, int)
+            or max_matches < 0
+        ):
+            msg = f"max_matches must be a non-negative integer, got {max_matches!r}"
+            raise ValueError(msg)
+
         if not quantifiers:
-            return EMatchResult((), False)
+            return EMatchResult((), False, 0)
 
         # Ensure all existing E-graph members are seeded at generation 0.
         for rep in euf.eclasses():
             for member in euf.eclass_members(rep):
                 self._term_gen.setdefault(member, 0)
 
+        eff_max_matches = budget.max_matches if max_matches is None else max_matches
+        work = _MatchWorkBudget(eff_max_matches)
         results: list[tuple[Quantifier, tuple[Expr, ...], Expr]] = []
         truncated = False
         stats.ematch_rounds += 1
 
         for q in quantifiers:
-            if len(results) >= budget.max_instantiations:
+            if work.exhausted or len(results) >= budget.max_instantiations:
                 truncated = True
                 break
             pats = self.get_patterns(q)
@@ -322,26 +367,19 @@ class EMatcher:
                 continue
             k = q.num_vars
             init_env: tuple[Expr | None, ...] = (None,) * k
-            q_matches = 0
             for pat_tuple in pats:
-                if (
-                    q_matches >= budget.max_matches
-                    or len(results) >= budget.max_instantiations
-                ):
+                if work.exhausted or len(results) >= budget.max_instantiations:
                     truncated = True
                     break
                 for args, matched_apps in self._match_pattern_tuple(
-                    euf, pat_tuple, init_env, k
+                    euf, pat_tuple, init_env, k, work
                 ):
-                    if (
-                        q_matches >= budget.max_matches
-                        or len(results) >= budget.max_instantiations
-                    ):
-                        truncated = True
-                        break
                     rep_key = (q, tuple(euf.rep_expr(arg) for arg in args))
                     if rep_key in self._emitted:
                         continue
+                    if len(results) >= budget.max_instantiations:
+                        truncated = True
+                        break
                     match_gen = max(
                         (
                             *(self._term_gen.get(arg, 0) for arg in args),
@@ -368,9 +406,12 @@ class EMatcher:
                         stack.extend(sub.children)
 
                     results.append((q, args, inst_expr))
-                    q_matches += 1
                     stats.ematch_instantiations += 1
+                if work.exhausted:
+                    truncated = True
+                    break
 
+        stats.ematch_candidates += work.used
         if truncated:
             stats.budget_exhausted += 1
-        return EMatchResult(tuple(results), truncated=truncated)
+        return EMatchResult(tuple(results), truncated=truncated, matches_used=work.used)

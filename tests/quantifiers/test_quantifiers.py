@@ -1,5 +1,7 @@
 from collections.abc import Sequence
 
+import pytest
+
 from unsat.model import Model
 from unsat.quantifiers import (
     EMatcher,
@@ -176,3 +178,88 @@ def test_mbqi_engine_verification_generalization_and_unknown() -> None:
         stats,
     )
     assert res_unk.verified is False
+
+
+def test_ematch_candidate_work_budget_bounds_and_validation() -> None:
+    ctx = Context()
+    s_sort = ctx.mk_uninterpreted_sort("S")
+    x = ctx.mk_const("x", s_sort)
+    consts = [ctx.mk_const(f"c{i}", s_sort) for i in range(6)]
+    f = ctx.mk_decl("f", (s_sort,), s_sort)
+    g = ctx.mk_decl("g", (s_sort,), s_sort)
+    h2 = ctx.mk_decl("h2", (s_sort, s_sort), ctx.bool_sort)
+    p = ctx.mk_decl("P", (s_sort,), ctx.bool_sort)
+
+    # 1. Pathological non-emitting nonlinear candidates still stop at max_matches.
+    euf_nl = EUFSolver(ctx)
+    for i in range(0, len(consts), 2):
+        euf_nl.register_bool_term(h2(consts[i], consts[i + 1]))
+    euf_nl.propagate()
+    q_nl = ctx.mk_forall((x,), h2(x, x))
+    assert isinstance(q_nl, Quantifier)
+    matcher_nl = EMatcher()
+    stats_nl = QuantifierStats()
+    res_nl = matcher_nl.match_round(
+        euf_nl, (q_nl,), QuantifierBudget(max_matches=2), stats_nl
+    )
+    assert res_nl.instantiations == ()
+    assert res_nl.truncated is True
+    assert res_nl.matches_used == 2
+    assert stats_nl.ematch_candidates == 2
+    assert stats_nl.budget_exhausted == 1
+
+    # 2. Nested E-class member scan in f(g(x)) consumes candidate budget.
+    euf_nested = EUFSolver(ctx)
+    anchor = consts[0]
+    euf_nested.register_term(f(anchor))
+    for c in consts[1:]:
+        euf_nested.register_term(c)
+        euf_nested.assert_atom(ctx.mk_eq(c, anchor), True)
+    euf_nested.propagate()
+    q_nested = ctx.mk_forall((x,), p(f(g(x))), patterns=(f(g(x)),))
+    assert isinstance(q_nested, Quantifier)
+    matcher_nested = EMatcher()
+    stats_nested = QuantifierStats()
+    res_nested = matcher_nested.match_round(
+        euf_nested, (q_nested,), QuantifierBudget(max_matches=3), stats_nested
+    )
+    assert res_nested.instantiations == ()
+    assert res_nested.truncated is True
+    assert res_nested.matches_used == 3
+    assert stats_nested.ematch_candidates == 3
+
+    # 3. Exact-fit budget does not falsely truncate, while overflow truncates.
+    euf_fit = EUFSolver(ctx)
+    euf_fit.register_bool_term(p(consts[0]))
+    euf_fit.propagate()
+    q_p = ctx.mk_forall((x,), p(x), patterns=(p(x),))
+    assert isinstance(q_p, Quantifier)
+    stats_fit = QuantifierStats()
+    res_fit = EMatcher().match_round(
+        euf_fit, (q_p,), QuantifierBudget(max_matches=1), stats_fit
+    )
+    assert len(res_fit.instantiations) == 1
+    assert res_fit.truncated is False
+    assert res_fit.matches_used == 1
+    assert stats_fit.ematch_candidates == 1
+
+    euf_fit.register_bool_term(p(consts[1]))
+    euf_fit.propagate()
+    stats_over = QuantifierStats()
+    res_over = EMatcher().match_round(
+        euf_fit, (q_p,), QuantifierBudget(max_matches=1), stats_over
+    )
+    assert len(res_over.instantiations) == 1
+    assert res_over.truncated is True
+    assert res_over.matches_used == 1
+    assert stats_over.ematch_candidates == 1
+
+    # 4. Explicit max_matches validation on match_round.
+    with pytest.raises(ValueError, match="max_matches"):
+        EMatcher().match_round(
+            euf_fit, (q_p,), QuantifierBudget(), stats_over, max_matches=-1
+        )
+    with pytest.raises(ValueError, match="max_matches"):
+        EMatcher().match_round(
+            euf_fit, (q_p,), QuantifierBudget(), stats_over, max_matches=True
+        )

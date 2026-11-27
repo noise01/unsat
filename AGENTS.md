@@ -12,13 +12,13 @@ Engineering guide for coding agents working in `unsat` (pure Python 3.14+ SMT so
   - `tactics/`: Pure AST-to-AST preprocessing tactics (`SimplifyTactic`, `NNFTactic`, `BitBlastTactic`, `SkolemizeTactic`, `CtxSimplifyTactic`, `GaussianElimTactic`, `PropagateBoundsTactic`)
   - `quantifiers/`: `EMatcher` and `MBQI` engines (`QuantifierBudget`)
   - `smt/`: CDCL(T) orchestrator (`SMTSolver`, `solve_with_tactic`)
-  - `parser/`: `DIMACS` and `SMT-LIB2` (`lexer`, `format`, `SMT2Runner`) frontends
+  - `parser/`: `DIMACS`, `SMT-LIB2` (`lexer`, `format`, `SMT2Runner`), and `TPTP FOF` (`tptp`) frontends
   - `api.py` / `cli.py` / `__init__.py` / `__main__.py`: Python DSL facade and CLI entry point
-- `packages/unsat-legacy/`: Reserved `uv` workspace member for archived legacy implementations (keep isolated from `src/unsat/`)
+- `packages/unsat-legacy/`: Isolated `uv` workspace member holding the archived `unsat_legacy` solver and tests (keep isolated from `src/unsat/`)
 - `tests/`: Mirrors `src/unsat/` plus contract/property/benchmark suites
 - `benchmarks/`: Curated DIMACS & SMT-LIB2 suite and `benchmarks/run.py`
 - `docs/architecture/`: Module layout and dependency DAG contracts
-- `docs/designs/`: Core solver design, verification strategy, and M1–M10 roadmap
+- `docs/designs/`: Core solver design, verification strategy, and M1–M13 roadmap
 
 ## Verification Commands
 

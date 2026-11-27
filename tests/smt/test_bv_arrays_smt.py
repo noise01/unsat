@@ -1,4 +1,5 @@
 import pytest
+import z3
 
 import unsat
 
@@ -262,3 +263,162 @@ def test_qf_aufbv_store_eclass_member_read_unsat_regression() -> None:
     solver = unsat.Solver()
     solver.add(f1, f2, f3, f4)
     assert solver.check() is unsat.UNSAT
+
+
+def test_const_index_store_simplification_soundness_and_models() -> None:
+    unsat.reset_default_context()
+    bv4 = unsat.BitVecSort(4)
+    a_bv = unsat.Array("A_ci", bv4, bv4)
+    b_bv = unsat.Array("B_ci", bv4, bv4)
+    c_bv = unsat.Array("C_ci", bv4, bv4)
+    x, y, z, w, k = unsat.BitVecs("x_ci y_ci z_ci w_ci k_ci", 4)
+    c0, c1, c2, c3, c5 = (unsat.BitVecVal(v, 4) for v in (0, 1, 2, 3, 5))
+
+    # 1. Hypothesis failure 1 (invalid model):
+    #    (= (const 0) (store A 0 x)) /\ (bvslt y (select A 1))
+    f1_sat = [
+        unsat.Eq(unsat.K(bv4, c0), unsat.Store(a_bv, c0, x)),
+        y < unsat.Select(a_bv, c1),
+    ]
+    zs = z3.Solver()
+    za = z3.Array("A_ci", z3.BitVecSort(4), z3.BitVecSort(4))
+    zx, zy = z3.BitVecs("x_ci y_ci", 4)
+    z_k0 = z3.K(z3.BitVecSort(4), z3.BitVecVal(0, 4))
+    zs.add(
+        z_k0 == z3.Store(za, z3.BitVecVal(0, 4), zx),
+        zy < z3.Select(za, z3.BitVecVal(1, 4)),
+    )
+    assert zs.check() == z3.sat
+    s = unsat.Solver()
+    s.add(*f1_sat)
+    assert s.check() is unsat.SAT
+    model = s.model()
+    for formula in f1_sat:
+        assert model.eval_bool(formula, model_completion=True) is True
+
+    # 2. Hypothesis failure 2 (unsound SAT):
+    #    (= (const 0) (store A 0 x)) /\ (bvult x (select A 1))
+    zs.reset()
+    zs.add(
+        z_k0 == z3.Store(za, z3.BitVecVal(0, 4), zx),
+        z3.ULT(zx, z3.Select(za, z3.BitVecVal(1, 4))),
+    )
+    assert zs.check() == z3.unsat
+    s.reset()
+    s.add(
+        unsat.Eq(unsat.K(bv4, c0), unsat.Store(a_bv, c0, x)),
+        unsat.ULT(x, unsat.Select(a_bv, c1)),
+    )
+    assert s.check() is unsat.UNSAT
+
+    # 3. Store equality without const_array (QF_ABV and QF_AUFLIA)
+    zc = z3.Array("C_ci", z3.BitVecSort(4), z3.BitVecSort(4))
+    zs.reset()
+    zs.add(
+        z3.Store(za, z3.BitVecVal(0, 4), zx) == z3.Store(zc, z3.BitVecVal(2, 4), zy),
+        z3.Select(za, z3.BitVecVal(1, 4)) != z3.Select(zc, z3.BitVecVal(1, 4)),
+    )
+    assert zs.check() == z3.unsat
+    s.reset()
+    s.add(
+        unsat.Eq(unsat.Store(a_bv, c0, x), unsat.Store(c_bv, c2, y)),
+        unsat.Distinct(unsat.Select(a_bv, c1), unsat.Select(c_bv, c1)),
+    )
+    assert s.check() is unsat.UNSAT
+
+    i_arr = unsat.ArraySort(unsat.IntSort(), unsat.IntSort())
+    ai = unsat.Array("Ai_ci", unsat.IntSort(), unsat.IntSort())
+    ci = unsat.Array("Ci_ci", unsat.IntSort(), unsat.IntSort())
+    xi, yi = unsat.Ints("xi_ci yi_ci")
+    s.reset()
+    s.add(
+        unsat.Eq(unsat.Store(ai, 0, xi), unsat.Store(ci, 2, yi)),
+        unsat.Distinct(unsat.Select(ai, 1), unsat.Select(ci, 1)),
+    )
+    assert s.check() is unsat.UNSAT
+    assert i_arr is ai.sort
+
+    # 4. Nested Const-stores + intermediate store == const skipped by RoW2-down
+    s.reset()
+    s.add(
+        unsat.Eq(
+            unsat.K(bv4, c5),
+            unsat.Store(unsat.Store(a_bv, c0, x), c2, y),
+        ),
+        unsat.Distinct(unsat.Select(a_bv, c1), c5),
+    )
+    assert s.check() is unsat.UNSAT
+
+    st_inner = unsat.Store(a_bv, c2, y)
+    st_outer = unsat.Store(st_inner, c0, x)
+    s.reset()
+    s.add(
+        unsat.Eq(b_bv, st_outer),
+        unsat.Eq(st_inner, unsat.K(bv4, c5)),
+        unsat.Distinct(unsat.Select(b_bv, c1), c5),
+    )
+    assert s.check() is unsat.UNSAT
+
+    # 5. Pure nested stores with no select in input (R1, R2, R3)
+    s.reset()
+    s.add(
+        unsat.Eq(unsat.K(bv4, c5), unsat.Store(unsat.Store(a_bv, c0, x), c2, y)),
+        unsat.Distinct(x, c5),
+    )
+    assert s.check() is unsat.UNSAT
+
+    s.reset()
+    s.add(
+        unsat.Eq(
+            unsat.Store(unsat.Store(a_bv, c0, x), c2, y),
+            unsat.Store(unsat.Store(c_bv, c0, z), c3, w),
+        ),
+        unsat.Distinct(x, z),
+    )
+    assert s.check() is unsat.UNSAT
+
+    s.reset()
+    s.add(
+        unsat.Eq(
+            unsat.Store(unsat.Store(a_bv, c0, x), c2, y),
+            unsat.Store(c_bv, c3, w),
+        ),
+        unsat.Distinct(x, unsat.Select(c_bv, c0)),
+    )
+    assert s.check() is unsat.UNSAT
+
+    # 6. Mixed Const-store and symbolic-index store (upward & downward)
+    s.reset()
+    s.add(
+        unsat.Eq(unsat.K(bv4, c5), unsat.Store(unsat.Store(a_bv, c0, x), k, y)),
+        unsat.Distinct(k, c0),
+        unsat.Distinct(x, c5),
+    )
+    assert s.check() is unsat.UNSAT
+
+    s.reset()
+    s.add(
+        unsat.Eq(unsat.K(bv4, c5), unsat.Store(unsat.Store(a_bv, c0, x), k, y)),
+        unsat.Distinct(k, c1),
+        unsat.Distinct(unsat.Select(a_bv, c1), c5),
+    )
+    assert s.check() is unsat.UNSAT
+
+    # 7. Incremental push/pop + unsat_core minimality across transparent store path
+    s.reset()
+    a_base = unsat.Eq(unsat.K(bv4, c0), unsat.Store(a_bv, c0, x))
+    s.add(a_base)
+    s.push()
+    a_rel = unsat.ULT(x, unsat.Select(a_bv, c1))
+    a_unrel = unsat.Eq(y, c3)
+    assert s.check(a_rel, a_unrel) is unsat.UNSAT
+    core = s.unsat_core()
+    assert a_unrel not in core
+    assert set(core) == {a_rel}
+    recheck = unsat.Solver()
+    recheck.add(a_base, *core)
+    assert recheck.check() is unsat.UNSAT
+    s.pop(1)
+    assert s.check() is unsat.SAT
+    m_after_pop = s.model()
+    assert m_after_pop.eval_bool(a_base, model_completion=True) is True

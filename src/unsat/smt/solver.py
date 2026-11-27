@@ -337,6 +337,8 @@ class SMTSolver:
         sub_solver = _GroundSubSolver(self._ctx, budget=budget)
         total_rounds = 0
         mbqi_rounds = 0
+        matches_remaining = eff_quant_budget.max_matches
+        ematch_truncated = False
 
         while True:
             if budget.timed_out():
@@ -404,8 +406,14 @@ class SMTSolver:
                 return SolveResult.UNKNOWN
 
             ematch_res = self._ematcher.match_round(
-                self._euf, active_quants, eff_quant_budget, self._quant_stats
+                self._euf,
+                active_quants,
+                eff_quant_budget,
+                self._quant_stats,
+                max_matches=matches_remaining,
             )
+            matches_remaining = max(0, matches_remaining - ematch_res.matches_used)
+            ematch_truncated = ematch_truncated or ematch_res.truncated
             if ematch_res.instantiations:
                 to_encode: list[tuple[Lit, Expr, frozenset[Lit | None]]] = []
                 for q, _, inst_expr in ematch_res.instantiations:
@@ -417,7 +425,7 @@ class SMTSolver:
                     self._add_guarded_instantiation(guard_lit, inst_expr, guard_owners)
                 total_rounds += 1
                 continue
-            if ematch_res.truncated:
+            if ematch_truncated:
                 self._last_result = SolveResult.UNKNOWN
                 return SolveResult.UNKNOWN
 
