@@ -30,9 +30,7 @@ class _LemmaEncoder(Protocol):
 
     def expr_var_or_none(self, expr: Expr) -> Var | None: ...
 
-    def encode_lemma(
-        self, expr: Expr, polarity: int = 1
-    ) -> tuple[Lit, list[list[Lit]]]: ...
+    def encode_lemma(self, expr: Expr, polarity: int = 1) -> tuple[Lit, list[list[Lit]]]: ...
 
     def encode_bv_blast_lemma(self, atom: Expr, atom_lit: Lit) -> list[list[Lit]]: ...
 
@@ -383,9 +381,7 @@ class _CombinedPropagator:
                 elif nla_lemma.formula is self._ctx.true_expr:
                     continue
                 else:
-                    f_lit, def_clauses = self._encoder.encode_lemma(
-                        nla_lemma.formula, polarity=1
-                    )
+                    f_lit, def_clauses = self._encoder.encode_lemma(nla_lemma.formula, polarity=1)
                     nla_out.extend(def_clauses)
                     nla_out.append([*base, f_lit])
             if nla_out:
@@ -415,9 +411,7 @@ class _CombinedPropagator:
                 if lemma.formula is self._ctx.false_expr:
                     out.append(base)
                     continue
-                f_lit, def_clauses = self._encoder.encode_lemma(
-                    lemma.formula, polarity=1
-                )
+                f_lit, def_clauses = self._encoder.encode_lemma(lemma.formula, polarity=1)
                 out.extend(def_clauses)
                 out.append([*base, f_lit])
             if out:
@@ -426,9 +420,7 @@ class _CombinedPropagator:
         if isinstance(bv_res, BVBlastRequest):
             return self._blast_bv_request(bv_res)
 
-        str_res = self._strings.check(
-            self._euf, self._lra, emitted_lemmas=self._emitted_str_lemmas
-        )
+        str_res = self._strings.check(self._euf, self._lra, emitted_lemmas=self._emitted_str_lemmas)
         if isinstance(str_res, list) and str_res:
             assert self._encoder is not None
             vars_before = self._sat.num_vars if self._sat is not None else 0
@@ -441,16 +433,13 @@ class _CombinedPropagator:
                 elif str_lemma.formula is self._ctx.true_expr:
                     continue
                 else:
-                    f_lit, def_clauses = self._encoder.encode_lemma(
-                        str_lemma.formula, polarity=1
-                    )
+                    f_lit, def_clauses = self._encoder.encode_lemma(str_lemma.formula, polarity=1)
                     str_out.extend(def_clauses)
                     str_out.append([*base, f_lit])
             if str_out:
                 if self._sat is not None and self._sat.num_vars == vars_before:
                     has_unsat_or_unassigned = any(
-                        not any(self._sat.value(lit) is True for lit in clause)
-                        for clause in str_out
+                        not any(self._sat.value(lit) is True for lit in clause) for clause in str_out
                     )
                     if not has_unsat_or_unassigned:
                         self._string_unknown = True
@@ -532,9 +521,7 @@ class _CombinedPropagator:
                         continue
                     if eq_atom is self._ctx.false_expr:
                         return [base]
-                    lit_eq, def_clauses = self._encoder.encode_lemma(
-                        eq_atom, polarity=0
-                    )
+                    lit_eq, def_clauses = self._encoder.encode_lemma(eq_atom, polarity=0)
                     return [*def_clauses, [*base, lit_eq]]
             sort_reps[sort] = groups
 
@@ -623,12 +610,8 @@ class _CombinedPropagator:
                 lit_eq = self._ensure_euf_lemma_lit(eq_atom)
                 le = self._ctx.mk_le(leader, other)
                 ge = self._ctx.mk_ge(leader, other)
-                lit_le = (
-                    None if isinstance(le, Const) else self._ensure_lra_lemma_lit(le)
-                )
-                lit_ge = (
-                    None if isinstance(ge, Const) else self._ensure_lra_lemma_lit(ge)
-                )
+                lit_le = None if isinstance(le, Const) else self._ensure_lra_lemma_lit(le)
+                lit_ge = None if isinstance(ge, Const) else self._ensure_lra_lemma_lit(ge)
 
                 out_lemmas: list[list[Lit]] = []
                 if lit_le is not None:

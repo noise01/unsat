@@ -27,7 +27,7 @@ class LIACutLemma:
 
 @dataclass(frozen=True, slots=True)
 class LIASplitLemma:
-    """Branch-and-bound disjunction ``(x <= k) \\/ (x >= k + 1)``."""
+    r"""Branch-and-bound disjunction ``(x <= k) \\/ (x >= k + 1)``."""
 
     le_atom: Expr
     ge_atom: Expr
@@ -45,9 +45,7 @@ def _frac_part(x: Fraction) -> Fraction:
     return x - math.floor(x)
 
 
-def _build_ge_atom(
-    lra: LRASolver, orig_coeffs: dict[int, Fraction], rhs: Fraction
-) -> Expr | None:
+def _build_ge_atom(lra: LRASolver, orig_coeffs: dict[int, Fraction], rhs: Fraction) -> Expr | None:
     """Build ``sum w_k x_k >= rhs`` if non-empty, clearing denominators."""
     ctx = lra.ctx
     if not orig_coeffs:
@@ -67,9 +65,7 @@ def _build_ge_atom(
             c_int = int_coeffs[vid] // g
             var_e = lra.var_expr(vid)
             assert var_e is not None
-            terms.append(
-                var_e if c_int == 1 else ctx.mk_mul(ctx.mk_int_val(c_int), var_e)
-            )
+            terms.append(var_e if c_int == 1 else ctx.mk_mul(ctx.mk_int_val(c_int), var_e))
         lhs_expr = terms[0] if len(terms) == 1 else ctx.mk_add(*terms)
         return ctx.mk_ge(lhs_expr, ctx.mk_int_val(int_rhs // g))
 
@@ -79,11 +75,7 @@ def _build_ge_atom(
         var_e = lra.var_expr(vid)
         assert var_e is not None
         real_var = ctx.mk_to_real(var_e) if var_e.is_int else var_e
-        real_terms.append(
-            real_var
-            if scaled_c == 1
-            else ctx.mk_mul(ctx.mk_real_val(scaled_c), real_var)
-        )
+        real_terms.append(real_var if scaled_c == 1 else ctx.mk_mul(ctx.mk_real_val(scaled_c), real_var))
     lhs_real = real_terms[0] if len(real_terms) == 1 else ctx.mk_add(*real_terms)
     return ctx.mk_ge(lhs_real, ctx.mk_real_val(rhs * lcm_den))
 
@@ -168,9 +160,7 @@ def _try_gomory_cut(
         return None
 
     active_at_bound = [
-        entry
-        for entry in at_bound
-        if not (lra.var_is_int(entry[0]) and (entry[1] * scale_d).denominator == 1)
+        entry for entry in at_bound if not (lra.var_is_int(entry[0]) and (entry[1] * scale_d).denominator == 1)
     ]
 
     if all(entry[7] for entry in active_at_bound):
@@ -258,9 +248,7 @@ def _fractional_orig_ints(lra: LRASolver) -> list[tuple[int, Expr, DeltaRational
     return fractional_orig
 
 
-def _split_key(
-    lra: LRASolver, vid: int, val: DeltaRational
-) -> tuple[int, Fraction, Fraction, int]:
+def _split_key(lra: LRASolver, vid: int, val: DeltaRational) -> tuple[int, Fraction, Fraction, int]:
     lb, _ = lra.var_lower(vid)
     ub, _ = lra.var_upper(vid)
     if lb is not None and ub is not None:
@@ -287,9 +275,7 @@ def find_lia_lemma(
         return None
 
     for vid, _, _ in fractional_orig:
-        cut = _try_gomory_cut(
-            lra, vid, emitted_cuts=emitted_cuts, max_cut_coeff=max_cut_coeff
-        )
+        cut = _try_gomory_cut(lra, vid, emitted_cuts=emitted_cuts, max_cut_coeff=max_cut_coeff)
         if cut is not None:
             return cut
 
@@ -318,16 +304,12 @@ def find_lia_lemma(
             return None
 
         for vid, _, _ in fractional_orig:
-            cut = _try_gomory_cut(
-                lra, vid, emitted_cuts=emitted_cuts, max_cut_coeff=max_cut_coeff
-            )
+            cut = _try_gomory_cut(lra, vid, emitted_cuts=emitted_cuts, max_cut_coeff=max_cut_coeff)
             if cut is not None:
                 return cut
 
     # Fallback: Smart Branch-and-Bound split on best candidate fractional Int var.
-    vid, expr, val = min(
-        fractional_orig, key=lambda item: _split_key(lra, item[0], item[2])
-    )
+    vid, expr, val = min(fractional_orig, key=lambda item: _split_key(lra, item[0], item[2]))
     k = _floor_delta_rational(val)
     lb, _ = lra.var_lower(vid)
     ub, _ = lra.var_upper(vid)

@@ -47,18 +47,10 @@ def test_complete_integer_operators_and_div0() -> None:
     r = unsat.Real("r")
 
     # Constant folding matches SMT-LIB2 Euclidean division & floor to_int
-    assert unsat.default_context().mk_idiv(
-        unsat.IntVal(-7), unsat.IntVal(3)
-    ) is unsat.IntVal(-3)
-    assert unsat.default_context().mk_mod(
-        unsat.IntVal(-7), unsat.IntVal(3)
-    ) is unsat.IntVal(2)
-    assert unsat.default_context().mk_idiv(
-        unsat.IntVal(-7), unsat.IntVal(-3)
-    ) is unsat.IntVal(3)
-    assert unsat.default_context().mk_mod(
-        unsat.IntVal(-7), unsat.IntVal(-3)
-    ) is unsat.IntVal(2)
+    assert unsat.default_context().mk_idiv(unsat.IntVal(-7), unsat.IntVal(3)) is unsat.IntVal(-3)
+    assert unsat.default_context().mk_mod(unsat.IntVal(-7), unsat.IntVal(3)) is unsat.IntVal(2)
+    assert unsat.default_context().mk_idiv(unsat.IntVal(-7), unsat.IntVal(-3)) is unsat.IntVal(3)
+    assert unsat.default_context().mk_mod(unsat.IntVal(-7), unsat.IntVal(-3)) is unsat.IntVal(2)
     assert unsat.ToInt(Fraction(-3, 2)) is unsat.IntVal(-2)
     assert unsat.IsInt(Fraction(4, 2)) is unsat.BoolVal(True)
     assert unsat.IsInt(Fraction(3, 2)) is unsat.BoolVal(False)
@@ -147,9 +139,7 @@ def test_qf_nra_and_qf_nia_decision_and_unknown() -> None:
     unsat.reset_default_context()
     a, b, c = unsat.Ints("a b c")
     si = unsat.Solver()
-    f_pyth = unsat.And(
-        unsat.Eq(a**2 + b**2, c**2), a >= 3, a <= 4, b >= 3, b <= 4, c >= 4, c <= 6
-    )
+    f_pyth = unsat.And(unsat.Eq(a**2 + b**2, c**2), a >= 3, a <= 4, b >= 3, b <= 4, c >= 4, c <= 6)
     si.add(f_pyth)
     assert si.check() is unsat.SAT
     assert si.model().eval_bool(f_pyth, model_completion=True) is True
@@ -203,9 +193,7 @@ def test_smt2_m9_integer_ops_and_nonlinear_logics() -> None:
     rem_target=st.integers(min_value=-1, max_value=4),
     d_mod=st.integers(min_value=2, max_value=5),
 )
-def test_integer_ops_differential_vs_z3(
-    x_lo: int, x_span: int, div_c: int, rem_target: int, d_mod: int
-) -> None:
+def test_integer_ops_differential_vs_z3(x_lo: int, x_span: int, div_c: int, rem_target: int, d_mod: int) -> None:
     ctx = unsat.Context()
     x = ctx.mk_int("x")
     y = ctx.mk_int("y")
@@ -255,18 +243,12 @@ def test_integer_ops_differential_vs_z3(
     prod_target=st.integers(min_value=-6, max_value=9),
     is_eq=st.booleans(),
 )
-def test_qf_nia_bounded_differential_vs_z3(
-    lo: int, span: int, prod_target: int, is_eq: bool
-) -> None:
+def test_qf_nia_bounded_differential_vs_z3(lo: int, span: int, prod_target: int, is_eq: bool) -> None:
     ctx = unsat.Context()
     x = ctx.mk_int("x")
     y = ctx.mk_int("y")
     prod = ctx.mk_mul(x, y)
-    rel = (
-        ctx.mk_eq(prod, ctx.mk_int_val(prod_target))
-        if is_eq
-        else ctx.mk_ge(prod, ctx.mk_int_val(prod_target))
-    )
+    rel = ctx.mk_eq(prod, ctx.mk_int_val(prod_target)) if is_eq else ctx.mk_ge(prod, ctx.mk_int_val(prod_target))
     formulas = [
         ctx.mk_ge(x, ctx.mk_int_val(lo)),
         ctx.mk_le(x, ctx.mk_int_val(lo + span)),
@@ -301,6 +283,4 @@ def test_lra_standalone_nonlinear_flag_check() -> None:
     ctx = unsat.Context()
     r = ctx.mk_real("r")
     with pytest.raises(ValueError, match="Non-linear"):
-        SMTSolver(ctx)._lra.__class__(ctx).register_atom(
-            ctx.mk_gt(r * r, ctx.mk_real_val(1))
-        )
+        SMTSolver(ctx)._lra.__class__(ctx).register_atom(ctx.mk_gt(r * r, ctx.mk_real_val(1)))

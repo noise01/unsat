@@ -90,9 +90,7 @@ def test_ctx_simplify_tactic() -> None:
     )
 
     # Cross-formula propagation in CtxSimplifyTactic preserves defining facts & Z3 eqv.
-    res = CtxSimplifyTactic().apply(
-        (ctx.mk_eq(x, ctx.mk_int_val(3)), ctx.mk_eq(f(x), y + ctx.mk_int_val(2)))
-    )
+    res = CtxSimplifyTactic().apply((ctx.mk_eq(x, ctx.mk_int_val(3)), ctx.mk_eq(f(x), y + ctx.mk_int_val(2))))
     assert res.formulas == (
         ctx.mk_eq(x, ctx.mk_int_val(3)),
         ctx.mk_eq(f(ctx.mk_int_val(3)), y + ctx.mk_int_val(2)),
@@ -189,9 +187,9 @@ def test_gaussian_elim_and_propagate_bounds_with_model_reconstruction() -> None:
     assert pmodel.eval_int(iy) >= 4
 
     # Empty integer interval conflict (ix > 2 /\ ix < 3 -> false)
-    assert propagate_bounds(
-        (ctx.mk_gt(ix, ctx.mk_int_val(2)), ctx.mk_lt(ix, ctx.mk_int_val(3)))
-    ).formulas == (ctx.false_expr,)
+    assert propagate_bounds((ctx.mk_gt(ix, ctx.mk_int_val(2)), ctx.mk_lt(ix, ctx.mk_int_val(3)))).formulas == (
+        ctx.false_expr,
+    )
 
     # solve_with_tactic end-to-end: SAT model conversion, UNSAT, and budgets.
     res_sat, model_sat = solve_with_tactic(pin_goals, pipeline)

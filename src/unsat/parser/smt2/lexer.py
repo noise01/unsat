@@ -5,9 +5,7 @@ from dataclasses import dataclass
 
 type SExpr = _Atom | tuple[SExpr, ...]
 
-_SIMPLE_SYMBOL_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789~!@$%^&*_-+=<>.?/"
-)
+_SIMPLE_SYMBOL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789~!@$%^&*_-+=<>.?/")
 _HEX_CHARS = frozenset("0123456789abcdefABCDEF")
 
 
@@ -103,10 +101,7 @@ def tokenize_smt2(text: str) -> list[_Token]:
                 chars.append(text[i])
                 i += 1
             if i >= n:
-                msg = (
-                    f"Line {start_line}, col {start_col}: "
-                    "unterminated quoted symbol '|...|'"
-                )
+                msg = f"Line {start_line}, col {start_col}: unterminated quoted symbol '|...|'"
                 raise ValueError(msg)
             i += 1
             col += 1

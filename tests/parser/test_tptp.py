@@ -173,18 +173,11 @@ def test_solve_tptp_entailment_and_satisfiability() -> None:
     assert verdict is SolveResult.UNSAT
     assert stats["quantifier_ematch_rounds"] >= 1
 
-    not_entailed_script = (
-        "fof(r1, axiom, ![X] : (human(X) => mortal(X))).\n"
-        "fof(c1, conjecture, human(socrates)).\n"
-    )
+    not_entailed_script = "fof(r1, axiom, ![X] : (human(X) => mortal(X))).\nfof(c1, conjecture, human(socrates)).\n"
     verdict_sat, _ = solve_tptp(not_entailed_script)
     assert verdict_sat is SolveResult.SAT
 
-    euf_unsat = (
-        "fof(e1, axiom, a = b).\n"
-        "fof(e2, axiom, b = c).\n"
-        "fof(e3, axiom, f(a) != f(c)).\n"
-    )
+    euf_unsat = "fof(e1, axiom, a = b).\nfof(e2, axiom, b = c).\nfof(e3, axiom, f(a) != f(c)).\n"
     assert solve_tptp(euf_unsat)[0] is SolveResult.UNSAT
 
 
@@ -204,10 +197,7 @@ def test_per_check_quantifier_budget_overrides() -> None:
     ground_solver = unsat.Solver()
     _, _, ground = parse_fof("fof(g, axiom, (a = b) & p(a)).", ctx=ctx)
     ground_solver.add(ground)
-    assert (
-        ground_solver.check(max_quantifier_rounds=0, max_quantifier_matches=0)
-        is unsat.SAT
-    )
+    assert ground_solver.check(max_quantifier_rounds=0, max_quantifier_matches=0) is unsat.SAT
 
     with pytest.raises(ValueError, match="max_rounds"):
         solver.check(max_quantifier_rounds=-1)
@@ -233,7 +223,7 @@ def test_tptp_qf_euf_differential_against_z3() -> None:
         z3.And(za == zb, zp(za), z3.Not(zp(zb))),
         z3.And(za == zb, z3.Or(zp(za), zq(zc)), z3.Not(zp(zb))),
         z3.And(z3.Implies(za == zb, zf(za) == zf(zb)), za != zb),
-        za != za,
+        za != za,  # noqa: PLR0124
     ]
     for (tptp_text, expected_z3), z3_expr in zip(cases, z3_map, strict=True):
         zs = z3.Solver()
@@ -241,7 +231,5 @@ def test_tptp_qf_euf_differential_against_z3() -> None:
         assert zs.check() == expected_z3
 
         verdict, _ = solve_tptp(tptp_text)
-        expected_unsat = (
-            SolveResult.UNSAT if expected_z3 == z3.unsat else SolveResult.SAT
-        )
+        expected_unsat = SolveResult.UNSAT if expected_z3 == z3.unsat else SolveResult.SAT
         assert verdict is expected_unsat

@@ -21,9 +21,7 @@ class _MockSubSolver:
         self._ctx = ctx
         self._force_unknown = force_unknown
 
-    def check_formula(
-        self, formulas: Sequence[Expr]
-    ) -> tuple[SubSolverStatus, Model | None]:
+    def check_formula(self, formulas: Sequence[Expr]) -> tuple[SubSolverStatus, Model | None]:
         if self._force_unknown:
             return SubSolverStatus.UNKNOWN, None
         s = SMTSolver(self._ctx)
@@ -199,9 +197,7 @@ def test_ematch_candidate_work_budget_bounds_and_validation() -> None:
     assert isinstance(q_nl, Quantifier)
     matcher_nl = EMatcher()
     stats_nl = QuantifierStats()
-    res_nl = matcher_nl.match_round(
-        euf_nl, (q_nl,), QuantifierBudget(max_matches=2), stats_nl
-    )
+    res_nl = matcher_nl.match_round(euf_nl, (q_nl,), QuantifierBudget(max_matches=2), stats_nl)
     assert res_nl.instantiations == ()
     assert res_nl.truncated is True
     assert res_nl.matches_used == 2
@@ -220,9 +216,7 @@ def test_ematch_candidate_work_budget_bounds_and_validation() -> None:
     assert isinstance(q_nested, Quantifier)
     matcher_nested = EMatcher()
     stats_nested = QuantifierStats()
-    res_nested = matcher_nested.match_round(
-        euf_nested, (q_nested,), QuantifierBudget(max_matches=3), stats_nested
-    )
+    res_nested = matcher_nested.match_round(euf_nested, (q_nested,), QuantifierBudget(max_matches=3), stats_nested)
     assert res_nested.instantiations == ()
     assert res_nested.truncated is True
     assert res_nested.matches_used == 3
@@ -235,9 +229,7 @@ def test_ematch_candidate_work_budget_bounds_and_validation() -> None:
     q_p = ctx.mk_forall((x,), p(x), patterns=(p(x),))
     assert isinstance(q_p, Quantifier)
     stats_fit = QuantifierStats()
-    res_fit = EMatcher().match_round(
-        euf_fit, (q_p,), QuantifierBudget(max_matches=1), stats_fit
-    )
+    res_fit = EMatcher().match_round(euf_fit, (q_p,), QuantifierBudget(max_matches=1), stats_fit)
     assert len(res_fit.instantiations) == 1
     assert res_fit.truncated is False
     assert res_fit.matches_used == 1
@@ -246,9 +238,7 @@ def test_ematch_candidate_work_budget_bounds_and_validation() -> None:
     euf_fit.register_bool_term(p(consts[1]))
     euf_fit.propagate()
     stats_over = QuantifierStats()
-    res_over = EMatcher().match_round(
-        euf_fit, (q_p,), QuantifierBudget(max_matches=1), stats_over
-    )
+    res_over = EMatcher().match_round(euf_fit, (q_p,), QuantifierBudget(max_matches=1), stats_over)
     assert len(res_over.instantiations) == 1
     assert res_over.truncated is True
     assert res_over.matches_used == 1
@@ -256,10 +246,6 @@ def test_ematch_candidate_work_budget_bounds_and_validation() -> None:
 
     # 4. Explicit max_matches validation on match_round.
     with pytest.raises(ValueError, match="max_matches"):
-        EMatcher().match_round(
-            euf_fit, (q_p,), QuantifierBudget(), stats_over, max_matches=-1
-        )
+        EMatcher().match_round(euf_fit, (q_p,), QuantifierBudget(), stats_over, max_matches=-1)
     with pytest.raises(ValueError, match="max_matches"):
-        EMatcher().match_round(
-            euf_fit, (q_p,), QuantifierBudget(), stats_over, max_matches=True
-        )
+        EMatcher().match_round(euf_fit, (q_p,), QuantifierBudget(), stats_over, max_matches=True)

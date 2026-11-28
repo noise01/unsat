@@ -138,13 +138,12 @@ def _build_linear_rhs(
                 terms.append(ctx.mk_neg(var))
             else:
                 terms.append(ctx.mk_mul(ctx.mk_int_val(ratio.numerator), var))
+        elif ratio == 1:
+            terms.append(var)
+        elif ratio == -1:
+            terms.append(ctx.mk_neg(var))
         else:
-            if ratio == 1:
-                terms.append(var)
-            elif ratio == -1:
-                terms.append(ctx.mk_neg(var))
-            else:
-                terms.append(ctx.mk_mul(ctx.mk_real_val(ratio), var))
+            terms.append(ctx.mk_mul(ctx.mk_real_val(ratio), var))
 
     k_term = -const_val / piv_coeff
     if k_term != 0 or not terms:
@@ -156,9 +155,7 @@ def _build_linear_rhs(
     return terms[0] if len(terms) == 1 else ctx.mk_add(*terms)
 
 
-def _solve_defining_eq(
-    ctx: Context, conjunct: Expr
-) -> tuple[str, App | None, Expr | None]:
+def _solve_defining_eq(ctx: Context, conjunct: Expr) -> tuple[str, App | None, Expr | None]:
     """Classify a conjunct as conflict, trivial, or substitution ``(var, rhs)``."""
     if conjunct is ctx.false_expr:
         return ("conflict", None, None)
@@ -196,23 +193,15 @@ def _solve_defining_eq(
                         if diff_k.numerator % g != 0:
                             return ("conflict", None, None)
                         piv = next(
-                            (
-                                v
-                                for v in sorted(diff_m, key=lambda t: t.id)
-                                if abs(diff_m[v]) == 1
-                            ),
+                            (v for v in sorted(diff_m, key=lambda t: t.id) if abs(diff_m[v]) == 1),
                             None,
                         )
                         if piv is not None:
-                            sol = _build_linear_rhs(
-                                ctx, lhs.sort, diff_m, piv, diff_m[piv], diff_k
-                            )
+                            sol = _build_linear_rhs(ctx, lhs.sort, diff_m, piv, diff_m[piv], diff_k)
                             return ("subst", piv, sol)
                     else:
                         piv = min(diff_m, key=lambda t: t.id)
-                        sol = _build_linear_rhs(
-                            ctx, lhs.sort, diff_m, piv, diff_m[piv], diff_k
-                        )
+                        sol = _build_linear_rhs(ctx, lhs.sort, diff_m, piv, diff_m[piv], diff_k)
                         return ("subst", piv, sol)
 
             # Non-linear or non-arithmetic syntactic defining equality
@@ -282,11 +271,7 @@ def gaussian_elim(formulas: Sequence[Expr]) -> TacticResult:
             work = next_work
 
     deduped = tuple(dict.fromkeys(work))
-    converter = (
-        SubstitutionModelConverter(dict(reversed(eliminated)))
-        if eliminated
-        else IdentityModelConverter()
-    )
+    converter = SubstitutionModelConverter(dict(reversed(eliminated))) if eliminated else IdentityModelConverter()
     return TacticResult(deduped, converter)
 
 
@@ -307,10 +292,7 @@ class _Interval:
 
     def tighten_lower(self, val: Fraction, strict: bool, *, is_int: bool) -> bool:
         if is_int:
-            if strict:
-                bound = Fraction(math.floor(val) + 1)
-            else:
-                bound = Fraction(math.ceil(val))
+            bound = Fraction(math.floor(val) + 1) if strict else Fraction(math.ceil(val))
             eff_strict = False
         else:
             bound = val
@@ -325,10 +307,7 @@ class _Interval:
 
     def tighten_upper(self, val: Fraction, strict: bool, *, is_int: bool) -> bool:
         if is_int:
-            if strict:
-                bound = Fraction(math.ceil(val) - 1)
-            else:
-                bound = Fraction(math.floor(val))
+            bound = Fraction(math.ceil(val) - 1) if strict else Fraction(math.floor(val))
             eff_strict = False
         else:
             bound = val
@@ -346,17 +325,10 @@ class _Interval:
             return True
         if self.lower > self.upper:
             return False
-        return not (
-            self.lower == self.upper and (self.lower_strict or self.upper_strict)
-        )
+        return not (self.lower == self.upper and (self.lower_strict or self.upper_strict))
 
     def pinned_value(self) -> Fraction | None:
-        if (
-            self.lower is not None
-            and self.lower == self.upper
-            and not self.lower_strict
-            and not self.upper_strict
-        ):
+        if self.lower is not None and self.lower == self.upper and not self.lower_strict and not self.upper_strict:
             return self.lower
         return None
 
@@ -420,9 +392,7 @@ def _apply_cmp_bound(
     iv = bounds.setdefault(var, _Interval())
     is_int = var.is_int
     if eff_kind is DeclKind.EQ:
-        return iv.tighten_lower(target, False, is_int=is_int) and iv.tighten_upper(
-            target, False, is_int=is_int
-        )
+        return iv.tighten_lower(target, False, is_int=is_int) and iv.tighten_upper(target, False, is_int=is_int)
     if eff_kind is DeclKind.LE:
         return iv.tighten_upper(target, False, is_int=is_int)
     if eff_kind is DeclKind.LT:
@@ -508,20 +478,14 @@ def propagate_bounds(formulas: Sequence[Expr]) -> TacticResult:
         for idx, info in enumerate(parsed):
             if work[idx] is ctx.false_expr:
                 return TacticResult((ctx.false_expr,), IdentityModelConverter())
-            if info is not None and not _apply_cmp_bound(
-                bounds, info[0], info[1], info[2]
-            ):
+            if info is not None and not _apply_cmp_bound(bounds, info[0], info[1], info[2]):
                 return TacticResult((ctx.false_expr,), IdentityModelConverter())
 
         pinned: dict[Expr, Expr] = {}
         for var, iv in sorted(bounds.items(), key=lambda kv: kv[0].id):
             pval = iv.pinned_value()
             if pval is not None:
-                c_expr = (
-                    ctx.mk_int_val(pval.numerator)
-                    if var.is_int
-                    else ctx.mk_real_val(pval)
-                )
+                c_expr = ctx.mk_int_val(pval.numerator) if var.is_int else ctx.mk_real_val(pval)
                 pinned[var] = c_expr
                 eliminated.append((var.decl, c_expr))
 
@@ -552,12 +516,8 @@ def propagate_bounds(formulas: Sequence[Expr]) -> TacticResult:
                 other_bounds: dict[App, _Interval] = {}
                 for j, other_info in enumerate(parsed):
                     if j != idx and kept_flags[j] and other_info is not None:
-                        _apply_cmp_bound(
-                            other_bounds, other_info[0], other_info[1], other_info[2]
-                        )
-                verdict = _eval_cmp_under_bounds(
-                    other_bounds, info[0], info[1], info[2]
-                )
+                        _apply_cmp_bound(other_bounds, other_info[0], other_info[1], other_info[2])
+                verdict = _eval_cmp_under_bounds(other_bounds, info[0], info[1], info[2])
                 if verdict is False:
                     return TacticResult((ctx.false_expr,), IdentityModelConverter())
                 if verdict is True:
@@ -570,11 +530,7 @@ def propagate_bounds(formulas: Sequence[Expr]) -> TacticResult:
         if not pruned_any:
             break
 
-    converter = (
-        SubstitutionModelConverter(dict(reversed(eliminated)))
-        if eliminated
-        else IdentityModelConverter()
-    )
+    converter = SubstitutionModelConverter(dict(reversed(eliminated))) if eliminated else IdentityModelConverter()
     return TacticResult(tuple(work), converter)
 
 

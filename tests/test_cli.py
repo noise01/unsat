@@ -163,13 +163,13 @@ def test_unsat_error_returns_nonzero(tmp_path: Path) -> None:
 
 def test_unsat_resource_limit_flags() -> None:
     # PHP(4, 3) in DIMACS exceeds 1 conflict.
-    lines = ["p cnf 12 22"]
-    for i in range(4):
-        lines.append(" ".join(str(i * 3 + j + 1) for j in range(3)) + " 0")
+    lines = [
+        "p cnf 12 22",
+        *(" ".join(str(i * 3 + j + 1) for j in range(3)) + " 0" for i in range(4)),
+    ]
     for j in range(3):
         for i1 in range(4):
-            for i2 in range(i1 + 1, 4):
-                lines.append(f"-{i1 * 3 + j + 1} -{i2 * 3 + j + 1} 0")
+            lines.extend(f"-{i1 * 3 + j + 1} -{i2 * 3 + j + 1} 0" for i2 in range(i1 + 1, 4))
     php_cnf = "\n".join(lines) + "\n"
 
     dimacs_limited = subprocess.run(
@@ -258,11 +258,7 @@ def test_unsat_solves_tptp_files_and_stdin(tmp_path: Path) -> None:
 
     auto_stdin = subprocess.run(
         [_cli_command(), "-"],
-        input=(
-            "% TPTP comment\n"
-            "fof(loop, axiom, ![X] : (p(X) => p(f(X)))).\n"
-            "fof(s, axiom, p(a)).\n"
-        ),
+        input=("% TPTP comment\nfof(loop, axiom, ![X] : (p(X) => p(f(X)))).\nfof(s, axiom, p(a)).\n"),
         check=False,
         capture_output=True,
         text=True,

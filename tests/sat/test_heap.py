@@ -6,9 +6,7 @@ from hypothesis import strategies as st
 
 from unsat.sat.heap import VarMaxHeap
 
-type HeapOp = (
-    tuple[Literal["insert", "pop", "rescale"], int] | tuple[Literal["bump"], int, float]
-)
+type HeapOp = tuple[Literal["insert", "pop", "rescale"], int] | tuple[Literal["bump"], int, float]
 
 
 def _assert_heap_invariants(heap: VarMaxHeap, expected: dict[int, float]) -> None:

@@ -4,9 +4,8 @@ version = "0.3.0"
 description = "A Z3-inspired SMT solver in Python"
 readme = "README.md"
 license = "Apache-2.0"
-authors = [
-    { name = "noise01", email = "noisecode.01@gmail.com" }
-]
+license-files = ["LICENSE"]
+authors = [{ name = "noise01" }]
 requires-python = ">=3.14"
 dependencies = []
 keywords = [
@@ -52,22 +51,97 @@ dev = [
     "hypothesis>=6.170.17",
     "import-linter>=2.17",
     "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
     "pytest-timeout>=2.4.0",
+    "pyyaml>=6.0.3",
     "ruff>=0.17.6",
-    "rumdl>=0.3.5",
-    "ty>=0.0.107",
+    "rumdl>=0.3.6",
+    "ty>=0.0.111",
     "unsat-legacy",
     "z3-solver>=4.13",
 ]
 
+[tool.coverage.run]
+source = ["src/unsat"]
+branch = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = true
+fail_under = 80
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+include = ["src/unsat"]
+
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 timeout = 30
+addopts = ["--strict-markers", "--strict-config"]
 
 [tool.ruff]
 target-version = "py314"
+line-length = 120
+extend-exclude = ["packages/unsat-legacy"]
+
+[tool.ruff.format]
+line-ending = "lf"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT"]
+select = ["ALL"]
+ignore = [
+    "COM812",  # handled by the formatter
+    "CPY001",  # license stated in LICENSE rather than per-file headers
+    "D1",      # docstrings reviewed by humans rather than lint
+    "D203",    # incompatible with D211 (no blank line before class docstring)
+    "D213",    # incompatible with D212 (multi-line summary on first line)
+    "D413",    # no blank line after the last docstring section
+    "ERA001",  # mathematical derivations in comments can look like code statements
+    "PLR0911", # dispatch functions return early per branch
+    # PEP 649 evaluates exported annotations at runtime; keep annotated imports live.
+    "TC001",
+    "TC002",
+    "TC003",
+    # Solver algorithms, dispatchers, and theory helpers have intrinsic branching and state.
+    "C901",
+    "FBT001",
+    "FBT003",
+    "N802",    # Z3-compatible CamelCase DSL builders
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLR2004", # bit-width and algebraic constants are clearer inline
+    "S101",    # internal solver invariants use assert
+    "SLF001",  # tightly coupled solver components share private helpers
+    "TRY004",  # public APIs raise ValueError on invalid inputs/types for compatibility
+]
+
+[tool.ruff.lint.per-file-ignores]
+"benchmarks/**/*.py" = [
+    "ANN401",
+    "INP001",
+    "T201",
+]
+"src/unsat/api.py" = [
+    "PLW0603", # module-level default AST context setter
+]
+"src/unsat/cli.py" = [
+    "T201",    # CLI stdout/stderr output
+]
+"tests/**/*.py" = [
+    "ANN001",
+    "ANN201",
+    "ANN202",
+    "D400",
+    "D415",
+    "INP001",
+    "S311",
+    "S603",
+]
 
 [tool.importlinter]
 root_package = "unsat"

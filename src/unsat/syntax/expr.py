@@ -195,10 +195,7 @@ class Expr:
         return self.id
 
     def __bool__(self) -> NoReturn:
-        msg = (
-            "Symbolic Expr cannot be coerced to bool; "
-            "use explicit operators or Solver.check()"
-        )
+        msg = "Symbolic Expr cannot be coerced to bool; use explicit operators or Solver.check()"
         raise TypeError(msg)
 
     def _coerce_arith(self, other: object) -> Expr | None:
@@ -461,9 +458,7 @@ class Expr:
         if isinstance(other, bool) or not isinstance(other, int):
             return NotImplemented
         if other < 0:
-            msg = (
-                f"Negative exponent is not supported on arithmetic expressions: {other}"
-            )
+            msg = f"Negative exponent is not supported on arithmetic expressions: {other}"
             raise ValueError(msg)
         if other == 0:
             return self.ctx.mk_int_val(1) if self.is_int else self.ctx.mk_real_val(1)
@@ -665,15 +660,11 @@ class Quantifier(Expr):
 
     def __str__(self) -> str:
         kw = "ForAll" if self.is_forall else "Exists"
-        binders = ", ".join(
-            f"{name}: {sort}"
-            for name, sort in zip(self.var_names, self.var_sorts, strict=True)
-        )
+        binders = ", ".join(f"{name}: {sort}" for name, sort in zip(self.var_names, self.var_sorts, strict=True))
         if not self.patterns:
             return f"{kw}([{binders}], {self.body})"
         pats = ", ".join(
-            f"({', '.join(str(t) for t in pat)})" if len(pat) > 1 else str(pat[0])
-            for pat in self.patterns
+            f"({', '.join(str(t) for t in pat)})" if len(pat) > 1 else str(pat[0]) for pat in self.patterns
         )
         return f"{kw}([{binders}], {self.body}, patterns=[{pats}])"
 
@@ -699,11 +690,7 @@ def _abstract_vars_impl(
             memo[key] = node
             continue
         if isinstance(node, BoundVar):
-            memo[key] = (
-                node
-                if node.index < depth
-                else ctx.mk_bound_var(node.index + k, node.sort)
-            )
+            memo[key] = node if node.index < depth else ctx.mk_bound_var(node.index + k, node.sort)
             continue
         if isinstance(node, App):
             slot = slot_map.get(node)
@@ -715,9 +702,7 @@ def _abstract_vars_impl(
                 continue
             if not expanded:
                 stack.append((node, depth, True))
-                for arg in reversed(node.args):
-                    if (arg, depth) not in memo:
-                        stack.append((arg, depth, False))
+                stack.extend((arg, depth, False) for arg in reversed(node.args) if (arg, depth) not in memo)
                 continue
             new_args = [memo[(arg, depth)] for arg in node.args]
             if all(n is o for n, o in zip(new_args, node.args, strict=True)):
@@ -729,17 +714,17 @@ def _abstract_vars_impl(
             cdepth = depth + node.num_vars
             if not expanded:
                 stack.append((node, depth, True))
-                for pat in reversed(node.patterns):
-                    for term in reversed(pat):
-                        if (term, cdepth) not in memo:
-                            stack.append((term, cdepth, False))
+                stack.extend(
+                    (term, cdepth, False)
+                    for pat in reversed(node.patterns)
+                    for term in reversed(pat)
+                    if (term, cdepth) not in memo
+                )
                 if (node.body, cdepth) not in memo:
                     stack.append((node.body, cdepth, False))
                 continue
             new_body = memo[(node.body, cdepth)]
-            new_pats = tuple(
-                tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns
-            )
+            new_pats = tuple(tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns)
             if new_body is node.body and new_pats == node.patterns:
                 memo[key] = node
             else:
@@ -757,11 +742,7 @@ def _abstract_vars_impl(
 
 
 def _is_not_of(candidate: Expr, target: Expr) -> bool:
-    return (
-        isinstance(candidate, App)
-        and candidate.decl.kind is DeclKind.NOT
-        and candidate.args[0] is target
-    )
+    return isinstance(candidate, App) and candidate.decl.kind is DeclKind.NOT and candidate.args[0] is target
 
 
 if "unsat.syntax.context" not in sys.modules:

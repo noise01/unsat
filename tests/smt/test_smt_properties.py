@@ -88,13 +88,9 @@ def _render_unsat(node: NFormula, ctx: Context, env: list[Expr]) -> Expr:
         case _NNAry("distinct", args):
             return ctx.mk_distinct(*(_render_unsat(a, ctx, env) for a in args))
         case _NBinary("implies", lhs, rhs):
-            return ctx.mk_implies(
-                _render_unsat(lhs, ctx, env), _render_unsat(rhs, ctx, env)
-            )
+            return ctx.mk_implies(_render_unsat(lhs, ctx, env), _render_unsat(rhs, ctx, env))
         case _NBinary("xor", lhs, rhs):
-            return ctx.mk_xor(
-                _render_unsat(lhs, ctx, env), _render_unsat(rhs, ctx, env)
-            )
+            return ctx.mk_xor(_render_unsat(lhs, ctx, env), _render_unsat(rhs, ctx, env))
         case _NBinary("eq", lhs, rhs):
             return ctx.mk_eq(_render_unsat(lhs, ctx, env), _render_unsat(rhs, ctx, env))
         case _NIte(c, t, e):
@@ -116,13 +112,9 @@ def _render_z3(node: NFormula, env: list[z3.BoolRef]) -> z3.BoolRef:
         case _NNot(arg):
             return z3.Not(_render_z3(arg, env))
         case _NNAry("and", args):
-            return (
-                z3.And([_render_z3(a, env) for a in args]) if args else z3.BoolVal(True)
-            )
+            return z3.And([_render_z3(a, env) for a in args]) if args else z3.BoolVal(True)
         case _NNAry("or", args):
-            return (
-                z3.Or([_render_z3(a, env) for a in args]) if args else z3.BoolVal(False)
-            )
+            return z3.Or([_render_z3(a, env) for a in args]) if args else z3.BoolVal(False)
         case _NNAry("distinct", args):
             if len(args) <= 1:
                 return z3.BoolVal(True)
@@ -153,9 +145,7 @@ def _z3_verdict(res: z3.CheckSatResult) -> SolveResult:
 
 @settings(max_examples=80, deadline=None)
 @given(num_vars=st.integers(min_value=1, max_value=8), data=st.data())
-def test_qf_bool_simplify_nnf_and_solver_match_z3(
-    num_vars: int, data: st.DataObject
-) -> None:
+def test_qf_bool_simplify_nnf_and_solver_match_z3(num_vars: int, data: st.DataObject) -> None:
     formulas = data.draw(st.lists(_formula_strategy(num_vars), min_size=1, max_size=6))
 
     ctx = Context()
@@ -190,9 +180,7 @@ def test_qf_bool_simplify_nnf_and_solver_match_z3(
 
 @settings(max_examples=50, deadline=None)
 @given(num_vars=st.integers(min_value=2, max_value=7), data=st.data())
-def test_incremental_push_pop_assumptions_match_z3(
-    num_vars: int, data: st.DataObject
-) -> None:
+def test_incremental_push_pop_assumptions_match_z3(num_vars: int, data: st.DataObject) -> None:
     ctx = Context()
     u_vars: list[Expr] = [ctx.mk_bool(f"p_{i}") for i in range(num_vars)]
     z_vars = [z3.Bool(f"p_{i}") for i in range(num_vars)]

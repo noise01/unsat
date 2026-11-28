@@ -50,9 +50,7 @@ def expr_to_re(expr: Expr) -> ReNode | None:
             continue
         if not expanded and node.args:
             stack.append((node, True))
-            for arg in reversed(node.args):
-                if arg not in memo:
-                    stack.append((arg, False))
+            stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
             continue
 
         kind = node.decl.kind
@@ -72,12 +70,7 @@ def expr_to_re(expr: Expr) -> ReNode | None:
                 memo[node] = RE_ALLCHAR
             case DeclKind.RE_RANGE:
                 lo_e, hi_e = node.args
-                if (
-                    isinstance(lo_e, Const)
-                    and isinstance(hi_e, Const)
-                    and lo_e.is_string
-                    and hi_e.is_string
-                ):
+                if isinstance(lo_e, Const) and isinstance(hi_e, Const) and lo_e.is_string and hi_e.is_string:
                     assert isinstance(lo_e.value, str)
                     assert isinstance(hi_e.value, str)
                     memo[node] = re_range(lo_e.value, hi_e.value)
@@ -85,25 +78,13 @@ def expr_to_re(expr: Expr) -> ReNode | None:
                     memo[node] = None
             case DeclKind.RE_CONCAT:
                 parts = [memo[a] for a in node.args]
-                memo[node] = (
-                    None
-                    if any(p is None for p in parts)
-                    else re_concat(*(p for p in parts if p is not None))
-                )
+                memo[node] = None if any(p is None for p in parts) else re_concat(*(p for p in parts if p is not None))
             case DeclKind.RE_UNION:
                 parts = [memo[a] for a in node.args]
-                memo[node] = (
-                    None
-                    if any(p is None for p in parts)
-                    else re_union(*(p for p in parts if p is not None))
-                )
+                memo[node] = None if any(p is None for p in parts) else re_union(*(p for p in parts if p is not None))
             case DeclKind.RE_INTER:
                 parts = [memo[a] for a in node.args]
-                memo[node] = (
-                    None
-                    if any(p is None for p in parts)
-                    else re_inter(*(p for p in parts if p is not None))
-                )
+                memo[node] = None if any(p is None for p in parts) else re_inter(*(p for p in parts if p is not None))
             case DeclKind.RE_COMP:
                 sub = memo[node.args[0]]
                 memo[node] = None if sub is None else re_comp(sub)
@@ -209,9 +190,7 @@ def build_str_len(ctx: Context, arg: Expr) -> Expr:
     s_val = _const_str(arg)
     if s_val is not None:
         return ctx.mk_int_val(len(s_val))
-    decl = ctx._intern_decl(
-        DeclKind.STR_LEN, "str.len", (ctx.string_sort,), ctx.int_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_LEN, "str.len", (ctx.string_sort,), ctx.int_sort)
     return ctx._intern_app(decl, (arg,))
 
 
@@ -227,9 +206,7 @@ def build_str_at(ctx: Context, s: Expr, idx: Expr) -> Expr:
         return ctx.mk_string_val("")
     if s_val == "":
         return ctx.mk_string_val("")
-    decl = ctx._intern_decl(
-        DeclKind.STR_AT, "str.at", (ctx.string_sort, ctx.int_sort), ctx.string_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_AT, "str.at", (ctx.string_sort, ctx.int_sort), ctx.string_sort)
     return ctx._intern_app(decl, (s, idx))
 
 
@@ -399,16 +376,12 @@ def build_str_cmp(ctx: Context, kind: DeclKind, lhs: Expr, rhs: Expr) -> Expr:
     l_val = _const_str(lhs)
     r_val = _const_str(rhs)
     if l_val is not None and r_val is not None:
-        return ctx.mk_bool_val(
-            l_val < r_val if kind is DeclKind.STR_LT else l_val <= r_val
-        )
+        return ctx.mk_bool_val(l_val < r_val if kind is DeclKind.STR_LT else l_val <= r_val)
     if kind is DeclKind.STR_LT and r_val == "":
         return ctx.mk_false()
     if kind is DeclKind.STR_LE and l_val == "":
         return ctx.mk_true()
-    decl = ctx._intern_decl(
-        kind, kind.value, (ctx.string_sort, ctx.string_sort), ctx.bool_sort
-    )
+    decl = ctx._intern_decl(kind, kind.value, (ctx.string_sort, ctx.string_sort), ctx.bool_sort)
     return ctx._intern_app(decl, (lhs, rhs))
 
 
@@ -418,9 +391,7 @@ def build_str_to_int(ctx: Context, s: Expr) -> Expr:
     s_val = _const_str(s)
     if s_val is not None:
         return ctx.mk_int_val(eval_str_to_int(s_val))
-    decl = ctx._intern_decl(
-        DeclKind.STR_TO_INT, "str.to_int", (ctx.string_sort,), ctx.int_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_TO_INT, "str.to_int", (ctx.string_sort,), ctx.int_sort)
     return ctx._intern_app(decl, (s,))
 
 
@@ -430,9 +401,7 @@ def build_str_from_int(ctx: Context, n: Expr) -> Expr:
     n_val = _const_int(n)
     if n_val is not None:
         return ctx.mk_string_val(eval_str_from_int(n_val))
-    decl = ctx._intern_decl(
-        DeclKind.STR_FROM_INT, "str.from_int", (ctx.int_sort,), ctx.string_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_FROM_INT, "str.from_int", (ctx.int_sort,), ctx.string_sort)
     return ctx._intern_app(decl, (n,))
 
 
@@ -442,9 +411,7 @@ def build_str_to_code(ctx: Context, s: Expr) -> Expr:
     s_val = _const_str(s)
     if s_val is not None:
         return ctx.mk_int_val(eval_str_to_code(s_val))
-    decl = ctx._intern_decl(
-        DeclKind.STR_TO_CODE, "str.to_code", (ctx.string_sort,), ctx.int_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_TO_CODE, "str.to_code", (ctx.string_sort,), ctx.int_sort)
     return ctx._intern_app(decl, (s,))
 
 
@@ -454,9 +421,7 @@ def build_str_from_code(ctx: Context, n: Expr) -> Expr:
     n_val = _const_int(n)
     if n_val is not None:
         return ctx.mk_string_val(eval_str_from_code(n_val))
-    decl = ctx._intern_decl(
-        DeclKind.STR_FROM_CODE, "str.from_code", (ctx.int_sort,), ctx.string_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_FROM_CODE, "str.from_code", (ctx.int_sort,), ctx.string_sort)
     return ctx._intern_app(decl, (n,))
 
 
@@ -466,9 +431,7 @@ def build_str_is_digit(ctx: Context, s: Expr) -> Expr:
     s_val = _const_str(s)
     if s_val is not None:
         return ctx.mk_bool_val(eval_str_is_digit(s_val))
-    decl = ctx._intern_decl(
-        DeclKind.STR_IS_DIGIT, "str.is_digit", (ctx.string_sort,), ctx.bool_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_IS_DIGIT, "str.is_digit", (ctx.string_sort,), ctx.bool_sort)
     return ctx._intern_app(decl, (s,))
 
 
@@ -498,9 +461,7 @@ def build_str_in_re(ctx: Context, s: Expr, reg: Expr) -> Expr:
 def build_str_to_re(ctx: Context, s: Expr) -> Expr:
     """Build ``(str.to_re s)``."""
     _check_string(ctx, s)
-    decl = ctx._intern_decl(
-        DeclKind.STR_TO_RE, "str.to_re", (ctx.string_sort,), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.STR_TO_RE, "str.to_re", (ctx.string_sort,), ctx.reglan_sort)
     return ctx._intern_app(decl, (s,))
 
 
@@ -560,9 +521,7 @@ def build_re_concat(ctx: Context, *args: Expr) -> Expr:
         return eps
     if len(merged) == 1:
         return merged[0]
-    decl = ctx._intern_decl(
-        DeclKind.RE_CONCAT, "re.++", (ctx.reglan_sort,) * len(merged), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_CONCAT, "re.++", (ctx.reglan_sort,) * len(merged), ctx.reglan_sort)
     return ctx._intern_app(decl, tuple(merged))
 
 
@@ -576,11 +535,7 @@ def build_re_union(ctx: Context, *args: Expr) -> Expr:
     seen: set[Expr] = set()
     for arg in args:
         _check_reglan(ctx, arg)
-        items = (
-            arg.args
-            if isinstance(arg, App) and arg.decl.kind is DeclKind.RE_UNION
-            else (arg,)
-        )
+        items = arg.args if isinstance(arg, App) and arg.decl.kind is DeclKind.RE_UNION else (arg,)
         for item in items:
             if item is re_all:
                 return re_all
@@ -593,9 +548,7 @@ def build_re_union(ctx: Context, *args: Expr) -> Expr:
         return build_re_none(ctx)
     if len(kept) == 1:
         return kept[0]
-    decl = ctx._intern_decl(
-        DeclKind.RE_UNION, "re.union", (ctx.reglan_sort,) * len(kept), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_UNION, "re.union", (ctx.reglan_sort,) * len(kept), ctx.reglan_sort)
     return ctx._intern_app(decl, tuple(kept))
 
 
@@ -608,11 +561,7 @@ def build_re_inter(ctx: Context, *args: Expr) -> Expr:
     seen: set[Expr] = set()
     for arg in args:
         _check_reglan(ctx, arg)
-        items = (
-            arg.args
-            if isinstance(arg, App) and arg.decl.kind is DeclKind.RE_INTER
-            else (arg,)
-        )
+        items = arg.args if isinstance(arg, App) and arg.decl.kind is DeclKind.RE_INTER else (arg,)
         for item in items:
             if isinstance(item, App) and item.decl.kind is DeclKind.RE_NONE:
                 return build_re_none(ctx)
@@ -625,9 +574,7 @@ def build_re_inter(ctx: Context, *args: Expr) -> Expr:
         return build_re_all(ctx)
     if len(kept) == 1:
         return kept[0]
-    decl = ctx._intern_decl(
-        DeclKind.RE_INTER, "re.inter", (ctx.reglan_sort,) * len(kept), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_INTER, "re.inter", (ctx.reglan_sort,) * len(kept), ctx.reglan_sort)
     return ctx._intern_app(decl, tuple(kept))
 
 
@@ -640,9 +587,7 @@ def build_re_star(ctx: Context, arg: Expr) -> Expr:
             return build_str_to_re(ctx, ctx.mk_string_val(""))
         if k in (DeclKind.RE_STAR, DeclKind.RE_ALL):
             return arg
-    decl = ctx._intern_decl(
-        DeclKind.RE_STAR, "re.*", (ctx.reglan_sort,), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_STAR, "re.*", (ctx.reglan_sort,), ctx.reglan_sort)
     return ctx._intern_app(decl, (arg,))
 
 
@@ -651,9 +596,7 @@ def build_re_plus(ctx: Context, arg: Expr) -> Expr:
     _check_reglan(ctx, arg)
     if isinstance(arg, App) and arg.decl.kind is DeclKind.RE_NONE:
         return build_re_none(ctx)
-    decl = ctx._intern_decl(
-        DeclKind.RE_PLUS, "re.+", (ctx.reglan_sort,), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_PLUS, "re.+", (ctx.reglan_sort,), ctx.reglan_sort)
     return ctx._intern_app(decl, (arg,))
 
 
@@ -662,9 +605,7 @@ def build_re_opt(ctx: Context, arg: Expr) -> Expr:
     _check_reglan(ctx, arg)
     if isinstance(arg, App) and arg.decl.kind is DeclKind.RE_NONE:
         return build_str_to_re(ctx, ctx.mk_string_val(""))
-    decl = ctx._intern_decl(
-        DeclKind.RE_OPT, "re.opt", (ctx.reglan_sort,), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_OPT, "re.opt", (ctx.reglan_sort,), ctx.reglan_sort)
     return ctx._intern_app(decl, (arg,))
 
 
@@ -699,9 +640,7 @@ def build_re_comp(ctx: Context, arg: Expr) -> Expr:
             return build_re_none(ctx)
         if arg.decl.kind is DeclKind.RE_COMP:
             return arg.args[0]
-    decl = ctx._intern_decl(
-        DeclKind.RE_COMP, "re.comp", (ctx.reglan_sort,), ctx.reglan_sort
-    )
+    decl = ctx._intern_decl(DeclKind.RE_COMP, "re.comp", (ctx.reglan_sort,), ctx.reglan_sort)
     return ctx._intern_app(decl, (arg,))
 
 

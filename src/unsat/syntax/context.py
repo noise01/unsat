@@ -97,19 +97,13 @@ class Context:
 
     def __init__(self) -> None:
         self._next_id = 0
-        self._sorts: weakref.WeakValueDictionary[tuple[object, ...], Sort] = (
-            weakref.WeakValueDictionary()
-        )
+        self._sorts: weakref.WeakValueDictionary[tuple[object, ...], Sort] = weakref.WeakValueDictionary()
         self._decls: weakref.WeakValueDictionary[
             tuple[DeclKind, str, tuple[Sort, ...], Sort, tuple[int, ...]],
             FuncDecl,
         ] = weakref.WeakValueDictionary()
-        self._exprs: weakref.WeakValueDictionary[tuple[object, ...], Expr] = (
-            weakref.WeakValueDictionary()
-        )
-        self._bound_vars: weakref.WeakValueDictionary[tuple[int, int], BoundVar] = (
-            weakref.WeakValueDictionary()
-        )
+        self._exprs: weakref.WeakValueDictionary[tuple[object, ...], Expr] = weakref.WeakValueDictionary()
+        self._bound_vars: weakref.WeakValueDictionary[tuple[int, int], BoundVar] = weakref.WeakValueDictionary()
         self._quantifiers: weakref.WeakValueDictionary[
             tuple[
                 bool,
@@ -179,9 +173,7 @@ class Context:
         existing = self._decls.get(key)
         if existing is not None:
             return existing
-        decl = FuncDecl(
-            self._alloc_id(), self, name, domain, range_sort, kind, params=params
-        )
+        decl = FuncDecl(self._alloc_id(), self, name, domain, range_sort, kind, params=params)
         self._decls[key] = decl
         return decl
 
@@ -331,10 +323,7 @@ class Context:
             msg = "Real constant value cannot be bool"
             raise TypeError(msg)
         if not isinstance(value, (int, Fraction, str)):
-            msg = (
-                "Real constant value must be int, Fraction, or str, got "
-                f"{type(value).__name__}"
-            )
+            msg = f"Real constant value must be int, Fraction, or str, got {type(value).__name__}"
             raise TypeError(msg)
         frac = Fraction(value)
         return self._intern_const(frac, self.real_sort)
@@ -426,10 +415,7 @@ class Context:
         for i, (arg, expected_sort) in enumerate(zip(args, decl.domain, strict=True)):
             self._check_expr(arg)
             if arg.sort is not expected_sort:
-                msg = (
-                    f"Sort mismatch in argument {i} of '{decl}': "
-                    f"expected '{expected_sort}', got '{arg.sort}'"
-                )
+                msg = f"Sort mismatch in argument {i} of '{decl}': expected '{expected_sort}', got '{arg.sort}'"
                 raise TypeError(msg)
 
         match decl.kind:
@@ -645,16 +631,10 @@ class Context:
         if any(arg is self.false_expr for arg in flattened):
             return self.false_expr
 
-        unique = list(
-            dict.fromkeys(arg for arg in flattened if arg is not self.true_expr)
-        )
+        unique = list(dict.fromkeys(arg for arg in flattened if arg is not self.true_expr))
         unique_set = set(unique)
         for item in unique:
-            if (
-                isinstance(item, App)
-                and item.decl.kind is DeclKind.NOT
-                and item.args[0] in unique_set
-            ):
+            if isinstance(item, App) and item.decl.kind is DeclKind.NOT and item.args[0] in unique_set:
                 return self.false_expr
 
         if not unique:
@@ -683,16 +663,10 @@ class Context:
         if any(arg is self.true_expr for arg in flattened):
             return self.true_expr
 
-        unique = list(
-            dict.fromkeys(arg for arg in flattened if arg is not self.false_expr)
-        )
+        unique = list(dict.fromkeys(arg for arg in flattened if arg is not self.false_expr))
         unique_set = set(unique)
         for item in unique:
-            if (
-                isinstance(item, App)
-                and item.decl.kind is DeclKind.NOT
-                and item.args[0] in unique_set
-            ):
+            if isinstance(item, App) and item.decl.kind is DeclKind.NOT and item.args[0] in unique_set:
                 return self.true_expr
 
         if not unique:
@@ -779,10 +753,7 @@ class Context:
         for i, arg in enumerate(args):
             self._check_expr(arg)
             if arg.sort is not first_sort:
-                msg = (
-                    f"Sort mismatch in argument {i} of Distinct: "
-                    f"expected '{first_sort}', got '{arg.sort}'"
-                )
+                msg = f"Sort mismatch in argument {i} of Distinct: expected '{first_sort}', got '{arg.sort}'"
                 raise TypeError(msg)
         if len(args) == 1:
             return self.true_expr
@@ -805,10 +776,7 @@ class Context:
         self._check_expr(then_branch)
         self._check_expr(else_branch)
         if then_branch.sort is not else_branch.sort:
-            msg = (
-                f"Sort mismatch in Ite branches: "
-                f"'{then_branch.sort}' vs '{else_branch.sort}'"
-            )
+            msg = f"Sort mismatch in Ite branches: '{then_branch.sort}' vs '{else_branch.sort}'"
             raise TypeError(msg)
         if cond is self.true_expr:
             return then_branch
@@ -1201,10 +1169,7 @@ class Context:
             msg = "Quantifier must bind at least one variable"
             raise ValueError(msg)
         if len(var_names) != len(var_sorts):
-            msg = (
-                f"Quantifier name/sort count mismatch: "
-                f"{len(var_names)} names vs {len(var_sorts)} sorts"
-            )
+            msg = f"Quantifier name/sort count mismatch: {len(var_names)} names vs {len(var_sorts)} sorts"
             raise ValueError(msg)
         for name in var_names:
             if not name:
@@ -1269,9 +1234,7 @@ class Context:
         for var in bound_vars:
             self._check_expr(var)
             if not isinstance(var, App) or not var.is_const_symbol:
-                msg = (
-                    f"Bound quantifier variable must be a 0-arity constant, got '{var}'"
-                )
+                msg = f"Bound quantifier variable must be a 0-arity constant, got '{var}'"
                 raise TypeError(msg)
             if var.decl in seen_decls:
                 msg = f"Duplicate bound variable '{var.name}' in quantifier binder"
@@ -1299,13 +1262,8 @@ class Context:
             return body
 
         abs_body = _abstract_vars_impl(self, body, bound_apps)
-        abs_pats = tuple(
-            tuple(_abstract_vars_impl(self, term, bound_apps) for term in pat)
-            for pat in norm_pats
-        )
-        return self.mk_quantifier(
-            is_forall, var_names, var_sorts, abs_body, patterns=abs_pats
-        )
+        abs_pats = tuple(tuple(_abstract_vars_impl(self, term, bound_apps) for term in pat) for pat in norm_pats)
+        return self.mk_quantifier(is_forall, var_names, var_sorts, abs_body, patterns=abs_pats)
 
     def mk_forall(
         self,

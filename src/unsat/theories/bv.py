@@ -346,11 +346,7 @@ class BVDomain:
             # Cross-tighten unsigned and signed ranges across sign bit.
             if smax < 0 or umin >= sign_bit or (smax >= 0 and umin > smax):
                 ones |= sign_bit
-            if (
-                smin >= 0
-                or umax < sign_bit
-                or (smin < 0 and umax >= sign_bit and (umax - mod) < smin)
-            ):
+            if smin >= 0 or umax < sign_bit or (smin < 0 and umax >= sign_bit and (umax - mod) < smin):
                 zeros |= sign_bit
 
             if zeros & ones:
@@ -424,9 +420,7 @@ class BVDomain:
         # Signed wrap case: signed interval splits unsigned domain into [umin, smax]
         # and [smin + mod, umax]. Search both segments cleanly via bit-matching.
         if not (self.ones & sign_bit) and self.smax >= 0:
-            low_seg = _min_matching(
-                self.umin, self.zeros | sign_bit, self.ones, self.width
-            )
+            low_seg = _min_matching(self.umin, self.zeros | sign_bit, self.ones, self.width)
             if low_seg is not None and self.contains(low_seg):
                 return low_seg
         if not (self.zeros & sign_bit) and self.smin < 0:
@@ -441,9 +435,7 @@ class BVDomain:
         return self.umin
 
 
-def _normalize_cmp(
-    lhs: Expr, rhs: Expr, kind: DeclKind, polarity: bool
-) -> tuple[Expr, Expr, bool, bool]:
+def _normalize_cmp(lhs: Expr, rhs: Expr, kind: DeclKind, polarity: bool) -> tuple[Expr, Expr, bool, bool]:
     """Normalize BV comparison ``(atom, pol)`` to ``(x, y, is_signed, strict)``."""
     match kind:
         case DeclKind.BV_ULT:
@@ -579,9 +571,11 @@ class BVSolver:
             if isinstance(node, App) and node.decl.kind in _BV_OP_KINDS:
                 if not expanded:
                     stack.append((node, True))
-                    for arg in reversed(node.args):
-                        if arg not in self._registered_term_set and arg.is_bv:
-                            stack.append((arg, False))
+                    stack.extend(
+                        (arg, False)
+                        for arg in reversed(node.args)
+                        if arg not in self._registered_term_set and arg.is_bv
+                    )
                     continue
                 for arg in node.args:
                     users = self._term_users.setdefault(arg, [])
@@ -729,9 +723,7 @@ class BVSolver:
                     return False
                 if rhs is lhs:
                     return True
-                return self._update_domain(
-                    rhs, self._domains[lhs], self._reasons[lhs] | {lit}
-                )
+                return self._update_domain(rhs, self._domains[lhs], self._reasons[lhs] | {lit})
 
             # Disequality: lhs != rhs
             if dl.is_singleton and dr.is_singleton and dl.umin == dr.umin:
@@ -752,12 +744,7 @@ class BVSolver:
                 new_umax = val - 1 if dr.umax == val else dr.umax
                 new_smin = sval + 1 if dr.smin == sval else dr.smin
                 new_smax = sval - 1 if dr.smax == sval else dr.smax
-                if (
-                    new_umin != dr.umin
-                    or new_umax != dr.umax
-                    or new_smin != dr.smin
-                    or new_smax != dr.smax
-                ):
+                if new_umin != dr.umin or new_umax != dr.umax or new_smin != dr.smin or new_smax != dr.smax:
                     cand = BVDomain(
                         width=dr.width,
                         zeros=dr.zeros,
@@ -776,12 +763,7 @@ class BVSolver:
                 new_umax = val - 1 if dl.umax == val else dl.umax
                 new_smin = sval + 1 if dl.smin == sval else dl.smin
                 new_smax = sval - 1 if dl.smax == sval else dl.smax
-                if (
-                    new_umin != dl.umin
-                    or new_umax != dl.umax
-                    or new_smin != dl.smin
-                    or new_smax != dl.smax
-                ):
+                if new_umin != dl.umin or new_umax != dl.umax or new_smin != dl.smin or new_smax != dl.smax:
                     cand = BVDomain(
                         width=dl.width,
                         zeros=dl.zeros,
@@ -850,9 +832,7 @@ class BVSolver:
         )
         return self._update_domain(y, y_cand, rx_now | {lit})
 
-    def _enqueue_prop(
-        self, atom: Expr, polarity: bool, reasons: frozenset[TheoryLit]
-    ) -> None:
+    def _enqueue_prop(self, atom: Expr, polarity: bool, reasons: frozenset[TheoryLit]) -> None:
         if atom in self._asserted_atoms:
             return
         key = (atom, polarity)
@@ -873,9 +853,7 @@ class BVSolver:
         reasons = self._reasons[lhs] | self._reasons[rhs]
 
         if atom.decl.kind is DeclKind.EQ:
-            if lhs is rhs or (
-                dl.is_singleton and dr.is_singleton and dl.umin == dr.umin
-            ):
+            if lhs is rhs or (dl.is_singleton and dr.is_singleton and dl.umin == dr.umin):
                 self._enqueue_prop(atom, True, reasons)
             elif dl.intersect(dr) is None:
                 self._enqueue_prop(atom, False, reasons)
@@ -907,9 +885,7 @@ class BVSolver:
         if all(self._domains[a].is_singleton for a in args):
             vals = {a: self._domains[a].umin for a in args}
             exact = self._eval_bv_app(node, vals)
-            return self._update_domain(
-                node, BVDomain.singleton(exact, width), all_arg_reasons
-            )
+            return self._update_domain(node, BVDomain.singleton(exact, width), all_arg_reasons)
 
         match kind:
             case DeclKind.BV_NOT:
@@ -995,8 +971,7 @@ class BVSolver:
                     da = self._domains[a]
                     rz |= da.zeros
                     ro &= da.ones
-                    if da.umax < umax_cap:
-                        umax_cap = da.umax
+                    umax_cap = min(umax_cap, da.umax)
                 top = BVDomain.top(width)
                 fwd = BVDomain(
                     width=width,
@@ -1057,8 +1032,7 @@ class BVSolver:
                     da = self._domains[a]
                     ro |= da.ones
                     rz &= da.zeros
-                    if da.umin > umin_floor:
-                        umin_floor = da.umin
+                    umin_floor = max(umin_floor, da.umin)
                 top = BVDomain.top(width)
                 fwd = BVDomain(
                     width=width,
@@ -1167,9 +1141,7 @@ class BVSolver:
                 sum_smax = 0
                 for a in args:
                     da = self._domains[a]
-                    z_acc, o_acc = _add_known_bits(
-                        z_acc, o_acc, da.zeros, da.ones, width
-                    )
+                    z_acc, o_acc = _add_known_bits(z_acc, o_acc, da.zeros, da.ones, width)
                     sum_umin += da.umin
                     sum_umax += da.umax
                     sum_smin += da.smin
@@ -1177,26 +1149,10 @@ class BVSolver:
                 mod = 1 << width
                 sign_bit = 1 << (width - 1)
                 top = BVDomain.top(width)
-                f_umin = (
-                    (sum_umin & mask)
-                    if (sum_umin >> width) == (sum_umax >> width)
-                    else 0
-                )
-                f_umax = (
-                    (sum_umax & mask)
-                    if (sum_umin >> width) == (sum_umax >> width)
-                    else mask
-                )
-                f_smin = (
-                    sum_smin
-                    if -sign_bit <= sum_smin and sum_smax < sign_bit
-                    else top.smin
-                )
-                f_smax = (
-                    sum_smax
-                    if -sign_bit <= sum_smin and sum_smax < sign_bit
-                    else top.smax
-                )
+                f_umin = (sum_umin & mask) if (sum_umin >> width) == (sum_umax >> width) else 0
+                f_umax = (sum_umax & mask) if (sum_umin >> width) == (sum_umax >> width) else mask
+                f_smin = sum_smin if -sign_bit <= sum_smin and sum_smax < sign_bit else top.smin
+                f_smax = sum_smax if -sign_bit <= sum_smin and sum_smax < sign_bit else top.smax
                 fwd = BVDomain(
                     width=width,
                     zeros=z_acc,
@@ -1248,12 +1204,7 @@ class BVSolver:
                     neg_oz = mask if (oz & 1) and ((oz + oo) & mask) == mask else 0
                     if neg_oz == mask:
                         pass
-                    if (
-                        b_umin > 0
-                        or b_umax < mask
-                        or b_smin > top.smin
-                        or b_smax < top.smax
-                    ):
+                    if b_umin > 0 or b_umax < mask or b_smin > top.smin or b_smax < top.smax:
                         bwd = BVDomain(
                             width=width,
                             zeros=0,
@@ -1300,26 +1251,13 @@ class BVSolver:
                 # a = node + b
                 a_sum_lo = dn.umin + db.umin
                 a_sum_hi = dn.umax + db.umax
-                a_umin = (
-                    (a_sum_lo & mask)
-                    if (a_sum_lo >> width) == (a_sum_hi >> width)
-                    else 0
-                )
-                a_umax = (
-                    (a_sum_hi & mask)
-                    if (a_sum_lo >> width) == (a_sum_hi >> width)
-                    else mask
-                )
+                a_umin = (a_sum_lo & mask) if (a_sum_lo >> width) == (a_sum_hi >> width) else 0
+                a_umax = (a_sum_hi & mask) if (a_sum_lo >> width) == (a_sum_hi >> width) else mask
                 a_slo = dn.smin + db.smin
                 a_shi = dn.smax + db.smax
                 a_smin = a_slo if -sign_bit <= a_slo and a_shi < sign_bit else top.smin
                 a_smax = a_shi if -sign_bit <= a_slo and a_shi < sign_bit else top.smax
-                if (
-                    a_umin > 0
-                    or a_umax < mask
-                    or a_smin > top.smin
-                    or a_smax < top.smax
-                ) and not self._update_domain(
+                if (a_umin > 0 or a_umax < mask or a_smin > top.smin or a_smax < top.smax) and not self._update_domain(
                     a,
                     BVDomain(
                         width=width,
@@ -1337,19 +1275,12 @@ class BVSolver:
                 da_now = self._domains[a]
                 b_lo = da_now.umin - dn.umax
                 b_hi = da_now.umax - dn.umin
-                b_umin, b_umax = (
-                    (b_lo & mask, b_hi & mask) if (b_lo >= 0 or b_hi < 0) else (0, mask)
-                )
+                b_umin, b_umax = (b_lo & mask, b_hi & mask) if (b_lo >= 0 or b_hi < 0) else (0, mask)
                 b_slo = da_now.smin - dn.smax
                 b_shi = da_now.smax - dn.smin
                 b_smin = b_slo if -sign_bit <= b_slo and b_shi < sign_bit else top.smin
                 b_smax = b_shi if -sign_bit <= b_slo and b_shi < sign_bit else top.smax
-                if (
-                    b_umin > 0
-                    or b_umax < mask
-                    or b_smin > top.smin
-                    or b_smax < top.smax
-                ):
+                if b_umin > 0 or b_umax < mask or b_smin > top.smin or b_smax < top.smax:
                     return self._update_domain(
                         b,
                         BVDomain(
@@ -1554,16 +1485,8 @@ class BVSolver:
                 shift = node.decl.params[0]
                 a = args[0]
                 da = self._domains[a]
-                rot = (
-                    _rotate_left_mask
-                    if kind is DeclKind.BV_ROTATE_LEFT
-                    else _rotate_right_mask
-                )
-                inv_rot = (
-                    _rotate_right_mask
-                    if kind is DeclKind.BV_ROTATE_LEFT
-                    else _rotate_left_mask
-                )
+                rot = _rotate_left_mask if kind is DeclKind.BV_ROTATE_LEFT else _rotate_right_mask
+                inv_rot = _rotate_right_mask if kind is DeclKind.BV_ROTATE_LEFT else _rotate_left_mask
                 top = BVDomain.top(width)
                 fwd = BVDomain(
                     width=width,
@@ -1638,12 +1561,10 @@ class BVSolver:
                 if ds.is_singleton:
                     k = ds.umin
                     if k >= width:
-                        return self._update_domain(
-                            node, BVDomain.singleton(0, width), all_arg_reasons
-                        )
+                        return self._update_domain(node, BVDomain.singleton(0, width), all_arg_reasons)
                     lo_mask = (1 << k) - 1
                     f_umin = da.umin << k if (da.umax << k) <= mask else 0
-                    f_umax = da.umax << k if (da.umax << k) <= mask else mask
+                    f_umax = min(da.umax << k, mask)
                     fwd = BVDomain(
                         width=width,
                         zeros=((da.zeros << k) & mask) | lo_mask,
@@ -1704,9 +1625,7 @@ class BVSolver:
                 if ds.is_singleton:
                     k = ds.umin
                     if k >= width:
-                        return self._update_domain(
-                            node, BVDomain.singleton(0, width), all_arg_reasons
-                        )
+                        return self._update_domain(node, BVDomain.singleton(0, width), all_arg_reasons)
                     hi_mask = mask ^ ((1 << (width - k)) - 1)
                     fwd = BVDomain(
                         width=width,
@@ -1770,13 +1689,9 @@ class BVSolver:
                     k = min(ds.umin, width)
                     if k >= width:
                         if da.zeros & sign_bit:
-                            return self._update_domain(
-                                node, BVDomain.singleton(0, width), all_arg_reasons
-                            )
+                            return self._update_domain(node, BVDomain.singleton(0, width), all_arg_reasons)
                         if da.ones & sign_bit:
-                            return self._update_domain(
-                                node, BVDomain.singleton(mask, width), all_arg_reasons
-                            )
+                            return self._update_domain(node, BVDomain.singleton(mask, width), all_arg_reasons)
                         return True
                     hi_mask = mask ^ ((1 << (width - k)) - 1)
                     fz = (da.zeros >> k) | (hi_mask if (da.zeros & sign_bit) else 0)
@@ -1919,11 +1834,7 @@ class BVSolver:
             term = self._dirty_terms.pop()
             touched.add(term)
 
-            if (
-                isinstance(term, App)
-                and term.decl.kind in _BV_OP_KINDS
-                and not self._propagate_app(term)
-            ):
+            if isinstance(term, App) and term.decl.kind in _BV_OP_KINDS and not self._propagate_app(term):
                 return
 
             for atom in self._term_atoms.get(term, ()):
@@ -2059,19 +1970,13 @@ class BVSolver:
                 msg = f"Unsupported BV atom in BVSolver: {kind}"
                 raise TypeError(msg)
 
-    def _synthesize_concrete(
-        self, sat_bit_values: dict[Expr, int] | None = None
-    ) -> dict[Expr, int]:
+    def _synthesize_concrete(self, sat_bit_values: dict[Expr, int] | None = None) -> dict[Expr, int]:
         """Construct concrete integer assignments bottom-up over registered terms."""
         sat_vals = sat_bit_values or {}
         concrete: dict[Expr, int] = {}
 
         # Group BV leaf terms linked by asserted equalities `Eq(u, v) = True`.
-        leaves = [
-            t
-            for t in self._registered_terms
-            if not (isinstance(t, App) and t.decl.kind in _BV_OP_KINDS)
-        ]
+        leaves = [t for t in self._registered_terms if not (isinstance(t, App) and t.decl.kind in _BV_OP_KINDS)]
         parent: dict[Expr, Expr] = {t: t for t in leaves}
 
         def _find(x: Expr) -> Expr:
@@ -2127,10 +2032,7 @@ class BVSolver:
                 continue
 
             forbidden = {
-                concrete[nbr]
-                for member in unfixed
-                for nbr in neq_neighbors.get(member, ())
-                if nbr in concrete
+                concrete[nbr] for member in unfixed for nbr in neq_neighbors.get(member, ()) if nbr in concrete
             }
             chosen = dom.pick_value(preferred_fixed)
             if chosen in forbidden:
@@ -2153,9 +2055,7 @@ class BVSolver:
 
         return concrete
 
-    def check(
-        self, sat_bit_values: dict[Expr, int] | None = None
-    ) -> BVBlastRequest | list[TheoryLit] | None:
+    def check(self, sat_bit_values: dict[Expr, int] | None = None) -> BVBlastRequest | list[TheoryLit] | None:
         """Validate asserted BV atoms or request on-demand bit-blasting."""
         self._stats.checks += 1
         if self._conflict is not None:
@@ -2187,23 +2087,17 @@ class BVSolver:
         self, sat_bit_values: dict[Expr, int] | None = None
     ) -> tuple[dict[Expr, int], dict[Expr, int]]:
         sat_vals = sat_bit_values or {}
-        if self._last_concrete and all(
-            self._last_concrete.get(k) == v for k, v in sat_vals.items()
-        ):
+        if self._last_concrete and all(self._last_concrete.get(k) == v for k, v in sat_vals.items()):
             return self._last_concrete, sat_vals
         return self._synthesize_concrete(sat_vals), sat_vals
 
-    def concrete_values(
-        self, sat_bit_values: dict[Expr, int] | None = None
-    ) -> dict[FuncDecl, int]:
+    def concrete_values(self, sat_bit_values: dict[Expr, int] | None = None) -> dict[FuncDecl, int]:
         """Return concrete integer values for all uninterpreted BV 0-arity constants."""
         concrete, sat_vals = self._matching_concrete(sat_bit_values)
         out: dict[FuncDecl, int] = {}
         for term in self._registered_terms:
             if isinstance(term, App) and term.is_const_symbol:
-                out[term.decl] = sat_vals.get(
-                    term, concrete.get(term, self._domains[term].pick_value())
-                )
+                out[term.decl] = sat_vals.get(term, concrete.get(term, self._domains[term].pick_value()))
         return out
 
     def term_values(

@@ -110,8 +110,7 @@ class SATSolver:
                 msg = f"Literal must be non-negative, got {lit}"
                 raise ValueError(msg)
             var = lit >> 1
-            if var > max_var:
-                max_var = var
+            max_var = max(max_var, var)
         if max_var >= self._trail.num_vars:
             self.ensure_vars(max_var + 1)
 
@@ -192,11 +191,7 @@ class SATSolver:
             if deadline is not None and time.monotonic() >= deadline:
                 return self._abort_unknown()
 
-            conflict = (
-                pending_conflict
-                if pending_conflict is not None
-                else self._propagate(deadline)
-            )
+            conflict = pending_conflict if pending_conflict is not None else self._propagate(deadline)
             pending_conflict = None
 
             if self._aborted:
@@ -205,10 +200,7 @@ class SATSolver:
             if conflict is not None:
                 if deadline is not None and time.monotonic() >= deadline:
                     return self._abort_unknown()
-                if (
-                    max_conflicts is not None
-                    and (self._conflicts - start_conflicts) >= max_conflicts
-                ):
+                if max_conflicts is not None and (self._conflicts - start_conflicts) >= max_conflicts:
                     return self._abort_unknown()
                 if self._handle_conflict(conflict) is SolveResult.UNSAT:
                     self._ok = False
@@ -220,9 +212,7 @@ class SATSolver:
             next_assumption = self._next_assumption(assumption_list)
             if next_assumption is not None:
                 if self._trail.eval_lit(next_assumption) == L_FALSE:
-                    self._unsat_core = self._analyze_final(
-                        next_assumption, assumption_set
-                    )
+                    self._unsat_core = self._analyze_final(next_assumption, assumption_set)
                     self._last_result = SolveResult.UNSAT
                     return SolveResult.UNSAT
 
@@ -269,10 +259,7 @@ class SATSolver:
         if self._last_result is not SolveResult.SAT:
             msg = "Model is only available after solve() returns SolveResult.SAT"
             raise ValueError(msg)
-        return {
-            var: self._trail.assignment[var] == L_TRUE
-            for var in range(self._trail.num_vars)
-        }
+        return {var: self._trail.assignment[var] == L_TRUE for var in range(self._trail.num_vars)}
 
     def value(self, lit: Lit) -> bool | None:
         """Return the truth value of ``lit`` on the current trail, or ``None``."""
@@ -323,8 +310,7 @@ class SATSolver:
         for var in unassigned:
             self._heap.insert(var)
         self._qhead = len(self._trail.stack)
-        if self._theory_qhead > self._qhead:
-            self._theory_qhead = self._qhead
+        self._theory_qhead = min(self._theory_qhead, self._qhead)
 
     def _next_assumption(self, assumptions: list[Lit]) -> Lit | None:
         for lit in assumptions:
@@ -385,10 +371,7 @@ class SATSolver:
             self._reduce_db()
             self._reduce_threshold += self._reduce_inc
 
-        if (
-            self._conflicts >= self._lbd_queue_size
-            and self._conflicts_since_restart >= self._restart_cooldown
-        ):
+        if self._conflicts >= self._lbd_queue_size and self._conflicts_since_restart >= self._restart_cooldown:
             short_avg = self._lbd_queue_sum / self._lbd_queue_size
             global_avg = self._global_lbd_sum / self._conflicts
             if short_avg > global_avg * self._restart_margin:
@@ -455,11 +438,7 @@ class SATSolver:
 
         while qhead < len(stack):
             tick += 1
-            if (
-                deadline is not None
-                and (tick & 511) == 0
-                and time.monotonic() >= deadline
-            ):
+            if deadline is not None and (tick & 511) == 0 and time.monotonic() >= deadline:
                 self._qhead = qhead
                 self._stats["propagations"] += propagations
                 self._aborted = True
@@ -549,16 +528,12 @@ class SATSolver:
         self._stats["propagations"] += propagations
         return None
 
-    def _make_theory_clause(
-        self, raw_lits: Sequence[Lit], must_contain: Lit | None = None
-    ) -> Clause:
+    def _make_theory_clause(self, raw_lits: Sequence[Lit], must_contain: Lit | None = None) -> Clause:
         self._ensure_lits_vars(raw_lits)
         deduped = list(dict.fromkeys(raw_lits))
         if must_contain is not None:
             if must_contain not in deduped:
-                msg = (
-                    f"Theory explanation must contain propagated literal {must_contain}"
-                )
+                msg = f"Theory explanation must contain propagated literal {must_contain}"
                 raise ValueError(msg)
             if deduped[0] != must_contain:
                 idx = deduped.index(must_contain)
@@ -672,9 +647,7 @@ class SATSolver:
         kept = [learned[0]]
         for lit in learned[1:]:
             var = lit >> 1
-            if reason_list[var] is None or not self._lit_redundant(
-                lit, abstract_levels, clear_seen, clear_failed
-            ):
+            if reason_list[var] is None or not self._lit_redundant(lit, abstract_levels, clear_seen, clear_failed):
                 kept.append(lit)
         return kept
 
@@ -727,9 +700,7 @@ class SATSolver:
                 r_lvl = level[r_var]
                 if r_lvl == 0:
                     continue
-                if reason_list[r_var] is None or not (
-                    abstract_levels & (1 << (r_lvl & 63))
-                ):
+                if reason_list[r_var] is None or not (abstract_levels & (1 << (r_lvl & 63))):
                     if not failed[r_var]:
                         failed[r_var] = True
                         clear_failed.append(r_var)
@@ -782,9 +753,7 @@ class SATSolver:
                 deduped.append(lit)
         return deduped
 
-    def _install_theory_lemmas(
-        self, lemmas: Sequence[Sequence[Lit]]
-    ) -> tuple[Clause | None, bool]:
+    def _install_theory_lemmas(self, lemmas: Sequence[Sequence[Lit]]) -> tuple[Clause | None, bool]:
         """Install every clause in ``lemmas`` permanently without dropping any."""
         has_empty = False
         unit_lits: list[Lit] = []
@@ -812,8 +781,7 @@ class SATSolver:
 
         if unit_lits:
             needs_level0 = any(
-                self._trail.eval_lit(lit) != L_TRUE or self._trail.level[lit >> 1] > 0
-                for lit in unit_lits
+                self._trail.eval_lit(lit) != L_TRUE or self._trail.level[lit >> 1] > 0 for lit in unit_lits
             )
             if needs_level0:
                 if self._trail.decision_level > 0:
@@ -913,9 +881,7 @@ class SATSolver:
         self._clause_inc /= self._clause_decay
 
     def _reduce_db(self) -> None:
-        locked_ids = {
-            id(reason) for reason in self._trail.reason if isinstance(reason, Clause)
-        }
+        locked_ids = {id(reason) for reason in self._trail.reason if isinstance(reason, Clause)}
         self._learned.sort(key=lambda c: (c.lbd, -c.activity))
 
         half = len(self._learned) // 2

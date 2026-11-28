@@ -81,17 +81,11 @@ def _collect_trigger_candidates(
             post.append(node)
             continue
         stack.append((node, True))
-        for ch in reversed(node.children):
-            if ch not in seen:
-                stack.append((ch, False))
+        stack.extend((ch, False) for ch in reversed(node.children) if ch not in seen)
 
     candidates: list[tuple[App, frozenset[int], int]] = []
     for node in post:
-        if (
-            isinstance(node, App)
-            and node.decl.kind in _TRIGGER_DECL_KINDS
-            and node.args
-        ):
+        if isinstance(node, App) and node.decl.kind in _TRIGGER_DECL_KINDS and node.args:
             free = free_bound_var_indices(node)
             cov = frozenset(idx for idx in free if idx in target_vars)
             if cov:
@@ -196,9 +190,7 @@ class EMatcher:
         self._patterns[quantifier] = extracted
         return extracted
 
-    def record_emitted(
-        self, quantifier: Quantifier, euf: EUFSolver, args: tuple[Expr, ...]
-    ) -> None:
+    def record_emitted(self, quantifier: Quantifier, euf: EUFSolver, args: tuple[Expr, ...]) -> None:
         """Record an instantiation (e.g. from MBQI) to prevent re-emission."""
         key = (quantifier, tuple(euf.rep_expr(arg) for arg in args))
         self._emitted.add(key)
@@ -216,11 +208,7 @@ class EMatcher:
             members,
             key=lambda m: (
                 self._term_gen.get(m, 0),
-                0
-                if isinstance(m, Const)
-                else 1
-                if (isinstance(m, App) and not m.args)
-                else 2,
+                0 if isinstance(m, Const) else 1 if (isinstance(m, App) and not m.args) else 2,
                 m.id,
             ),
         )
@@ -260,14 +248,8 @@ class EMatcher:
             for member in euf.eclass_members(target):
                 if not work.spend():
                     return
-                if (
-                    isinstance(member, App)
-                    and member.decl is pat.decl
-                    and len(member.args) == len(pat.args)
-                ):
-                    for out_env, sub_matched in self._match_args(
-                        euf, pat.args, member.args, env, k, work
-                    ):
+                if isinstance(member, App) and member.decl is pat.decl and len(member.args) == len(pat.args):
+                    for out_env, sub_matched in self._match_args(euf, pat.args, member.args, env, k, work):
                         yield out_env, (member, *sub_matched)
                     if work.exhausted:
                         return
@@ -284,12 +266,8 @@ class EMatcher:
         if not pat_args:
             yield env, ()
             return
-        for env1, matched1 in self._match_subterm(
-            euf, pat_args[0], term_args[0], env, k, work
-        ):
-            for env2, matched2 in self._match_args(
-                euf, pat_args[1:], term_args[1:], env1, k, work
-            ):
+        for env1, matched1 in self._match_subterm(euf, pat_args[0], term_args[0], env, k, work):
+            for env2, matched2 in self._match_args(euf, pat_args[1:], term_args[1:], env1, k, work):
                 yield env2, (*matched1, *matched2)
             if work.exhausted:
                 return
@@ -314,12 +292,8 @@ class EMatcher:
                 return
             if cand.sort is not head_pat.sort or len(cand.args) != len(head_pat.args):
                 continue
-            for env1, matched1 in self._match_args(
-                euf, head_pat.args, cand.args, env, k, work
-            ):
-                for full_env, matched_rest in self._match_pattern_tuple(
-                    euf, pat_terms[1:], env1, k, work
-                ):
+            for env1, matched1 in self._match_args(euf, head_pat.args, cand.args, env, k, work):
+                for full_env, matched_rest in self._match_pattern_tuple(euf, pat_terms[1:], env1, k, work):
                     yield full_env, (cand, *matched1, *matched_rest)
                 if work.exhausted:
                     return
@@ -337,9 +311,7 @@ class EMatcher:
     ) -> EMatchResult:
         """Run one bounded E-matching round across ``quantifiers``."""
         if max_matches is not None and (
-            isinstance(max_matches, bool)
-            or not isinstance(max_matches, int)
-            or max_matches < 0
+            isinstance(max_matches, bool) or not isinstance(max_matches, int) or max_matches < 0
         ):
             msg = f"max_matches must be a non-negative integer, got {max_matches!r}"
             raise ValueError(msg)
@@ -371,9 +343,7 @@ class EMatcher:
                 if work.exhausted or len(results) >= budget.max_instantiations:
                     truncated = True
                     break
-                for args, matched_apps in self._match_pattern_tuple(
-                    euf, pat_tuple, init_env, k, work
-                ):
+                for args, matched_apps in self._match_pattern_tuple(euf, pat_tuple, init_env, k, work):
                     rep_key = (q, tuple(euf.rep_expr(arg) for arg in args))
                     if rep_key in self._emitted:
                         continue

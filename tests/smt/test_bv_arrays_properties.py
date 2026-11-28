@@ -64,9 +64,7 @@ def _make_bv_sig(width: int) -> _BVSig:
     uf_bv = ctx.mk_decl("f", (bv_sort,), bv_sort)
     pred_bv = ctx.mk_decl("P", (bv_sort,), ctx.bool_sort)
 
-    z3_consts: dict[FuncDecl, z3.ExprRef] = {
-        bv.decl: z3.Bool(bv.name) for bv in bool_vars
-    }
+    z3_consts: dict[FuncDecl, z3.ExprRef] = {bv.decl: z3.Bool(bv.name) for bv in bool_vars}
     for v in bv_vars:
         z3_consts[v.decl] = z3.BitVec(v.name, width)
     z3_consts[arr_var.decl] = z3.Const("A", z_arr)
@@ -108,16 +106,10 @@ def _make_ax_sig(*, with_lia: bool) -> _AXSig:
 
     bool_vars = tuple(ctx.mk_bool(n) for n in ("b0", "b1"))
     idx_vars = tuple(ctx.mk_const(n, idx_sort) for n in ("i", "j", "k"))
-    val_vars = (
-        idx_vars
-        if with_lia
-        else tuple(ctx.mk_const(n, val_sort) for n in ("u", "v", "w"))
-    )
+    val_vars = idx_vars if with_lia else tuple(ctx.mk_const(n, val_sort) for n in ("u", "v", "w"))
     arr_vars = tuple(ctx.mk_const(n, arr_sort) for n in ("A", "B"))
 
-    z3_consts: dict[FuncDecl, z3.ExprRef] = {
-        bv.decl: z3.Bool(bv.name) for bv in bool_vars
-    }
+    z3_consts: dict[FuncDecl, z3.ExprRef] = {bv.decl: z3.Bool(bv.name) for bv in bool_vars}
     for iv in idx_vars:
         z3_consts[iv.decl] = z3.Int(iv.name) if with_lia else z3.Const(iv.name, z_idx)
     if not with_lia:
@@ -193,9 +185,7 @@ def _to_z3_expr(
             continue
         if not expanded:
             stack.append((node, True))
-            for arg in reversed(node.args):
-                if arg not in memo:
-                    stack.append((arg, False))
+            stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
             continue
 
         za = [memo[arg] for arg in node.args]
@@ -362,11 +352,7 @@ def _bv_formulas(
             val = draw(st.sampled_from(pool))
             arr_pool.append(ctx.mk_store(base, idx, val))
         for _ in range(2):
-            pool.append(
-                ctx.mk_select(
-                    draw(st.sampled_from(arr_pool)), draw(st.sampled_from(pool))
-                )
-            )
+            pool.append(ctx.mk_select(draw(st.sampled_from(arr_pool)), draw(st.sampled_from(pool))))
 
     if with_uf:
         for _ in range(draw(st.integers(min_value=1, max_value=2))):
@@ -384,11 +370,10 @@ def _bv_formulas(
         if op == 2:
             return ctx.mk_rotate_left(draw(st.integers(min_value=0, max_value=3)), t1)
         if op == 3:
-            c_part = ctx.mk_concat(
+            return ctx.mk_concat(
                 ctx.mk_extract(1, 0, t1),
                 ctx.mk_extract(3, 2, _bv_term(depth - 1)),
             )
-            return c_part
         t2 = _bv_term(depth - 1)
         if op == 4:
             return t1 + t2
@@ -399,9 +384,7 @@ def _bv_formulas(
         if op == 7:
             return t1 ^ t2
         if op == 8:
-            return t1 << (
-                ctx.mk_bv_val(draw(st.integers(min_value=0, max_value=4)), width)
-            )
+            return t1 << (ctx.mk_bv_val(draw(st.integers(min_value=0, max_value=4)), width))
         if op == 9:
             return ctx.mk_bv_lshr(t1, t2)
         if op == 10:
@@ -462,10 +445,7 @@ def _ax_formulas(draw: st.DrawFn, *, with_lia: bool) -> tuple[_AXSig, list[Expr]
     val_pool: list[Expr]
     idx_pool: list[Expr] = list(sig.idx_vars)
     if with_lia:
-        idx_pool.extend(
-            ctx.mk_add(draw(st.sampled_from(sig.idx_vars)), ctx.mk_int_val(off))
-            for off in (-1, 0, 1)
-        )
+        idx_pool.extend(ctx.mk_add(draw(st.sampled_from(sig.idx_vars)), ctx.mk_int_val(off)) for off in (-1, 0, 1))
         val_pool = list(idx_pool) + [ctx.mk_int_val(c) for c in (0, 1, 2)]
     else:
         val_pool = list(sig.val_vars)
@@ -483,9 +463,7 @@ def _ax_formulas(draw: st.DrawFn, *, with_lia: bool) -> tuple[_AXSig, list[Expr]
         val_pool.append(sig.uf_fn(draw(st.sampled_from(val_pool))))
 
     for _ in range(draw(st.integers(min_value=1, max_value=3))):
-        sel = ctx.mk_select(
-            draw(st.sampled_from(arr_pool)), draw(st.sampled_from(idx_pool))
-        )
+        sel = ctx.mk_select(draw(st.sampled_from(arr_pool)), draw(st.sampled_from(idx_pool)))
         val_pool.append(sel)
 
     def _atom() -> Expr:
@@ -493,27 +471,17 @@ def _ax_formulas(draw: st.DrawFn, *, with_lia: bool) -> tuple[_AXSig, list[Expr]
         if ch == 0:
             return draw(st.sampled_from(sig.bool_vars))
         if ch == 1:
-            return ctx.mk_eq(
-                draw(st.sampled_from(arr_pool)), draw(st.sampled_from(arr_pool))
-            )
+            return ctx.mk_eq(draw(st.sampled_from(arr_pool)), draw(st.sampled_from(arr_pool)))
         if ch == 2:
-            return ctx.mk_eq(
-                draw(st.sampled_from(idx_pool)), draw(st.sampled_from(idx_pool))
-            )
+            return ctx.mk_eq(draw(st.sampled_from(idx_pool)), draw(st.sampled_from(idx_pool)))
         if ch == 3:
-            return ctx.mk_eq(
-                draw(st.sampled_from(val_pool)), draw(st.sampled_from(val_pool))
-            )
+            return ctx.mk_eq(draw(st.sampled_from(val_pool)), draw(st.sampled_from(val_pool)))
         if ch == 4 and with_lia:
             v1 = draw(st.sampled_from(val_pool))
             v2 = draw(st.sampled_from(val_pool))
             op = draw(st.sampled_from((ctx.mk_lt, ctx.mk_le, ctx.mk_gt, ctx.mk_ge)))
-            return op(
-                v1, v2 + ctx.mk_int_val(draw(st.integers(min_value=-2, max_value=2)))
-            )
-        return ctx.mk_distinct(
-            draw(st.sampled_from(arr_pool)), draw(st.sampled_from(arr_pool))
-        )
+            return op(v1, v2 + ctx.mk_int_val(draw(st.integers(min_value=-2, max_value=2))))
+        return ctx.mk_distinct(draw(st.sampled_from(arr_pool)), draw(st.sampled_from(arr_pool)))
 
     def _rand_bool(depth: int) -> Expr:
         if depth <= 0 or draw(st.integers(min_value=0, max_value=2)) == 0:
@@ -527,9 +495,7 @@ def _ax_formulas(draw: st.DrawFn, *, with_lia: bool) -> tuple[_AXSig, list[Expr]
             return ctx.mk_or(_rand_bool(depth - 1), _rand_bool(depth - 1))
         if op == 3:
             return ctx.mk_implies(_rand_bool(depth - 1), _rand_bool(depth - 1))
-        return ctx.mk_ite(
-            _rand_bool(depth - 1), _rand_bool(depth - 1), _rand_bool(depth - 1)
-        )
+        return ctx.mk_ite(_rand_bool(depth - 1), _rand_bool(depth - 1), _rand_bool(depth - 1))
 
     n_forms = draw(st.integers(min_value=2, max_value=6))
     return sig, [_rand_bool(2) for _ in range(n_forms)]

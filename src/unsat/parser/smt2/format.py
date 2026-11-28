@@ -62,9 +62,7 @@ def format_smt2_model(
     decls: Sequence[FuncDecl] | None = None,
 ) -> str:
     """Format ``model`` as an SMT-LIB2 ``(get-model)`` S-expression."""
-    target_decls = (
-        tuple(decls) if decls is not None else (model.decls() + model.func_decls())
-    )
+    target_decls = tuple(decls) if decls is not None else (model.decls() + model.func_decls())
     if not target_decls:
         return "()"
 
@@ -83,10 +81,7 @@ def format_smt2_model(
             continue
 
         param_names = [f"x!{i}" for i in range(decl.arity)]
-        params_str = " ".join(
-            f"({p} {format_sort(sort)})"
-            for p, sort in zip(param_names, decl.domain, strict=True)
-        )
+        params_str = " ".join(f"({p} {format_sort(sort)})" for p, sort in zip(param_names, decl.domain, strict=True))
         if model.has_func_interp(decl):
             interp = model.func_interp(decl)
             body = format_expr(interp.else_value)
@@ -94,10 +89,7 @@ def format_smt2_model(
                 if len(key_args) == 1:
                     cond = f"(= {param_names[0]} {format_expr(key_args[0])})"
                 else:
-                    eqs = " ".join(
-                        f"(= {p} {format_expr(arg)})"
-                        for p, arg in zip(param_names, key_args, strict=True)
-                    )
+                    eqs = " ".join(f"(= {p} {format_expr(arg)})" for p, arg in zip(param_names, key_args, strict=True))
                     cond = f"(and {eqs})"
                 body = f"(ite {cond} {format_expr(result)} {body})"
         else:

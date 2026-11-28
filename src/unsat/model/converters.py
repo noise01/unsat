@@ -36,10 +36,7 @@ class SubstitutionModelConverter:
                 msg = f"Substituted key must be a 0-arity constant, got '{decl}'"
                 raise ValueError(msg)
             if rhs.sort is not decl.range_sort:
-                msg = (
-                    f"Substitution RHS sort '{rhs.sort}' does not match "
-                    f"declaration sort '{decl.range_sort}'"
-                )
+                msg = f"Substitution RHS sort '{rhs.sort}' does not match declaration sort '{decl.range_sort}'"
                 raise TypeError(msg)
             self._substitutions.append((decl, rhs))
 
@@ -79,11 +76,7 @@ class ProjectionModelConverter:
         if not self._hidden:
             return model
         values = {decl: val for decl, val in model.items() if decl not in self._hidden}
-        functions = {
-            decl: model.func_interp(decl)
-            for decl in model.func_decls()
-            if decl not in self._hidden
-        }
+        functions = {decl: model.func_interp(decl) for decl in model.func_decls() if decl not in self._hidden}
         universes = {sort: model.universe(sort) for sort in model.sorts()}
         return Model(model.ctx, values, functions=functions, universes=universes)
 

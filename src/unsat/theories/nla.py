@@ -61,20 +61,14 @@ def _poly_norm(coeffs: list[Fraction] | tuple[Fraction, ...]) -> Poly:
 def poly_add(a: Poly, b: Poly) -> Poly:
     """Return polynomial sum ``a + b``."""
     n = max(len(a), len(b))
-    out = [
-        (a[i] if i < len(a) else Fraction(0)) + (b[i] if i < len(b) else Fraction(0))
-        for i in range(n)
-    ]
+    out = [(a[i] if i < len(a) else Fraction(0)) + (b[i] if i < len(b) else Fraction(0)) for i in range(n)]
     return _poly_norm(out)
 
 
 def poly_sub(a: Poly, b: Poly) -> Poly:
     """Return polynomial difference ``a - b``."""
     n = max(len(a), len(b))
-    out = [
-        (a[i] if i < len(a) else Fraction(0)) - (b[i] if i < len(b) else Fraction(0))
-        for i in range(n)
-    ]
+    out = [(a[i] if i < len(a) else Fraction(0)) - (b[i] if i < len(b) else Fraction(0)) for i in range(n)]
     return _poly_norm(out)
 
 
@@ -173,7 +167,7 @@ def _sign_variations(vals: list[int]) -> int:
     for s in vals:
         if s == 0:
             continue
-        if prev != 0 and s != prev:
+        if prev not in (0, s):
             changes += 1
         prev = s
     return changes
@@ -277,14 +271,10 @@ def isolate_real_roots(p: Poly) -> list[tuple[Fraction, Fraction, bool]]:
 
     if len(rem) > 1:
         seq = sturm_sequence(rem)
-        total = _sturm_variations_inf(seq, neg=True) - _sturm_variations_inf(
-            seq, neg=False
-        )
+        total = _sturm_variations_inf(seq, neg=True) - _sturm_variations_inf(seq, neg=False)
         if total > 0:
             lc_abs = abs(rem[-1])
-            bound = Fraction(1) + max(
-                (abs(c) / lc_abs for c in rem[:-1]), default=Fraction(0)
-            )
+            bound = Fraction(1) + max((abs(c) / lc_abs for c in rem[:-1]), default=Fraction(0))
             lo = -bound
             hi = bound
             while poly_eval(rem, lo) == 0:
@@ -359,30 +349,17 @@ class _BoundInterval:
         return self.lo == self.hi and (self.lo_strict or self.hi_strict)
 
     def contains(self, val: Fraction) -> bool:
-        if self.lo is not None and (
-            val < self.lo or (self.lo_strict and val == self.lo)
-        ):
+        if self.lo is not None and (val < self.lo or (self.lo_strict and val == self.lo)):
             return False
-        return not (
-            self.hi is not None
-            and (val > self.hi or (self.hi_strict and val == self.hi))
-        )
+        return not (self.hi is not None and (val > self.hi or (self.hi_strict and val == self.hi)))
 
     def intersect(self, other: _BoundInterval) -> _BoundInterval:
         lo, lo_s, lo_r = self.lo, self.lo_strict, self.lo_reasons
-        if other.lo is not None and (
-            lo is None
-            or other.lo > lo
-            or (other.lo == lo and other.lo_strict and not lo_s)
-        ):
+        if other.lo is not None and (lo is None or other.lo > lo or (other.lo == lo and other.lo_strict and not lo_s)):
             lo, lo_s, lo_r = other.lo, other.lo_strict, other.lo_reasons
 
         hi, hi_s, hi_r = self.hi, self.hi_strict, self.hi_reasons
-        if other.hi is not None and (
-            hi is None
-            or other.hi < hi
-            or (other.hi == hi and other.hi_strict and not hi_s)
-        ):
+        if other.hi is not None and (hi is None or other.hi < hi or (other.hi == hi and other.hi_strict and not hi_s)):
             hi, hi_s, hi_r = other.hi, other.hi_strict, other.hi_reasons
 
         return _BoundInterval(lo, lo_s, lo_r, hi, hi_s, hi_r)
@@ -390,15 +367,9 @@ class _BoundInterval:
 
 def _mul_intervals(a: _BoundInterval, b: _BoundInterval) -> _BoundInterval:
     """Compute sound rational interval product ``a * b`` with reason tracking."""
-    reasons = tuple(
-        dict.fromkeys(a.lo_reasons + a.hi_reasons + b.lo_reasons + b.hi_reasons)
-    )
-    a_points = [
-        (p, s) for p, s in ((a.lo, a.lo_strict), (a.hi, a.hi_strict)) if p is not None
-    ]
-    b_points = [
-        (p, s) for p, s in ((b.lo, b.lo_strict), (b.hi, b.hi_strict)) if p is not None
-    ]
+    reasons = tuple(dict.fromkeys(a.lo_reasons + a.hi_reasons + b.lo_reasons + b.hi_reasons))
+    a_points = [(p, s) for p, s in ((a.lo, a.lo_strict), (a.hi, a.hi_strict)) if p is not None]
+    b_points = [(p, s) for p, s in ((b.lo, b.lo_strict), (b.hi, b.hi_strict)) if p is not None]
 
     # Exact square rule whenever either interval is a single interval [a] * [a]
     if a.lo is not None and a.hi is not None and b.lo is not None and b.hi is not None:
@@ -532,9 +503,7 @@ def _div_intervals(m: _BoundInterval, b: _BoundInterval) -> _BoundInterval | Non
             inv_lo, inv_lo_s = Fraction(0), True
         if b.lo is not None and b.lo > 0:
             inv_hi, inv_hi_s = Fraction(1) / b.lo, b.lo_strict
-        inv_b = _BoundInterval(
-            inv_lo, inv_lo_s, b.hi_reasons, inv_hi, inv_hi_s, b.lo_reasons
-        )
+        inv_b = _BoundInterval(inv_lo, inv_lo_s, b.hi_reasons, inv_hi, inv_hi_s, b.lo_reasons)
         return _mul_intervals(m, inv_b)
 
     # b < 0
@@ -544,9 +513,7 @@ def _div_intervals(m: _BoundInterval, b: _BoundInterval) -> _BoundInterval | Non
         inv_hi, inv_hi_s = Fraction(1) / b.lo, b.lo_strict
     else:
         inv_hi, inv_hi_s = Fraction(0), True
-    inv_b = _BoundInterval(
-        inv_lo, inv_lo_s, b.hi_reasons, inv_hi, inv_hi_s, b.lo_reasons
-    )
+    inv_b = _BoundInterval(inv_lo, inv_lo_s, b.hi_reasons, inv_hi, inv_hi_s, b.lo_reasons)
     return _mul_intervals(m, inv_b)
 
 
@@ -644,11 +611,7 @@ class NLASolver:
                 (ur,) if ur is not None else (),
             )
             if intervals[term].is_empty():
-                rsn = tuple(
-                    dict.fromkeys(
-                        intervals[term].lo_reasons + intervals[term].hi_reasons
-                    )
-                )
+                rsn = tuple(dict.fromkeys(intervals[term].lo_reasons + intervals[term].hi_reasons))
                 self._stats.icp_conflicts += 1
                 return [NLALemma(self._ctx.false_expr, rsn)]
 
@@ -656,17 +619,11 @@ class NLASolver:
         for _ in range(4):
             changed = False
             for m, (a, b) in muls.items():
-                fwd = (
-                    _square_interval(intervals[a])
-                    if a is b
-                    else _mul_intervals(intervals[a], intervals[b])
-                )
+                fwd = _square_interval(intervals[a]) if a is b else _mul_intervals(intervals[a], intervals[b])
                 merged_m = intervals[m].intersect(fwd)
                 if merged_m.is_empty():
                     self._stats.icp_conflicts += 1
-                    rsn = tuple(
-                        dict.fromkeys(merged_m.lo_reasons + merged_m.hi_reasons)
-                    )
+                    rsn = tuple(dict.fromkeys(merged_m.lo_reasons + merged_m.hi_reasons))
                     return [NLALemma(self._ctx.false_expr, rsn)]
                 if merged_m != intervals[m]:
                     intervals[m] = merged_m
@@ -705,9 +662,7 @@ class NLASolver:
             if iv == initial[term]:
                 continue
             cur_v = vals[term]
-            if iv.lo is not None and (
-                cur_v < iv.lo or (iv.lo_strict and cur_v == iv.lo)
-            ):
+            if iv.lo is not None and (cur_v < iv.lo or (iv.lo_strict and cur_v == iv.lo)):
                 lem = self._emit_bound(
                     term,
                     iv.lo,
@@ -718,9 +673,7 @@ class NLASolver:
                 )
                 if lem is not None:
                     lemmas.append(lem)
-            if iv.hi is not None and (
-                cur_v > iv.hi or (iv.hi_strict and cur_v == iv.hi)
-            ):
+            if iv.hi is not None and (cur_v > iv.hi or (iv.hi_strict and cur_v == iv.hi)):
                 lem = self._emit_bound(
                     term,
                     iv.hi,
@@ -785,24 +738,16 @@ class NLASolver:
         self,
         lra: LRASolver,
         muls: dict[Expr, tuple[Expr, Expr]],
-    ) -> tuple[
-        dict[Expr, tuple[Expr, Fraction, Fraction]], dict[Expr, tuple[TheoryLit, ...]]
-    ]:
+    ) -> tuple[dict[Expr, tuple[Expr, Fraction, Fraction]], dict[Expr, tuple[TheoryLit, ...]]]:
         """Extract explicit equalities ``y = k1 * x + k0`` for 2-var elimination."""
         # Collect upper/lower halfspaces in canonical normalized form.
-        upper_forms: dict[
-            tuple[tuple[tuple[Expr, Fraction], ...], Fraction], TheoryLit
-        ] = {}
-        lower_forms: dict[
-            tuple[tuple[tuple[Expr, Fraction], ...], Fraction], TheoryLit
-        ] = {}
+        upper_forms: dict[tuple[tuple[tuple[Expr, Fraction], ...], Fraction], TheoryLit] = {}
+        lower_forms: dict[tuple[tuple[tuple[Expr, Fraction], ...], Fraction], TheoryLit] = {}
 
         def _canon_form(
             c_map: dict[Expr, Fraction], c0: Fraction
         ) -> tuple[tuple[tuple[tuple[Expr, Fraction], ...], Fraction], Fraction] | None:
-            items = sorted(
-                ((e, c) for e, c in c_map.items() if c != 0), key=lambda kv: kv[0].id
-            )
+            items = sorted(((e, c) for e, c in c_map.items() if c != 0), key=lambda kv: kv[0].id)
             if not items or len(items) > 2:
                 return None
             if any(e in muls for e, _ in items):
@@ -811,9 +756,7 @@ class NLASolver:
             norm_items = tuple((e, c / scale) for e, c in items)
             return (norm_items, c0 / scale), scale
 
-        equalities: list[
-            tuple[dict[Expr, Fraction], Fraction, tuple[TheoryLit, ...]]
-        ] = []
+        equalities: list[tuple[dict[Expr, Fraction], Fraction, tuple[TheoryLit, ...]]] = []
         for atom, pol in lra.active_atoms():
             if not isinstance(atom, App) or len(atom.args) != 2:
                 continue
@@ -847,9 +790,7 @@ class NLASolver:
         subst: dict[Expr, tuple[Expr, Fraction, Fraction]] = {}
         sub_reasons: dict[Expr, tuple[TheoryLit, ...]] = {}
         for coeffs, c0, eq_rsns in equalities:
-            items = sorted(
-                ((e, c) for e, c in coeffs.items() if c != 0), key=lambda kv: kv[0].id
-            )
+            items = sorted(((e, c) for e, c in coeffs.items() if c != 0), key=lambda kv: kv[0].id)
             if len(items) != 2:
                 continue
             (e0, c0_v), (e1, c1_v) = items
@@ -872,9 +813,7 @@ class NLASolver:
         """Analyze univariate polynomial subsystems using exact Sturm isolation."""
         ctx = self._ctx
         subst, sub_reasons = self._collect_linear_substitutions(lra, muls)
-        per_var: dict[
-            Expr, list[tuple[Poly, DeclKind, bool, tuple[TheoryLit, ...]]]
-        ] = {}
+        per_var: dict[Expr, list[tuple[Poly, DeclKind, bool, tuple[TheoryLit, ...]]]] = {}
 
         for atom, pol in lra.active_atoms():
             if not isinstance(atom, App) or len(atom.args) != 2:
@@ -918,9 +857,7 @@ class NLASolver:
                 poly_acc = poly_add(poly_acc, scaled)
             if multi_var or base_var is None or not has_nl:
                 continue
-            per_var.setdefault(base_var, []).append(
-                (poly_acc, atom.decl.kind, pol, tuple(dict.fromkeys(atom_reasons)))
-            )
+            per_var.setdefault(base_var, []).append((poly_acc, atom.decl.kind, pol, tuple(dict.fromkeys(atom_reasons))))
 
         for var_expr, sys_list in per_var.items():
             # Gather all active reasons contributing to this univariate subsystem.
@@ -941,9 +878,7 @@ class NLASolver:
 
             def _point_sat(
                 pt: Fraction,
-                items: list[
-                    tuple[Poly, DeclKind, bool, tuple[TheoryLit, ...]]
-                ] = sys_list,
+                items: list[tuple[Poly, DeclKind, bool, tuple[TheoryLit, ...]]] = sys_list,
             ) -> bool:
                 return all(_holds(k, pol, poly_eval(p, pt)) for p, k, pol, _ in items)
 
@@ -962,10 +897,12 @@ class NLASolver:
                     pts.add(lo)
             sorted_pts = sorted(pts) if pts else [Fraction(0)]
 
-            sample_points: list[Fraction] = [sorted_pts[0] - 1, *sorted_pts]
-            for i in range(len(sorted_pts) - 1):
-                sample_points.append((sorted_pts[i] + sorted_pts[i + 1]) / 2)
-            sample_points.append(sorted_pts[-1] + 1)
+            sample_points: list[Fraction] = [
+                sorted_pts[0] - 1,
+                *sorted_pts,
+                *((sorted_pts[i] + sorted_pts[i + 1]) / 2 for i in range(len(sorted_pts) - 1)),
+                sorted_pts[-1] + 1,
+            ]
 
             if var_expr.is_int:
                 int_cands: set[int] = set()
@@ -995,9 +932,7 @@ class NLASolver:
                     for sp in sorted_pts:
                         if cur_x == sp:
                             rhs = ctx.mk_real_val(sp)
-                            lemma_e = ctx.mk_or(
-                                ctx.mk_lt(var_expr, rhs), ctx.mk_gt(var_expr, rhs)
-                            )
+                            lemma_e = ctx.mk_or(ctx.mk_lt(var_expr, rhs), ctx.mk_gt(var_expr, rhs))
                             if lemma_e not in emitted_lemmas:
                                 emitted_lemmas.add(lemma_e)
                                 self._stats.sturm_lemmas += 1
@@ -1012,23 +947,11 @@ class NLASolver:
                             hi_b = pt
                     mid_ok_low = low_b is not None and _point_sat(low_b)
                     mid_ok_hi = hi_b is not None and _point_sat(hi_b)
-                    if (
-                        low_b is not None
-                        and hi_b is not None
-                        and not _point_sat((low_b + hi_b) / 2)
-                    ):
+                    if low_b is not None and hi_b is not None and not _point_sat((low_b + hi_b) / 2):
                         lo_e = ctx.mk_real_val(low_b)
                         hi_e = ctx.mk_real_val(hi_b)
-                        left = (
-                            ctx.mk_le(var_expr, lo_e)
-                            if mid_ok_low
-                            else ctx.mk_lt(var_expr, lo_e)
-                        )
-                        right = (
-                            ctx.mk_ge(var_expr, hi_e)
-                            if mid_ok_hi
-                            else ctx.mk_gt(var_expr, hi_e)
-                        )
+                        left = ctx.mk_le(var_expr, lo_e) if mid_ok_low else ctx.mk_lt(var_expr, lo_e)
+                        right = ctx.mk_ge(var_expr, hi_e) if mid_ok_hi else ctx.mk_gt(var_expr, hi_e)
                         lemma_e = ctx.mk_or(left, right)
                         if lemma_e not in emitted_lemmas:
                             emitted_lemmas.add(lemma_e)
@@ -1054,9 +977,7 @@ class NLASolver:
                     s_hi = _holds(kind, pol, phi)
                     s_mid = _holds(kind, pol, poly_eval(p, (lo + hi) / 2))
                     # Check if p can flip sign across [lo, hi].
-                    if not (s_lo or s_hi or s_mid) and (
-                        (plo > 0 and phi > 0) or (plo < 0 and phi < 0)
-                    ):
+                    if not (s_lo or s_hi or s_mid) and ((plo > 0 and phi > 0) or (plo < 0 and phi < 0)):
                         other_ok = False
                         break
                 if other_ok:
@@ -1093,12 +1014,9 @@ class NLASolver:
             all_terms.add(den)
         vals = lra.term_values(all_terms)
 
-        violated_muls = [
-            (m, a, b) for m, (a, b) in muls.items() if vals[m] != vals[a] * vals[b]
-        ]
+        violated_muls = [(m, a, b) for m, (a, b) in muls.items() if vals[m] != vals[a] * vals[b]]
         if not violated_muls and all(
-            vals[den] == 0 or vals[d] * vals[den] == vals[num]
-            for d, (num, den) in divs.items()
+            vals[den] == 0 or vals[d] * vals[den] == vals[num] for d, (num, den) in divs.items()
         ):
             return None
 
@@ -1183,12 +1101,7 @@ class NLASolver:
             if vid_a is not None and vid_b is not None:
                 l_a, lr_a, u_a, ur_a = lra.var_bounds_with_reasons(vid_a)
                 l_b, lr_b, u_b, ur_b = lra.var_bounds_with_reasons(vid_b)
-                if (
-                    l_a is not None
-                    and u_a is not None
-                    and l_b is not None
-                    and u_b is not None
-                ):
+                if l_a is not None and u_a is not None and l_b is not None and u_b is not None:
                     la, ua, lb_v, ub_v = l_a.real, u_a.real, l_b.real, u_b.real
                     mc_rsn = tuple(r for r in (lr_a, ur_a, lr_b, ur_b) if r is not None)
                     for a_bnd, b_bnd, is_lower in (
@@ -1271,10 +1184,7 @@ class NLASolver:
             return lemmas
 
         # 4. Bounded branching fallback on violated factors
-        if (
-            self._splits_used >= self._budget.max_splits
-            or len(emitted_lemmas) >= self._budget.max_lemmas
-        ):
+        if self._splits_used >= self._budget.max_splits or len(emitted_lemmas) >= self._budget.max_lemmas:
             self._stats.unknowns += 1
             return NLAUnknown("NLA linearization/branching budget exhausted")
 
@@ -1305,10 +1215,7 @@ class NLASolver:
                     if lb is not None and ub is not None and lb < ub:
                         lo_i = math.floor(lb) + 1
                         hi_i = math.ceil(ub) - 1
-                        if lo_i <= hi_i:
-                            mid = Fraction((lo_i + hi_i) // 2)
-                        else:
-                            mid = (lb + ub) / 2
+                        mid = Fraction((lo_i + hi_i) // 2) if lo_i <= hi_i else (lb + ub) / 2
                     elif lb is None and ub is None:
                         mid = Fraction(0) if vf != 0 else Fraction(1)
                     else:

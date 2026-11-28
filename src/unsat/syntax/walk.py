@@ -155,9 +155,7 @@ def format_sort(sort: Sort) -> str:
     if sort.kind is SortKind.REGLAN:
         return "RegLan"
     if sort.kind is SortKind.ARRAY:
-        return (
-            f"(Array {format_sort(sort.index_sort)} {format_sort(sort.element_sort)})"
-        )
+        return f"(Array {format_sort(sort.index_sort)} {format_sort(sort.element_sort)})"
     return quote_smt2_symbol(sort.name)
 
 
@@ -174,9 +172,7 @@ def iter_subexprs(expr: Expr) -> Iterator[Expr]:
             yield node
             continue
         stack.append((node, True))
-        for child in reversed(node.children):
-            if child not in visited:
-                stack.append((child, False))
+        stack.extend((child, False) for child in reversed(node.children) if child not in visited)
 
 
 def collect_const_decls(expr: Expr) -> list[FuncDecl]:
@@ -195,11 +191,7 @@ def collect_func_decls(expr: Expr) -> list[FuncDecl]:
     decls: list[FuncDecl] = []
     seen: set[FuncDecl] = set()
     for node in iter_subexprs(expr):
-        if (
-            isinstance(node, App)
-            and node.decl.is_uninterpreted
-            and node.decl not in seen
-        ):
+        if isinstance(node, App) and node.decl.is_uninterpreted and node.decl not in seen:
             seen.add(node.decl)
             decls.append(node.decl)
     return decls
@@ -214,20 +206,13 @@ def quote_smt2_symbol(name: str) -> str:
         msg = f"Symbol name {name!r} contains illegal SMT-LIB2 quote character"
         raise ValueError(msg)
 
-    is_simple = (
-        not name[0].isascii() or not name[0].isdigit()
-    ) and name not in _RESERVED_WORDS
+    is_simple = (not name[0].isascii() or not name[0].isdigit()) and name not in _RESERVED_WORDS
     if is_simple:
-        is_simple = all(
-            ch.isascii() and (ch.isalnum() or ch in _SIMPLE_SYMBOL_PUNCTUATION)
-            for ch in name
-        )
+        is_simple = all(ch.isascii() and (ch.isalnum() or ch in _SIMPLE_SYMBOL_PUNCTUATION) for ch in name)
     return name if is_simple else f"|{name}|"
 
 
-def _extend_binder_env(
-    env: tuple[str, ...], var_names: tuple[str, ...]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _extend_binder_env(env: tuple[str, ...], var_names: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     used = set(env)
     cur_env = list(env)
     disambiguated: list[str] = []
@@ -268,10 +253,12 @@ def format_expr(expr: Expr) -> str:
             child_env, display_names = _extend_binder_env(env, node.var_names)
             if not expanded:
                 stack.append((node, env, True))
-                for pat in reversed(node.patterns):
-                    for term in reversed(pat):
-                        if (term, child_env) not in rendered:
-                            stack.append((term, child_env, False))
+                stack.extend(
+                    (term, child_env, False)
+                    for pat in reversed(node.patterns)
+                    for term in reversed(pat)
+                    if (term, child_env) not in rendered
+                )
                 if (node.body, child_env) not in rendered:
                     stack.append((node.body, child_env, False))
                 continue
@@ -283,8 +270,7 @@ def format_expr(expr: Expr) -> str:
             body_str = rendered[(node.body, child_env)]
             if node.patterns:
                 pats_str = " ".join(
-                    f":pattern ({' '.join(rendered[(t, child_env)] for t in pat)})"
-                    for pat in node.patterns
+                    f":pattern ({' '.join(rendered[(t, child_env)] for t in pat)})" for pat in node.patterns
                 )
                 body_str = f"(! {body_str} {pats_str})"
             rendered[key] = f"({kw} ({binders}) {body_str})"
@@ -293,9 +279,7 @@ def format_expr(expr: Expr) -> str:
         if isinstance(node, App):
             if not expanded and node.args:
                 stack.append((node, env, True))
-                for arg in reversed(node.args):
-                    if (arg, env) not in rendered:
-                        stack.append((arg, env, False))
+                stack.extend((arg, env, False) for arg in reversed(node.args) if (arg, env) not in rendered)
                 continue
             kind = node.decl.kind
             if kind is DeclKind.UNINTERPRETED:
@@ -379,13 +363,9 @@ def free_bound_var_indices(expr: Expr) -> frozenset[int]:
             continue
         if isinstance(node, Quantifier):
             cdepth = depth + node.num_vars
-            for child in node.children:
-                if (child, cdepth) not in visited:
-                    stack.append((child, cdepth))
+            stack.extend((child, cdepth) for child in node.children if (child, cdepth) not in visited)
             continue
-        for child in node.children:
-            if (child, depth) not in visited:
-                stack.append((child, depth))
+        stack.extend((child, depth) for child in node.children if (child, depth) not in visited)
     return frozenset(free)
 
 
@@ -411,10 +391,7 @@ def shift_bound_vars(expr: Expr, delta: int, cutoff: int = 0) -> Expr:
             else:
                 new_idx = node.index + delta
                 if new_idx < depth:
-                    msg = (
-                        f"Shifting BoundVar({node.index}) by {delta} at depth "
-                        f"{depth} yields negative relative index"
-                    )
+                    msg = f"Shifting BoundVar({node.index}) by {delta} at depth {depth} yields negative relative index"
                     raise ValueError(msg)
                 memo[key] = ctx.mk_bound_var(new_idx, node.sort)
             continue
@@ -424,9 +401,7 @@ def shift_bound_vars(expr: Expr, delta: int, cutoff: int = 0) -> Expr:
                 continue
             if not expanded:
                 stack.append((node, depth, True))
-                for arg in reversed(node.args):
-                    if (arg, depth) not in memo:
-                        stack.append((arg, depth, False))
+                stack.extend((arg, depth, False) for arg in reversed(node.args) if (arg, depth) not in memo)
                 continue
             new_args = [memo[(arg, depth)] for arg in node.args]
             if all(n is o for n, o in zip(new_args, node.args, strict=True)):
@@ -438,17 +413,17 @@ def shift_bound_vars(expr: Expr, delta: int, cutoff: int = 0) -> Expr:
             cdepth = depth + node.num_vars
             if not expanded:
                 stack.append((node, depth, True))
-                for pat in reversed(node.patterns):
-                    for term in reversed(pat):
-                        if (term, cdepth) not in memo:
-                            stack.append((term, cdepth, False))
+                stack.extend(
+                    (term, cdepth, False)
+                    for pat in reversed(node.patterns)
+                    for term in reversed(pat)
+                    if (term, cdepth) not in memo
+                )
                 if (node.body, cdepth) not in memo:
                     stack.append((node.body, cdepth, False))
                 continue
             new_body = memo[(node.body, cdepth)]
-            new_pats = tuple(
-                tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns
-            )
+            new_pats = tuple(tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns)
             if new_body is node.body and new_pats == node.patterns:
                 memo[key] = node
             else:
@@ -490,17 +465,12 @@ def instantiate_quantifier(quantifier: Quantifier, args: Sequence[Expr]) -> Expr
     if len(args) != k:
         msg = f"Quantifier instantiation arity mismatch: expected {k}, got {len(args)}"
         raise ValueError(msg)
-    for i, (arg, expected_sort) in enumerate(
-        zip(args, quantifier.var_sorts, strict=True)
-    ):
+    for i, (arg, expected_sort) in enumerate(zip(args, quantifier.var_sorts, strict=True)):
         if arg.ctx is not ctx:
             msg = f"Instantiation argument {i} belongs to a different Context"
             raise ValueError(msg)
         if arg.sort is not expected_sort:
-            msg = (
-                f"Sort mismatch in quantifier argument {i}: "
-                f"expected '{expected_sort}', got '{arg.sort}'"
-            )
+            msg = f"Sort mismatch in quantifier argument {i}: expected '{expected_sort}', got '{arg.sort}'"
             raise TypeError(msg)
 
     memo: dict[tuple[Expr, int], Expr] = {}
@@ -530,9 +500,7 @@ def instantiate_quantifier(quantifier: Quantifier, args: Sequence[Expr]) -> Expr
                 continue
             if not expanded:
                 stack.append((node, depth, True))
-                for arg in reversed(node.args):
-                    if (arg, depth) not in memo:
-                        stack.append((arg, depth, False))
+                stack.extend((arg, depth, False) for arg in reversed(node.args) if (arg, depth) not in memo)
                 continue
             new_args = [memo[(arg, depth)] for arg in node.args]
             if all(n is o for n, o in zip(new_args, node.args, strict=True)):
@@ -544,17 +512,17 @@ def instantiate_quantifier(quantifier: Quantifier, args: Sequence[Expr]) -> Expr
             cdepth = depth + node.num_vars
             if not expanded:
                 stack.append((node, depth, True))
-                for pat in reversed(node.patterns):
-                    for term in reversed(pat):
-                        if (term, cdepth) not in memo:
-                            stack.append((term, cdepth, False))
+                stack.extend(
+                    (term, cdepth, False)
+                    for pat in reversed(node.patterns)
+                    for term in reversed(pat)
+                    if (term, cdepth) not in memo
+                )
                 if (node.body, cdepth) not in memo:
                     stack.append((node.body, cdepth, False))
                 continue
             new_body = memo[(node.body, cdepth)]
-            new_pats = tuple(
-                tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns
-            )
+            new_pats = tuple(tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns)
             if new_body is node.body and new_pats == node.patterns:
                 memo[key] = node
             else:
@@ -582,9 +550,7 @@ def substitute(expr: Expr, mapping: Mapping[Expr, Expr]) -> Expr:
             msg = "Substitute key/value belongs to a different Context"
             raise ValueError(msg)
         if target.sort is not replacement.sort:
-            msg = (
-                f"Sort mismatch in substitute: '{target.sort}' vs '{replacement.sort}'"
-            )
+            msg = f"Sort mismatch in substitute: '{target.sort}' vs '{replacement.sort}'"
             raise TypeError(msg)
         clean_map[target] = (replacement, not free_bound_var_indices(target))
 
@@ -620,9 +586,7 @@ def substitute(expr: Expr, mapping: Mapping[Expr, Expr]) -> Expr:
                 continue
             if not expanded:
                 stack.append((node, depth, True))
-                for arg in reversed(node.args):
-                    if (arg, depth) not in memo:
-                        stack.append((arg, depth, False))
+                stack.extend((arg, depth, False) for arg in reversed(node.args) if (arg, depth) not in memo)
                 continue
             new_args = [memo[(arg, depth)] for arg in node.args]
             if all(n is o for n, o in zip(new_args, node.args, strict=True)):
@@ -635,17 +599,17 @@ def substitute(expr: Expr, mapping: Mapping[Expr, Expr]) -> Expr:
             cdepth = depth + node.num_vars
             if not expanded:
                 stack.append((node, depth, True))
-                for pat in reversed(node.patterns):
-                    for term in reversed(pat):
-                        if (term, cdepth) not in memo:
-                            stack.append((term, cdepth, False))
+                stack.extend(
+                    (term, cdepth, False)
+                    for pat in reversed(node.patterns)
+                    for term in reversed(pat)
+                    if (term, cdepth) not in memo
+                )
                 if (node.body, cdepth) not in memo:
                     stack.append((node.body, cdepth, False))
                 continue
             new_body = memo[(node.body, cdepth)]
-            new_pats = tuple(
-                tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns
-            )
+            new_pats = tuple(tuple(memo[(term, cdepth)] for term in pat) for pat in node.patterns)
             if new_body is node.body and new_pats == node.patterns:
                 memo[key] = node
             else:

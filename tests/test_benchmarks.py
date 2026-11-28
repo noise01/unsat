@@ -10,16 +10,12 @@ from unsat.sat import SolveResult
 
 _BENCH_ROOT = Path(__file__).resolve().parent.parent / "benchmarks"
 _ALL_BENCHMARKS = sorted([*_BENCH_ROOT.rglob("*.cnf"), *_BENCH_ROOT.rglob("*.smt2")])
-_DIMACS_STATUS_RE = re.compile(
-    r"^c\s+status:\s*(sat|unsat)\b", re.IGNORECASE | re.MULTILINE
-)
+_DIMACS_STATUS_RE = re.compile(r"^c\s+status:\s*(sat|unsat)\b", re.IGNORECASE | re.MULTILINE)
 _SMT2_STATUS_RE = re.compile(r"\(set-info\s+:status\s+(sat|unsat)\s*\)", re.IGNORECASE)
 
 
 def test_benchmark_inventory_covers_dimacs_and_smt2_logics() -> None:
-    core_dimacs = [
-        p for p in _ALL_BENCHMARKS if p.relative_to(_BENCH_ROOT).parts[0] == "dimacs"
-    ]
+    core_dimacs = [p for p in _ALL_BENCHMARKS if p.relative_to(_BENCH_ROOT).parts[0] == "dimacs"]
     assert core_dimacs
     smt2_groups = {
         p.relative_to(_BENCH_ROOT).parts[1]
@@ -45,9 +41,7 @@ def test_benchmark_inventory_covers_dimacs_and_smt2_logics() -> None:
         "lia",
         "smt2_features",
     } <= smt2_groups
-    scale_paths = [
-        p for p in _ALL_BENCHMARKS if p.relative_to(_BENCH_ROOT).parts[0] == "scale"
-    ]
+    scale_paths = [p for p in _ALL_BENCHMARKS if p.relative_to(_BENCH_ROOT).parts[0] == "scale"]
     assert any(p.suffix == ".cnf" for p in scale_paths)
     assert any(p.suffix == ".smt2" for p in scale_paths)
 

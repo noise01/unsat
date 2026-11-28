@@ -8,11 +8,7 @@ from unsat.tactics.base import TacticResult
 
 
 def _is_not_of(candidate: Expr, target: Expr) -> bool:
-    return (
-        isinstance(candidate, App)
-        and candidate.decl.kind is DeclKind.NOT
-        and candidate.args[0] is target
-    )
+    return isinstance(candidate, App) and candidate.decl.kind is DeclKind.NOT and candidate.args[0] is target
 
 
 def simplify(expr: Expr) -> Expr:
@@ -212,9 +208,7 @@ def simplify(expr: Expr) -> Expr:
             case DeclKind.RE_POWER:
                 memo[node] = ctx.mk_re_power(node.decl.params[0], args[0])
             case DeclKind.RE_LOOP:
-                memo[node] = ctx.mk_re_loop(
-                    node.decl.params[0], node.decl.params[1], args[0]
-                )
+                memo[node] = ctx.mk_re_loop(node.decl.params[0], node.decl.params[1], args[0])
             case (
                 DeclKind.BV_NOT
                 | DeclKind.BV_AND

@@ -91,11 +91,7 @@ def _expr_to_z3(
             # De Bruijn index 0 maps to the last binder (qvars[-1]).
             next_bvars = bvars + tuple(qvars)
             body_ref = conv(node.body, next_bvars)
-            return (
-                z3.ForAll(qvars, body_ref)
-                if node.is_forall
-                else z3.Exists(qvars, body_ref)
-            )
+            return z3.ForAll(qvars, body_ref) if node.is_forall else z3.Exists(qvars, body_ref)
 
         assert isinstance(node, App)
         if not node.args:
@@ -163,11 +159,7 @@ def _arith_tactic_cases(draw: st.DrawFn) -> tuple[_ArithEnv, list[Expr]]:
             coeff = draw(st.integers(min_value=-2, max_value=2))
             if coeff == 0:
                 continue
-            terms.append(
-                ctx.mk_mul(ctx.mk_int_val(coeff), var)
-                if is_int
-                else ctx.mk_mul(ctx.mk_real_val(coeff), var)
-            )
+            terms.append(ctx.mk_mul(ctx.mk_int_val(coeff), var) if is_int else ctx.mk_mul(ctx.mk_real_val(coeff), var))
         offset = num_const(draw(st.integers(min_value=-4, max_value=4)))
         if not terms:
             return offset
@@ -181,9 +173,7 @@ def _arith_tactic_cases(draw: st.DrawFn) -> tuple[_ArithEnv, list[Expr]]:
         if kind == "eq":
             # Mix direct var = lin_term equalities to exercise GaussianElimTactic.
             v = draw(st.sampled_from(env.nums))
-            return (
-                ctx.mk_eq(v, lin_term()) if draw(st.booleans()) else ctx.mk_eq(lhs, rhs)
-            )
+            return ctx.mk_eq(v, lin_term()) if draw(st.booleans()) else ctx.mk_eq(lhs, rhs)
         if kind == "le":
             return ctx.mk_le(lhs, rhs)
         if kind == "lt":
@@ -268,9 +258,7 @@ def _skolem_cases(
     p_decl = ctx.mk_decl("P", (sort_s,), ctx.bool_sort)
     q_decl = ctx.mk_decl("Q", (sort_s,), ctx.bool_sort)
 
-    z3_vars: dict[FuncDecl, z3.ExprRef] = {
-        c.decl: z3.Const(c.decl.name, zs) for c in consts
-    }
+    z3_vars: dict[FuncDecl, z3.ExprRef] = {c.decl: z3.Const(c.decl.name, zs) for c in consts}
     z3_funcs: dict[FuncDecl, z3.FuncDeclRef] = {
         f_decl: z3.Function("f", zs, zs),
         p_decl: z3.Function("P", zs, z3.BoolSort()),
@@ -298,9 +286,7 @@ def _skolem_cases(
         target = draw(st.sampled_from(consts))
         body_choice = draw(st.integers(min_value=0, max_value=2))
         if body_choice == 0:
-            body = ctx.mk_and(
-                ctx.mk_app(p_decl, x), ctx.mk_eq(ctx.mk_app(f_decl, x), target)
-            )
+            body = ctx.mk_and(ctx.mk_app(p_decl, x), ctx.mk_eq(ctx.mk_app(f_decl, x), target))
             ex = ctx.mk_exists([x], body)
         elif body_choice == 1:
             body = ctx.mk_and(ctx.mk_app(p_decl, x), ctx.mk_not(ctx.mk_app(p_decl, x)))
@@ -331,9 +317,7 @@ def test_skolemize_tactic_matches_z3_and_strips_internal_decls(
 
     z3_solver = z3.Solver()
     for formula in formulas:
-        z3_solver.add(
-            _expr_to_z3(formula, z3_vars, z3_funcs=z3_funcs, z3_sorts=z3_sorts)
-        )
+        z3_solver.add(_expr_to_z3(formula, z3_vars, z3_funcs=z3_funcs, z3_sorts=z3_sorts))
     z3_res = z3_solver.check()
 
     if z3_res == z3.sat:

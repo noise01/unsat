@@ -27,7 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Automatic Python scalar coercion (`bool`, `int`, `Fraction`) in `Eq`, `Distinct`, and `If` builders in [`unsat.api`](src/unsat/api.py).
 - Reserved [`packages/unsat-legacy/`](packages/unsat-legacy/README.md) `uv` workspace package slot for future archived/legacy solver implementations.
 - Repository [`AGENTS.md`](AGENTS.md) and restructured architecture/design documentation under [`docs/architecture/`](docs/architecture/README.md) and [`docs/designs/`](docs/designs/README.md).
-- Automated GitHub Release creation job in [`publish.yml`](.github/workflows/publish.yml) gated on PyPI publish success.
+- Automated GitHub Release creation job in `.github/workflows/publish.yml` (later renamed to [`.github/workflows/release.yml`](.github/workflows/release.yml)) gated on PyPI publish success.
 - Isolated wheel smoke testing (`import unsat`, `py.typed`, `Solver`, `unsat --version`, stdin SMT-LIB2), `benchmarks/run.py --suite all --check` in CI, full commit SHA Action pinning, concurrency guards, and [`.github/dependabot.yml`](.github/dependabot.yml).
 
 ### Changed

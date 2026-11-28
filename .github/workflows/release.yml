@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Release
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
       contents: read
 
   check-tag:
-    name: Verify release tag matches version
+    name: Verify release tag and changelog
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -52,6 +52,26 @@ jobs:
                   f"Tag version {tag_version!r} != pyproject version {pkg_version!r}"
               )
           EOF
+
+      - name: Extract changelog release notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [${version}]" '
+            index($0, heading) == 1 && (length($0) == length(heading) || substr($0, length(heading) + 1, 1) == " ") { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG.md has no '## [${version}]' section" >&2
+            exit 1
+          fi
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
 
   build:
     name: Build and smoke-test distribution
@@ -98,9 +118,12 @@ jobs:
               raise SystemExit("Wheel smoke check failed: expected SAT for x > 0")
           EOF
           uv run --isolated --no-project --with "${wheels[0]}" unsat --version
-          printf '(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n' \
-            | uv run --isolated --no-project --with "${wheels[0]}" unsat - --format smt2 \
-            | grep -qx 'sat'
+          uv run --isolated --no-project --with "${wheels[0]}" unsat - --format smt2 <<'EOF' | grep -qx 'sat'
+          (set-logic QF_LIA)
+          (declare-const x Int)
+          (assert (> x 0))
+          (check-sat)
+          EOF
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -147,6 +170,12 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download release notes
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-notes
+          path: .
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -155,4 +184,4 @@ jobs:
           --repo "$GITHUB_REPOSITORY"
           --verify-tag
           --title "$GITHUB_REF_NAME"
-          --generate-notes
+          --notes-file release-notes.md

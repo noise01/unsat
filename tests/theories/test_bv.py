@@ -15,17 +15,13 @@ def test_bv_domain_tightening_and_values() -> None:
     assert d_top.smax == 127
 
     # Cross-tightening signed positive range with unsigned range & known prefix bits.
-    d1 = BVDomain(
-        width=8, zeros=0, ones=0, umin=120, umax=200, smin=-10, smax=50
-    ).normalize()
+    d1 = BVDomain(width=8, zeros=0, ones=0, umin=120, umax=200, smin=-10, smax=50).normalize()
     # [120, 200] & [-10, 50]: positive segment [120, 127] contradicts smax=50,
     # forcing negative segment [246, 255] which exceeds umax=200 -> empty.
     assert d1 is None
 
     # Disjoint known bits vs bounds:
-    d2 = BVDomain(
-        width=4, zeros=0b0001, ones=0b0010, umin=0, umax=15, smin=-8, smax=7
-    ).normalize()
+    d2 = BVDomain(width=4, zeros=0b0001, ones=0b0010, umin=0, umax=15, smin=-8, smax=7).normalize()
     assert d2 is not None
     assert d2.umin == 2
     assert d2.umax == 14
@@ -36,9 +32,7 @@ def test_bv_domain_tightening_and_values() -> None:
     assert d2.contains(picked)
 
     # Signed-positive range [10, 14] in 8 bits tightens MSB zero bit and umin/umax.
-    d3 = BVDomain(
-        width=8, zeros=0, ones=0, umin=0, umax=255, smin=10, smax=14
-    ).normalize()
+    d3 = BVDomain(width=8, zeros=0, ones=0, umin=0, umax=255, smin=10, smax=14).normalize()
     assert d3 is not None
     assert (d3.zeros & 0x80) != 0
     assert d3.umin == 10
@@ -186,8 +180,6 @@ def test_lazy_bv_avoids_upfront_blasting_and_solves_mixed_theories() -> None:
     m_mix = s_mix.model()
     assert m_mix.eval_bv(v1) == 0xCAFEBABE
     assert m_mix.eval_bool(unused) is True
-    assert isinstance(
-        SMTSolver(unsat.default_context()).statistics()["theory_bv_checks"], int
-    )
+    assert isinstance(SMTSolver(unsat.default_context()).statistics()["theory_bv_checks"], int)
     assert s_mix.check() is unsat.SAT
     assert SMTSolver(unsat.default_context()).check() is SolveResult.SAT

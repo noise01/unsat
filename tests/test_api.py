@@ -1,3 +1,6 @@
+from fractions import Fraction
+from typing import Any
+
 import pytest
 
 import unsat
@@ -112,9 +115,6 @@ def test_solver_resource_limits() -> None:
 
 
 def test_eq_distinct_if_literal_coercion() -> None:
-    from fractions import Fraction
-    from typing import Any
-
     ctx = Context()
     p = Bool("coerce_p", ctx=ctx)
     ix = unsat.Int("coerce_ix", ctx=ctx)

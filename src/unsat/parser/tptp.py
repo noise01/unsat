@@ -348,9 +348,7 @@ class _TPTPParser:
                 rhs = self._parse_term()
                 eq = self._ctx.mk_eq(lhs, rhs)
                 return eq if op.kind == "EQ" else self._ctx.mk_not(eq)
-            decl = self._ctx.mk_decl(
-                functor, tuple(arg.sort for arg in args), self._ctx.bool_sort
-            )
+            decl = self._ctx.mk_decl(functor, tuple(arg.sort for arg in args), self._ctx.bool_sort)
             return self._ctx.mk_app(decl, *args)
         found = "end of input" if tok.kind == "EOF" else repr(tok.value)
         msg = f"expected atomic formula, got {found}"
@@ -477,8 +475,7 @@ def _format_tptp_node(expr: Expr, bound_names: tuple[str, ...]) -> str:
                 rhs = _format_tptp_node(expr.args[1], bound_names)
                 return f"({lhs} != {rhs})"
             pairs = [
-                f"({_format_tptp_node(expr.args[i], bound_names)} != "
-                f"{_format_tptp_node(expr.args[j], bound_names)})"
+                f"({_format_tptp_node(expr.args[i], bound_names)} != {_format_tptp_node(expr.args[j], bound_names)})"
                 for i in range(len(expr.args))
                 for j in range(i + 1, len(expr.args))
             ]
@@ -486,9 +483,7 @@ def _format_tptp_node(expr: Expr, bound_names: tuple[str, ...]) -> str:
         if kind is DeclKind.UNINTERPRETED:
             if not expr.args:
                 return expr.decl.name
-            args_str = ", ".join(
-                _format_tptp_node(arg, bound_names) for arg in expr.args
-            )
+            args_str = ", ".join(_format_tptp_node(arg, bound_names) for arg in expr.args)
             return f"{expr.decl.name}({args_str})"
         msg = f"Unsupported operator for TPTP FOF formatting: '{expr.decl.name}'"
         raise ValueError(msg)

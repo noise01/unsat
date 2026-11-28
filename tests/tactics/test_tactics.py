@@ -74,9 +74,7 @@ def test_to_nnf_and_then_pipeline() -> None:
     res = pipeline.apply([ctx.mk_not(ctx.mk_implies(p, q)), ctx.mk_true()])
     assert len(res.formulas) == 1
     assert _is_nnf(res.formulas[0])
-    assert _truth_table(res.formulas[0], [p, q]) == _truth_table(
-        ctx.mk_and(p, ctx.mk_not(q)), [p, q]
-    )
+    assert _truth_table(res.formulas[0], [p, q]) == _truth_table(ctx.mk_and(p, ctx.mk_not(q)), [p, q])
 
 
 def test_to_nnf_handles_deep_expressions_without_recursion_error() -> None:

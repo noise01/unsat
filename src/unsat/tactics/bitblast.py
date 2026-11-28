@@ -88,11 +88,7 @@ def _bv_to_signed(val: int, width: int) -> int:
 
 
 def _is_not_of_bv(candidate: Expr, target: Expr) -> bool:
-    return (
-        isinstance(candidate, App)
-        and candidate.decl.kind is DeclKind.BV_NOT
-        and candidate.args[0] is target
-    )
+    return isinstance(candidate, App) and candidate.decl.kind is DeclKind.BV_NOT and candidate.args[0] is target
 
 
 def _simplify_extract(ctx: Context, hi: int, lo: int, arg: Expr) -> Expr:
@@ -108,9 +104,7 @@ def _simplify_extract(ctx: Context, hi: int, lo: int, arg: Expr) -> Expr:
                 return _simplify_extract(ctx, hi, lo, inner)
             if lo >= iw:
                 return ctx.mk_bv_val(0, hi - lo + 1)
-            return ctx.mk_zero_ext(
-                hi - iw + 1, _simplify_extract(ctx, iw - 1, lo, inner)
-            )
+            return ctx.mk_zero_ext(hi - iw + 1, _simplify_extract(ctx, iw - 1, lo, inner))
         if kind is DeclKind.BV_SIGN_EXT:
             inner = arg.args[0]
             iw = inner.bv_size
@@ -119,9 +113,7 @@ def _simplify_extract(ctx: Context, hi: int, lo: int, arg: Expr) -> Expr:
             if lo >= iw:
                 msb = _simplify_extract(ctx, iw - 1, iw - 1, inner)
                 return ctx.mk_repeat(hi - lo + 1, msb)
-            return ctx.mk_sign_ext(
-                hi - iw + 1, _simplify_extract(ctx, iw - 1, lo, inner)
-            )
+            return ctx.mk_sign_ext(hi - iw + 1, _simplify_extract(ctx, iw - 1, lo, inner))
         if kind is DeclKind.BV_CONCAT:
             pieces: list[Expr] = []
             offset = 0
@@ -133,9 +125,7 @@ def _simplify_extract(ctx: Context, hi: int, lo: int, arg: Expr) -> Expr:
                 ov_lo = max(lo, part_lo)
                 ov_hi = min(hi, part_hi)
                 if ov_lo <= ov_hi:
-                    pieces.append(
-                        _simplify_extract(ctx, ov_hi - part_lo, ov_lo - part_lo, part)
-                    )
+                    pieces.append(_simplify_extract(ctx, ov_hi - part_lo, ov_lo - part_lo, part))
             pieces.reverse()
             return ctx.mk_concat(*pieces)
     return ctx.mk_extract(hi, lo, arg)
@@ -161,9 +151,7 @@ def _simplify_concat(ctx: Context, args: Sequence[Expr]) -> Expr:
         ):
             prev = coalesced.pop()
             assert isinstance(prev, App)
-            coalesced.append(
-                ctx.mk_extract(prev.decl.params[0], part.decl.params[1], part.args[0])
-            )
+            coalesced.append(ctx.mk_extract(prev.decl.params[0], part.decl.params[1], part.args[0]))
         else:
             coalesced.append(part)
     return ctx.mk_concat(*coalesced)
@@ -192,19 +180,11 @@ def _simplify_bv_eq(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
                     lhs = lhs.args[0]
                     rhs = ctx.mk_bv_val((-c2) & mask, w)
                     continue
-                if (
-                    k is DeclKind.BV_ADD
-                    and len(lhs.args) >= 2
-                    and isinstance(lhs.args[-1], Const)
-                ):
+                if k is DeclKind.BV_ADD and len(lhs.args) >= 2 and isinstance(lhs.args[-1], Const):
                     c1 = lhs.args[-1].value
                     assert isinstance(c1, int)
                     assert not isinstance(c1, bool)
-                    lhs = (
-                        lhs.args[0]
-                        if len(lhs.args) == 2
-                        else ctx.mk_bv_add(*lhs.args[:-1])
-                    )
+                    lhs = lhs.args[0] if len(lhs.args) == 2 else ctx.mk_bv_add(*lhs.args[:-1])
                     rhs = ctx.mk_bv_val((c2 - c1) & mask, w)
                     continue
                 if k is DeclKind.BV_SUB and isinstance(lhs.args[1], Const):
@@ -221,19 +201,11 @@ def _simplify_bv_eq(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
                     lhs = lhs.args[1]
                     rhs = ctx.mk_bv_val((c1 - c2) & mask, w)
                     continue
-                if (
-                    k is DeclKind.BV_XOR
-                    and len(lhs.args) >= 2
-                    and isinstance(lhs.args[-1], Const)
-                ):
+                if k is DeclKind.BV_XOR and len(lhs.args) >= 2 and isinstance(lhs.args[-1], Const):
                     c1 = lhs.args[-1].value
                     assert isinstance(c1, int)
                     assert not isinstance(c1, bool)
-                    lhs = (
-                        lhs.args[0]
-                        if len(lhs.args) == 2
-                        else ctx.mk_bv_xor(*lhs.args[:-1])
-                    )
+                    lhs = lhs.args[0] if len(lhs.args) == 2 else ctx.mk_bv_xor(*lhs.args[:-1])
                     rhs = ctx.mk_bv_val(c2 ^ c1, w)
                     continue
                 if k is DeclKind.BV_ZERO_EXT:
@@ -272,12 +244,7 @@ def _simplify_bv_eq(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
             and len(lhs.args) == len(rhs.args)
             and all(a.sort is b.sort for a, b in zip(lhs.args, rhs.args, strict=True))
         ):
-            return ctx.mk_and(
-                *(
-                    _simplify_bv_eq(ctx, a, b)
-                    for a, b in zip(lhs.args, rhs.args, strict=True)
-                )
-            )
+            return ctx.mk_and(*(_simplify_bv_eq(ctx, a, b) for a, b in zip(lhs.args, rhs.args, strict=True)))
         break
 
     return ctx.mk_eq(lhs, rhs)
@@ -358,11 +325,7 @@ def bv_simplify(expr: Expr) -> Expr:
                 patterns=new_pats,
             )
             continue
-        if (
-            isinstance(node, (Const, BoundVar))
-            or not isinstance(node, App)
-            or node.is_const_symbol
-        ):
+        if isinstance(node, (Const, BoundVar)) or not isinstance(node, App) or node.is_const_symbol:
             memo[node] = node
             continue
 
@@ -372,23 +335,13 @@ def bv_simplify(expr: Expr) -> Expr:
         match kind:
             case DeclKind.BV_AND:
                 arg_set = set(args)
-                if any(
-                    isinstance(a, App)
-                    and a.decl.kind is DeclKind.BV_NOT
-                    and a.args[0] in arg_set
-                    for a in args
-                ):
+                if any(isinstance(a, App) and a.decl.kind is DeclKind.BV_NOT and a.args[0] in arg_set for a in args):
                     memo[node] = ctx.mk_bv_val(0, node.bv_size)
                 else:
                     memo[node] = ctx.mk_bv_and(*args)
             case DeclKind.BV_OR:
                 arg_set = set(args)
-                if any(
-                    isinstance(a, App)
-                    and a.decl.kind is DeclKind.BV_NOT
-                    and a.args[0] in arg_set
-                    for a in args
-                ):
+                if any(isinstance(a, App) and a.decl.kind is DeclKind.BV_NOT and a.args[0] in arg_set for a in args):
                     w = node.bv_size
                     memo[node] = ctx.mk_bv_val(_bv_mask(w), w)
                 else:
@@ -568,9 +521,7 @@ class BitVecModelConverter:
             msg = "Model belongs to a different Context than BitVecModelConverter"
             raise ValueError(msg)
 
-        values = {
-            decl: val for decl, val in model.items() if decl not in self._internal_decls
-        }
+        values = {decl: val for decl, val in model.items() if decl not in self._internal_decls}
         for bv_decl, bits in self._bv_const_bits.items():
             word_val = 0
             for idx, bit_expr in enumerate(bits):
@@ -592,19 +543,13 @@ class BitBlaster:
         reserved_names: set[str] | None = None,
     ) -> None:
         self._ctx = ctx
-        self._reserved_names: set[str] = (
-            set(reserved_names) if reserved_names is not None else set()
-        )
+        self._reserved_names: set[str] = set(reserved_names) if reserved_names is not None else set()
         self._term_bits: dict[Expr, tuple[Expr, ...]] = {}
         self._formula_cache: dict[Expr, Expr] = {}
         self._bv_const_bits: dict[FuncDecl, tuple[Expr, ...]] = {}
         self._internal_decls: set[FuncDecl] = set()
-        self._udiv_cache: dict[
-            tuple[Expr, Expr], tuple[tuple[Expr, ...], tuple[Expr, ...]]
-        ] = {}
-        self._sdiv_cache: dict[
-            tuple[Expr, Expr], tuple[tuple[Expr, ...], tuple[Expr, ...]]
-        ] = {}
+        self._udiv_cache: dict[tuple[Expr, Expr], tuple[tuple[Expr, ...], tuple[Expr, ...]]] = {}
+        self._sdiv_cache: dict[tuple[Expr, Expr], tuple[tuple[Expr, ...], tuple[Expr, ...]]] = {}
         self._and_cache: dict[tuple[int, int], Expr] = {}
         self._or_cache: dict[tuple[int, int], Expr] = {}
         self._xor_cache: dict[tuple[int, int], Expr] = {}
@@ -655,19 +600,11 @@ class BitBlaster:
         kind = node.decl.kind
         if kind in _BV_CMP_KINDS:
             return True
-        if (
-            kind in (DeclKind.EQ, DeclKind.DISTINCT)
-            and node.args
-            and node.args[0].is_bv
-        ):
+        if kind in (DeclKind.EQ, DeclKind.DISTINCT) and node.args and node.args[0].is_bv:
             return True
         return bool(
             kind in _BOOL_CONN_KINDS
-            and not (
-                kind in (DeclKind.EQ, DeclKind.DISTINCT)
-                and node.args
-                and not node.args[0].is_bool
-            )
+            and not (kind in (DeclKind.EQ, DeclKind.DISTINCT) and node.args and not node.args[0].is_bool)
         )
 
     def _ensure(self, root: Expr) -> None:
@@ -682,19 +619,15 @@ class BitBlaster:
                     assert not isinstance(node.value, bool)
                     val = node.value
                     self._term_bits[node] = tuple(
-                        self._ctx.mk_bool_val(bool((val >> i) & 1))
-                        for i in range(node.bv_size)
+                        self._ctx.mk_bool_val(bool((val >> i) & 1)) for i in range(node.bv_size)
                     )
                     continue
-                if not isinstance(node, App) or not (
-                    node.decl.kind in _BV_OP_KINDS or node.decl.kind is DeclKind.ITE
-                ):
+                if not isinstance(node, App) or not (node.decl.kind in _BV_OP_KINDS or node.decl.kind is DeclKind.ITE):
                     self._term_bits[node] = self._alloc_leaf_bits(node)
                     continue
                 if not expanded:
                     stack.append((node, True))
-                    for arg in reversed(node.args):
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in reversed(node.args))
                     continue
                 self._term_bits[node] = self._build_bv_node(node)
                 continue
@@ -709,8 +642,7 @@ class BitBlaster:
             assert isinstance(node, App)
             if not expanded:
                 stack.append((node, True))
-                for arg in reversed(node.args):
-                    stack.append((arg, False))
+                stack.extend((arg, False) for arg in reversed(node.args))
                 continue
             self._formula_cache[node] = self._build_bool_node(node)
 
@@ -756,9 +688,7 @@ class BitBlaster:
         """Return whether ``term`` already has bit-blasted Boolean wire expressions."""
         return term in self._term_bits
 
-    def eval_blasted_term_bits(
-        self, term: Expr, bit_lookup: Callable[[Expr], bool]
-    ) -> int | None:
+    def eval_blasted_term_bits(self, term: Expr, bit_lookup: Callable[[Expr], bool]) -> int | None:
         """Evaluate already bit-blasted ``term``, or ``None`` if not blasted."""
         bits = self._term_bits.get(term)
         if bits is None:
@@ -794,9 +724,7 @@ class BitBlaster:
                 continue
             if not expanded:
                 stack.append((node, True))
-                for arg in reversed(node.args):
-                    if arg not in memo:
-                        stack.append((arg, False))
+                stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
                 continue
             vals = [memo[arg] for arg in node.args]
             kind = node.decl.kind
@@ -843,9 +771,7 @@ class BitBlaster:
     # ------------------------------------------------------------------
 
     def _const_bits(self, value: int, width: int) -> tuple[Expr, ...]:
-        return tuple(
-            self._ctx.mk_bool_val(bool((value >> i) & 1)) for i in range(width)
-        )
+        return tuple(self._ctx.mk_bool_val(bool((value >> i) & 1)) for i in range(width))
 
     def _gate_not(self, a: Expr) -> Expr:
         ctx = self._ctx
@@ -1004,13 +930,8 @@ class BitBlaster:
         self._fa_cache[key] = res
         return res
 
-    def _mux_bits(
-        self, cond: Expr, then_bits: Sequence[Expr], else_bits: Sequence[Expr]
-    ) -> tuple[Expr, ...]:
-        return tuple(
-            self._gate_ite(cond, t_bit, e_bit)
-            for t_bit, e_bit in zip(then_bits, else_bits, strict=True)
-        )
+    def _mux_bits(self, cond: Expr, then_bits: Sequence[Expr], else_bits: Sequence[Expr]) -> tuple[Expr, ...]:
+        return tuple(self._gate_ite(cond, t_bit, e_bit) for t_bit, e_bit in zip(then_bits, else_bits, strict=True))
 
     def _add_bits(
         self, a_bits: Sequence[Expr], b_bits: Sequence[Expr], carry_in: Expr
@@ -1041,17 +962,11 @@ class BitBlaster:
                 seen = self._gate_or(bit, seen)
         return tuple(out)
 
-    def _sub_bits(
-        self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
-    ) -> tuple[Expr, ...]:
+    def _sub_bits(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]) -> tuple[Expr, ...]:
         ctx = self._ctx
-        return self._add_bits(
-            a_bits, [self._gate_not(b) for b in b_bits], ctx.true_expr
-        )[0]
+        return self._add_bits(a_bits, [self._gate_not(b) for b in b_bits], ctx.true_expr)[0]
 
-    def _mul_bits(
-        self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
-    ) -> tuple[Expr, ...]:
+    def _mul_bits(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]) -> tuple[Expr, ...]:
         f = self._ctx.false_expr
         width = len(a_bits)
         a_active = sum(1 for bit in a_bits if bit is not f)
@@ -1076,9 +991,7 @@ class BitBlaster:
         assert acc is not None
         return tuple(acc)
 
-    def _shl_bits(
-        self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]
-    ) -> tuple[Expr, ...]:
+    def _shl_bits(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]) -> tuple[Expr, ...]:
         ctx = self._ctx
         f = ctx.false_expr
         width = len(a_bits)
@@ -1104,9 +1017,7 @@ class BitBlaster:
                 cur = [self._gate_and(not_high, bit) for bit in cur]
         return tuple(cur)
 
-    def _shr_bits(
-        self, a_bits: Sequence[Expr], b_bits: Sequence[Expr], *, arithmetic: bool
-    ) -> tuple[Expr, ...]:
+    def _shr_bits(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr], *, arithmetic: bool) -> tuple[Expr, ...]:
         ctx = self._ctx
         f = ctx.false_expr
         width = len(a_bits)
@@ -1148,20 +1059,13 @@ class BitBlaster:
             rem_ext = [a_bits[step], *rem]
             diff, borrow_inv = self._add_bits(rem_ext, neg_b_ext, t)
             quot[step] = borrow_inv
-            rem = [
-                self._gate_ite(borrow_inv, diff[k], rem_ext[k]) for k in range(width)
-            ]
+            rem = [self._gate_ite(borrow_inv, diff[k], rem_ext[k]) for k in range(width)]
 
         quot_final = tuple(self._gate_ite(b_is_zero, t, q) for q in quot)
-        rem_final = tuple(
-            self._gate_ite(b_is_zero, a_bit, r_bit)
-            for a_bit, r_bit in zip(a_bits, rem, strict=True)
-        )
+        rem_final = tuple(self._gate_ite(b_is_zero, a_bit, r_bit) for a_bit, r_bit in zip(a_bits, rem, strict=True))
         return quot_final, rem_final
 
-    def _udiv_rem_for_pair(
-        self, lhs: Expr, rhs: Expr
-    ) -> tuple[tuple[Expr, ...], tuple[Expr, ...]]:
+    def _udiv_rem_for_pair(self, lhs: Expr, rhs: Expr) -> tuple[tuple[Expr, ...], tuple[Expr, ...]]:
         key = (lhs, rhs)
         cached = self._udiv_cache.get(key)
         if cached is not None:
@@ -1207,9 +1111,7 @@ class BitBlaster:
 
     def _bits_eq(self, a_bits: Sequence[Expr], b_bits: Sequence[Expr]) -> Expr:
         ctx = self._ctx
-        return ctx.mk_and(
-            *(ctx.mk_eq(a, b) for a, b in zip(a_bits, b_bits, strict=True))
-        )
+        return ctx.mk_and(*(ctx.mk_eq(a, b) for a, b in zip(a_bits, b_bits, strict=True)))
 
     def _build_bv_node(self, node: App) -> tuple[Expr, ...]:
         ctx = self._ctx
@@ -1238,9 +1140,7 @@ class BitBlaster:
                     acc, _ = self._add_bits(acc, self._term_bits[arg], ctx.mk_false())
                 return acc
             case DeclKind.BV_SUB:
-                return self._sub_bits(
-                    self._term_bits[args[0]], self._term_bits[args[1]]
-                )
+                return self._sub_bits(self._term_bits[args[0]], self._term_bits[args[1]])
             case DeclKind.BV_MUL:
                 acc = self._term_bits[args[0]]
                 for arg in args[1:]:
@@ -1264,9 +1164,7 @@ class BitBlaster:
                 u_nz = ctx.mk_or(*u_r)
                 return tuple(self._gate_and(u_nz, bit) for bit in adj)
             case DeclKind.BV_SHL:
-                return self._shl_bits(
-                    self._term_bits[args[0]], self._term_bits[args[1]]
-                )
+                return self._shl_bits(self._term_bits[args[0]], self._term_bits[args[1]])
             case DeclKind.BV_LSHR:
                 return self._shr_bits(
                     self._term_bits[args[0]],
@@ -1280,9 +1178,7 @@ class BitBlaster:
                     arithmetic=True,
                 )
             case DeclKind.BV_CONCAT:
-                return tuple(
-                    bit for part in reversed(args) for bit in self._term_bits[part]
-                )
+                return tuple(bit for part in reversed(args) for bit in self._term_bits[part])
             case DeclKind.BV_EXTRACT:
                 hi, lo = node.decl.params
                 return self._term_bits[args[0]][lo : hi + 1]
@@ -1308,9 +1204,7 @@ class BitBlaster:
                 return self._term_bits[args[0]] * n
             case DeclKind.ITE:
                 cond_b = self._formula_cache[args[0]]
-                return self._mux_bits(
-                    cond_b, self._term_bits[args[1]], self._term_bits[args[2]]
-                )
+                return self._mux_bits(cond_b, self._term_bits[args[1]], self._term_bits[args[2]])
             case _:
                 msg = f"Unsupported BV operator in BitBlaster: {kind}"
                 raise TypeError(msg)
@@ -1327,34 +1221,25 @@ class BitBlaster:
             case DeclKind.OR:
                 return ctx.mk_or(*(self._formula_cache[a] for a in args))
             case DeclKind.IMPLIES:
-                return ctx.mk_implies(
-                    self._formula_cache[args[0]], self._formula_cache[args[1]]
-                )
+                return ctx.mk_implies(self._formula_cache[args[0]], self._formula_cache[args[1]])
             case DeclKind.XOR:
-                return ctx.mk_xor(
-                    self._formula_cache[args[0]], self._formula_cache[args[1]]
-                )
+                return ctx.mk_xor(self._formula_cache[args[0]], self._formula_cache[args[1]])
             case DeclKind.EQ:
                 if args[0].is_bv:
-                    return self._bits_eq(
-                        self._term_bits[args[0]], self._term_bits[args[1]]
-                    )
-                return ctx.mk_eq(
-                    self._formula_cache[args[0]], self._formula_cache[args[1]]
-                )
+                    return self._bits_eq(self._term_bits[args[0]], self._term_bits[args[1]])
+                return ctx.mk_eq(self._formula_cache[args[0]], self._formula_cache[args[1]])
             case DeclKind.DISTINCT:
                 if args and args[0].is_bv:
-                    diffs: list[Expr] = []
-                    for i in range(len(args)):
-                        for j in range(i + 1, len(args)):
-                            diffs.append(
-                                ctx.mk_not(
-                                    self._bits_eq(
-                                        self._term_bits[args[i]],
-                                        self._term_bits[args[j]],
-                                    )
-                                )
+                    diffs: list[Expr] = [
+                        ctx.mk_not(
+                            self._bits_eq(
+                                self._term_bits[args[i]],
+                                self._term_bits[args[j]],
                             )
+                        )
+                        for i in range(len(args))
+                        for j in range(i + 1, len(args))
+                    ]
                     return ctx.mk_and(*diffs)
                 return ctx.mk_distinct(*(self._formula_cache[a] for a in args))
             case DeclKind.ITE:
@@ -1364,37 +1249,21 @@ class BitBlaster:
                     self._formula_cache[args[2]],
                 )
             case DeclKind.BV_ULT:
-                return self._ult_bits(
-                    self._term_bits[args[0]], self._term_bits[args[1]]
-                )
+                return self._ult_bits(self._term_bits[args[0]], self._term_bits[args[1]])
             case DeclKind.BV_ULE:
-                return ctx.mk_not(
-                    self._ult_bits(self._term_bits[args[1]], self._term_bits[args[0]])
-                )
+                return ctx.mk_not(self._ult_bits(self._term_bits[args[1]], self._term_bits[args[0]]))
             case DeclKind.BV_UGT:
-                return self._ult_bits(
-                    self._term_bits[args[1]], self._term_bits[args[0]]
-                )
+                return self._ult_bits(self._term_bits[args[1]], self._term_bits[args[0]])
             case DeclKind.BV_UGE:
-                return ctx.mk_not(
-                    self._ult_bits(self._term_bits[args[0]], self._term_bits[args[1]])
-                )
+                return ctx.mk_not(self._ult_bits(self._term_bits[args[0]], self._term_bits[args[1]]))
             case DeclKind.BV_SLT:
-                return self._slt_bits(
-                    self._term_bits[args[0]], self._term_bits[args[1]]
-                )
+                return self._slt_bits(self._term_bits[args[0]], self._term_bits[args[1]])
             case DeclKind.BV_SLE:
-                return ctx.mk_not(
-                    self._slt_bits(self._term_bits[args[1]], self._term_bits[args[0]])
-                )
+                return ctx.mk_not(self._slt_bits(self._term_bits[args[1]], self._term_bits[args[0]]))
             case DeclKind.BV_SGT:
-                return self._slt_bits(
-                    self._term_bits[args[1]], self._term_bits[args[0]]
-                )
+                return self._slt_bits(self._term_bits[args[1]], self._term_bits[args[0]])
             case DeclKind.BV_SGE:
-                return ctx.mk_not(
-                    self._slt_bits(self._term_bits[args[0]], self._term_bits[args[1]])
-                )
+                return ctx.mk_not(self._slt_bits(self._term_bits[args[0]], self._term_bits[args[1]]))
             case _:
                 msg = f"Unsupported Boolean node in BitBlaster: {kind}"
                 raise TypeError(msg)
