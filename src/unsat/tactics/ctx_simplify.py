@@ -45,12 +45,10 @@ def _assert_context_fact(
         if isinstance(base, App):
             kind = base.decl.kind
             if eff and kind is DeclKind.AND:
-                for arg in reversed(base.args):
-                    stack.append((arg, True))
+                stack.extend((arg, True) for arg in reversed(base.args))
                 continue
             if (not eff) and kind is DeclKind.OR:
-                for arg in reversed(base.args):
-                    stack.append((arg, False))
+                stack.extend((arg, False) for arg in reversed(base.args))
                 continue
             if eff and kind is DeclKind.EQ:
                 lhs, rhs = base.args
@@ -78,9 +76,7 @@ def _assert_context_fact(
                         if prev_c is not None and prev_c is not lhs:
                             return False
                         const_map[rhs] = lhs
-                elif (
-                    isinstance(lhs, Const) and isinstance(rhs, Const) and lhs is not rhs
-                ):
+                elif isinstance(lhs, Const) and isinstance(rhs, Const) and lhs is not rhs:
                     return False
 
         prev_t = truths.get(base)
@@ -107,18 +103,12 @@ def _rewrite_with_env(
     def _ground_maps() -> tuple[dict[Expr, bool], dict[Expr, Expr]]:
         nonlocal ground_truths, ground_consts
         if ground_truths is None:
-            ground_truths = {
-                k: v for k, v in truths.items() if not free_bound_var_indices(k)
-            }
+            ground_truths = {k: v for k, v in truths.items() if not free_bound_var_indices(k)}
         if ground_consts is None:
-            ground_consts = {
-                k: v for k, v in const_map.items() if not free_bound_var_indices(k)
-            }
+            ground_consts = {k: v for k, v in const_map.items() if not free_bound_var_indices(k)}
         return ground_truths, ground_consts
 
-    def _step(
-        cur: Expr, depth: int, t_env: dict[Expr, bool], c_env: dict[Expr, Expr]
-    ) -> Expr:
+    def _step(cur: Expr, depth: int, t_env: dict[Expr, bool], c_env: dict[Expr, Expr]) -> Expr:
         if depth == 0 or not free_bound_var_indices(cur):
             if cur in c_env:
                 return c_env[cur]
@@ -131,10 +121,7 @@ def _rewrite_with_env(
         if isinstance(cur, Quantifier):
             gt, gc = _ground_maps()
             new_body = _step(cur.body, depth + cur.num_vars, gt, gc)
-            new_pats = tuple(
-                tuple(_step(t, depth + cur.num_vars, gt, gc) for t in pat)
-                for pat in cur.patterns
-            )
+            new_pats = tuple(tuple(_step(t, depth + cur.num_vars, gt, gc) for t in pat) for pat in cur.patterns)
             return simplify(
                 ctx.mk_quantifier(
                     cur.is_forall,
@@ -160,9 +147,7 @@ def _rewrite_with_env(
                 if rewritten is ctx.true_expr:
                     continue
                 out_args.append(rewritten)
-                if idx + 1 < len(cur.args) and not _assert_context_fact(
-                    rewritten, True, cur_t, cur_c
-                ):
+                if idx + 1 < len(cur.args) and not _assert_context_fact(rewritten, True, cur_t, cur_c):
                     return ctx.false_expr
             return ctx.mk_and(*out_args)
 
@@ -212,9 +197,7 @@ def _rewrite_with_env(
 
         new_args = [_step(arg, depth, t_env, c_env) for arg in cur.args]
         rebuilt = (
-            cur
-            if all(n is o for n, o in zip(new_args, cur.args, strict=True))
-            else ctx.mk_app(cur.decl, *new_args)
+            cur if all(n is o for n, o in zip(new_args, cur.args, strict=True)) else ctx.mk_app(cur.decl, *new_args)
         )
         return simplify(rebuilt)
 

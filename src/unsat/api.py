@@ -44,20 +44,11 @@ def _resolve_ctx(ctx: Context | None) -> Context:
 
 def _flatten_coercible_args(
     args: tuple[
-        Expr
-        | bool
-        | int
-        | Fraction
-        | str
-        | Sequence[Expr | bool | int | Fraction | str],
+        Expr | bool | int | Fraction | str | Sequence[Expr | bool | int | Fraction | str],
         ...,
     ],
 ) -> tuple[Expr | bool | int | Fraction | str, ...]:
-    if (
-        len(args) == 1
-        and isinstance(args[0], Sequence)
-        and not isinstance(args[0], (Expr, str, bytes, bytearray))
-    ):
+    if len(args) == 1 and isinstance(args[0], Sequence) and not isinstance(args[0], (Expr, str, bytes, bytearray)):
         return tuple(args[0])
     flat: list[Expr | bool | int | Fraction | str] = []
     for item in args:
@@ -94,11 +85,7 @@ def _coerce_literal_pair(
 def _flatten_expr_args(
     args: tuple[Expr | Sequence[Expr], ...],
 ) -> tuple[Expr, ...]:
-    if (
-        len(args) == 1
-        and isinstance(args[0], Sequence)
-        and not isinstance(args[0], Expr)
-    ):
+    if len(args) == 1 and isinstance(args[0], Sequence) and not isinstance(args[0], Expr):
         return tuple(args[0])
     flat: list[Expr] = []
     for item in args:
@@ -112,19 +99,9 @@ def _flatten_expr_args(
 def _bv_coerce_pair(a: Expr | int, b: Expr | int, op_name: str) -> tuple[Expr, Expr]:
     if isinstance(a, Expr) and isinstance(b, Expr):
         return a, b
-    if (
-        isinstance(a, Expr)
-        and a.is_bv
-        and isinstance(b, int)
-        and not isinstance(b, bool)
-    ):
+    if isinstance(a, Expr) and a.is_bv and isinstance(b, int) and not isinstance(b, bool):
         return a, a.ctx.mk_bv_val(b, a.bv_size)
-    if (
-        isinstance(b, Expr)
-        and b.is_bv
-        and isinstance(a, int)
-        and not isinstance(a, bool)
-    ):
+    if isinstance(b, Expr) and b.is_bv and isinstance(a, int) and not isinstance(a, bool):
         return b.ctx.mk_bv_val(a, b.bv_size), b
     msg = f"{op_name} requires BitVec expressions"
     raise TypeError(msg)
@@ -137,11 +114,7 @@ def _coerce_arg_for_sort(sort: Sort, value: Expr | bool | int | Fraction | str) 
         return sort.ctx.mk_bool_val(value)
     if sort.is_int and isinstance(value, int) and not isinstance(value, bool):
         return sort.ctx.mk_int_val(value)
-    if (
-        sort.is_real
-        and not isinstance(value, bool)
-        and isinstance(value, (int, Fraction))
-    ):
+    if sort.is_real and not isinstance(value, bool) and isinstance(value, (int, Fraction)):
         return sort.ctx.mk_real_val(value)
     if sort.is_bv and isinstance(value, int) and not isinstance(value, bool):
         return sort.ctx.mk_bv_val(value, sort.size)
@@ -257,9 +230,7 @@ def BitVec(name: str, bv: int | Sort, ctx: Context | None = None) -> App:
     return _resolve_ctx(ctx).mk_bv(name, bv)
 
 
-def BitVecs(
-    names: str | Sequence[str], bv: int | Sort, ctx: Context | None = None
-) -> list[App]:
+def BitVecs(names: str | Sequence[str], bv: int | Sort, ctx: Context | None = None) -> list[App]:
     """Create multiple ``BitVec`` constants from whitespace-separated names."""
     name_list = names.split() if isinstance(names, str) else list(names)
     return [BitVec(name, bv, ctx) for name in name_list]
@@ -332,10 +303,7 @@ def _coerce_int_pair(a: Expr | int, b: Expr | int, op_name: str) -> tuple[Expr, 
     if isinstance(a, int) and isinstance(b, int):
         ctx = _default_ctx
         return ctx.mk_int_val(a), ctx.mk_int_val(b)
-    msg = (
-        f"{op_name} requires Int expressions or ints, "
-        f"got {type(a).__name__} and {type(b).__name__}"
-    )
+    msg = f"{op_name} requires Int expressions or ints, got {type(a).__name__} and {type(b).__name__}"
     raise TypeError(msg)
 
 
@@ -479,15 +447,10 @@ def Concat(*args: Expr | str | Sequence[Expr | str]) -> Expr:
 
     ctx = anchor.ctx
     if anchor.is_string:
-        str_args = [
-            ctx.mk_string_val(item) if isinstance(item, str) else item for item in flat
-        ]
+        str_args = [ctx.mk_string_val(item) if isinstance(item, str) else item for item in flat]
         return ctx.mk_str_concat(*str_args)
     if anchor.is_reglan:
-        re_args = [
-            ctx.mk_str_to_re(ctx.mk_string_val(item)) if isinstance(item, str) else item
-            for item in flat
-        ]
+        re_args = [ctx.mk_str_to_re(ctx.mk_string_val(item)) if isinstance(item, str) else item for item in flat]
         return ctx.mk_re_concat(*re_args)
 
     bv_args: list[Expr] = []
@@ -548,18 +511,14 @@ def Replace(s: Expr | str, src: Expr | str, dst: Expr | str) -> Expr:
     """Replace first occurrence of ``src`` with ``dst`` in ``s``."""
     anchor = next((x for x in (s, src, dst) if isinstance(x, Expr)), None)
     ctx = anchor.ctx if anchor is not None else _default_ctx
-    return ctx.mk_str_replace(
-        _coerce_str(s, ctx), _coerce_str(src, ctx), _coerce_str(dst, ctx)
-    )
+    return ctx.mk_str_replace(_coerce_str(s, ctx), _coerce_str(src, ctx), _coerce_str(dst, ctx))
 
 
 def ReplaceAll(s: Expr | str, src: Expr | str, dst: Expr | str) -> Expr:
     """Replace all occurrences of ``src`` with ``dst`` in ``s``."""
     anchor = next((x for x in (s, src, dst) if isinstance(x, Expr)), None)
     ctx = anchor.ctx if anchor is not None else _default_ctx
-    return ctx.mk_str_replace_all(
-        _coerce_str(s, ctx), _coerce_str(src, ctx), _coerce_str(dst, ctx)
-    )
+    return ctx.mk_str_replace_all(_coerce_str(s, ctx), _coerce_str(src, ctx), _coerce_str(dst, ctx))
 
 
 def Contains(s: Expr | str, substr: Expr | str) -> Expr:
@@ -831,12 +790,7 @@ def Eq(
 
 
 def Distinct(
-    *args: Expr
-    | bool
-    | int
-    | Fraction
-    | str
-    | Sequence[Expr | bool | int | Fraction | str],
+    *args: Expr | bool | int | Fraction | str | Sequence[Expr | bool | int | Fraction | str],
 ) -> Expr:
     """Build a pairwise-distinct constraint over ``args``."""
     flat = _flatten_coercible_args(args)
@@ -860,13 +814,9 @@ def If(
         msg = f"If condition must be an Expr, got {cond!r}"
         raise TypeError(msg)
     if isinstance(then_branch, Expr):
-        return cond.ctx.mk_ite(
-            cond, then_branch, _coerce_arg_for_sort(then_branch.sort, else_branch)
-        )
+        return cond.ctx.mk_ite(cond, then_branch, _coerce_arg_for_sort(then_branch.sort, else_branch))
     if isinstance(else_branch, Expr):
-        return cond.ctx.mk_ite(
-            cond, _coerce_arg_for_sort(else_branch.sort, then_branch), else_branch
-        )
+        return cond.ctx.mk_ite(cond, _coerce_arg_for_sort(else_branch.sort, then_branch), else_branch)
     t_expr, e_expr = _coerce_literal_pair(cond.ctx, then_branch, else_branch)
     return cond.ctx.mk_ite(cond, t_expr, e_expr)
 

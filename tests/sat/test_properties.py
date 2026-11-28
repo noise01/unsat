@@ -9,12 +9,7 @@ from unsat.sat import Lit, SATSolver, SolveResult, Var, neg_lit, pos_lit
 
 def evaluate_cnf(clauses: list[list[Lit]], model: dict[Var, bool]) -> bool:
     """Independently check whether ``model`` satisfies every clause."""
-    for clause in clauses:
-        if not any(
-            (not model[lit >> 1] if (lit & 1) else model[lit >> 1]) for lit in clause
-        ):
-            return False
-    return True
+    return all(any(not model[lit >> 1] if lit & 1 else model[lit >> 1] for lit in clause) for clause in clauses)
 
 
 def _bruteforce_sat(num_vars: int, clauses: list[list[Lit]]) -> bool:
@@ -98,9 +93,7 @@ def test_matches_bruteforce_oracle_on_small_cnfs(
     num_vars=st.integers(min_value=5, max_value=24),
     data=st.data(),
 )
-def test_differential_against_z3_random_3sat(
-    num_vars: int, data: st.DataObject
-) -> None:
+def test_differential_against_z3_random_3sat(num_vars: int, data: st.DataObject) -> None:
     # Span under-constrained to over-constrained ratios around 4.26.
     num_clauses = data.draw(st.integers(min_value=num_vars, max_value=num_vars * 6))
     lits = [fn(v) for v in range(num_vars) for fn in (pos_lit, neg_lit)]
@@ -129,9 +122,7 @@ def test_differential_against_z3_random_3sat(
     num_vars=st.integers(min_value=2, max_value=12),
     data=st.data(),
 )
-def test_incremental_clauses_and_assumptions_differential_z3(
-    num_vars: int, data: st.DataObject
-) -> None:
+def test_incremental_clauses_and_assumptions_differential_z3(num_vars: int, data: st.DataObject) -> None:
     lits = [fn(v) for v in range(num_vars) for fn in (pos_lit, neg_lit)]
     batches = data.draw(
         st.lists(

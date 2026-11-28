@@ -82,10 +82,7 @@ def test_smt_solver_handles_deep_xor_ite_chain_linearly() -> None:
     vars_ = [ctx.mk_bool(f"v_{i}") for i in range(1500)]
     cur: Expr = vars_[0]
     for idx in range(1, len(vars_)):
-        if idx % 2 == 0:
-            cur = ctx.mk_xor(cur, vars_[idx])
-        else:
-            cur = ctx.mk_ite(vars_[idx], cur, ctx.mk_not(cur))
+        cur = ctx.mk_xor(cur, vars_[idx]) if idx % 2 == 0 else ctx.mk_ite(vars_[idx], cur, ctx.mk_not(cur))
 
     solver = SMTSolver(ctx)
     solver.add(cur)

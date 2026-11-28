@@ -22,15 +22,12 @@ def _pigeonhole_clauses(pigeons: int, holes: int) -> list[list[Lit]]:
     def var_id(p: int, h: int) -> int:
         return p * holes + h
 
-    clauses: list[list[Lit]] = []
     # Every pigeon must be in at least one hole.
-    for p in range(pigeons):
-        clauses.append([pos_lit(var_id(p, h)) for h in range(holes)])
+    clauses: list[list[Lit]] = [[pos_lit(var_id(p, h)) for h in range(holes)] for p in range(pigeons)]
     # No hole can hold two pigeons.
     for h in range(holes):
         for p1 in range(pigeons):
-            for p2 in range(p1 + 1, pigeons):
-                clauses.append([neg_lit(var_id(p1, h)), neg_lit(var_id(p2, h))])
+            clauses.extend([neg_lit(var_id(p1, h)), neg_lit(var_id(p2, h))] for p2 in range(p1 + 1, pigeons))
     return clauses
 
 
@@ -260,7 +257,7 @@ class RecordingPropagator:
 
     def explain_propagation(self, lit: Lit) -> Sequence[Lit]:
         self.explain_calls.append(lit)
-        for _trigger, (prop_lit, reason) in self.rules.items():
+        for prop_lit, reason in self.rules.values():
             if prop_lit == lit:
                 return reason
         msg = f"Unexpected explain_propagation for {lit}"
@@ -369,9 +366,7 @@ def test_theory_unit_explanation_and_check_unit_lemma() -> None:
     assert solver2.model()[0] is True
 
     # Direct conflict_trigger from propagate().
-    conflict_prop = RecordingPropagator(
-        conflict_trigger=(frozenset({p, q}), [negate(p), negate(q)])
-    )
+    conflict_prop = RecordingPropagator(conflict_trigger=(frozenset({p, q}), [negate(p), negate(q)]))
     solver3 = SATSolver(propagator=conflict_prop)
     solver3.ensure_vars(2)
     assert solver3.solve([p, q]) is SolveResult.UNSAT

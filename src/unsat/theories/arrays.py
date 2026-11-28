@@ -31,8 +31,7 @@ def _array_depth(sort: Sort) -> int:
         cur, d = stack.pop()
         if cur.kind is SortKind.ARRAY:
             nxt = d + 1
-            if nxt > depth:
-                depth = nxt
+            depth = max(depth, nxt)
             stack.append((cur.index_sort, nxt))
             stack.append((cur.element_sort, nxt))
     return depth
@@ -99,16 +98,18 @@ class ArraySolver:
                 elif kind is DeclKind.CONST_ARRAY and node not in self._const_set:
                     self._const_set.add(node)
                     self._const_arrays.append(node)
-                for arg in reversed(node.args):
-                    if arg not in self._registered and (
+                stack.extend(
+                    arg
+                    for arg in reversed(node.args)
+                    if arg not in self._registered
+                    and (
                         arg.is_array
                         or (
                             isinstance(arg, App)
-                            and arg.decl.kind
-                            in (DeclKind.SELECT, DeclKind.STORE, DeclKind.CONST_ARRAY)
+                            and arg.decl.kind in (DeclKind.SELECT, DeclKind.STORE, DeclKind.CONST_ARRAY)
                         )
-                    ):
-                        stack.append(arg)
+                    )
+                )
 
     def _get_ext_witness(self, a: Expr, b: Expr) -> App:
         key = (a, b) if a.id <= b.id else (b, a)
@@ -142,9 +143,7 @@ class ArraySolver:
         for st in self._stores:
             _, idx, val = st.args
             sel_self = self._ctx.mk_select(st, idx)
-            if not euf.are_equal(sel_self, val) and _add(
-                (), self._ctx.mk_eq(sel_self, val)
-            ):
+            if not euf.are_equal(sel_self, val) and _add((), self._ctx.mk_eq(sel_self, val)):
                 self._stats.row1_lemmas += 1
             rep = euf.rep_expr(st)
             for member in sorted(euf.eclass_members(rep), key=lambda t: t.id):
@@ -167,11 +166,7 @@ class ArraySolver:
                 base_reasons = euf.explain_terms_equal(b, st)
                 if euf.are_equal(i, j):
                     if not euf.are_equal(sel, v):
-                        reasons = tuple(
-                            dict.fromkeys(
-                                [*base_reasons, *euf.explain_terms_equal(i, j)]
-                            )
-                        )
+                        reasons = tuple(dict.fromkeys([*base_reasons, *euf.explain_terms_equal(i, j)]))
                         if _add(reasons, self._ctx.mk_eq(sel, v)):
                             self._stats.row1_lemmas += 1
                 else:
@@ -223,7 +218,7 @@ class ArraySolver:
     def _check_const_arrays(
         self,
         euf: EUFSolver,
-        emit,
+        emit: Callable[[tuple[TheoryLit, ...], Expr], bool],
     ) -> None:
         for sel in self._selects:
             b, _ = sel.args
@@ -232,20 +227,14 @@ class ArraySolver:
                 if c_arr.sort is b.sort and euf.rep_expr(c_arr) is rep_b:
                     v = c_arr.args[0]
                     if not euf.are_equal(sel, v):
-                        reasons = tuple(
-                            dict.fromkeys(euf.explain_terms_equal(b, c_arr))
-                        )
+                        reasons = tuple(dict.fromkeys(euf.explain_terms_equal(b, c_arr)))
                         if emit(reasons, self._ctx.mk_eq(sel, v)):
                             self._stats.const_lemmas += 1
 
         for idx, c1 in enumerate(self._const_arrays):
             rep1 = euf.rep_expr(c1)
             for c2 in self._const_arrays[idx + 1 :]:
-                if (
-                    c1.sort is c2.sort
-                    and euf.rep_expr(c2) is rep1
-                    and not euf.are_equal(c1.args[0], c2.args[0])
-                ):
+                if c1.sort is c2.sort and euf.rep_expr(c2) is rep1 and not euf.are_equal(c1.args[0], c2.args[0]):
                     reasons = tuple(dict.fromkeys(euf.explain_terms_equal(c1, c2)))
                     if emit(reasons, self._ctx.mk_eq(c1.args[0], c2.args[0])):
                         self._stats.const_lemmas += 1
@@ -257,9 +246,7 @@ class ArraySolver:
                 if st.sort is c_arr.sort and euf.rep_expr(c_arr) is rep_s:
                     v_c = c_arr.args[0]
                     if not euf.are_equal(v_s, v_c):
-                        reasons = tuple(
-                            dict.fromkeys(euf.explain_terms_equal(st, c_arr))
-                        )
+                        reasons = tuple(dict.fromkeys(euf.explain_terms_equal(st, c_arr)))
                         if emit(reasons, self._ctx.mk_eq(v_s, v_c)):
                             self._stats.const_lemmas += 1
 
@@ -301,11 +288,7 @@ class ArraySolver:
                 if len(comp_consts) < 2:
                     continue
 
-                comp_stores = [
-                    st
-                    for st in self._stores
-                    if st.sort is sort and euf.rep_expr(st) in comp_reps
-                ]
+                comp_stores = [st for st in self._stores if st.sort is sort and euf.rep_expr(st) in comp_reps]
                 idx_sort = sort.index_sort
                 finite_size: int | None = None
                 if idx_sort.is_bool:
@@ -319,44 +302,31 @@ class ArraySolver:
                         if euf.are_equal(c1.args[0], c2.args[0]):
                             continue
                         path_reasons = self._explain_store_path(euf, adj, c1, c2)
-                        if path_reasons is not None and emit(
-                            path_reasons, self._ctx.mk_eq(c1.args[0], c2.args[0])
-                        ):
+                        if path_reasons is not None and emit(path_reasons, self._ctx.mk_eq(c1.args[0], c2.args[0])):
                             self._stats.const_lemmas += 1
                 else:
                     domain_elems: tuple[Expr, ...] = (
                         (self._ctx.false_expr, self._ctx.true_expr)
                         if idx_sort.is_bool
-                        else tuple(
-                            self._ctx.mk_bv_val(i, idx_sort.size)
-                            for i in range(finite_size)
-                        )
+                        else tuple(self._ctx.mk_bv_val(i, idx_sort.size) for i in range(finite_size))
                     )
                     for st in comp_stores:
                         rep_s = euf.rep_expr(st)
                         for c_arr in comp_consts:
                             if euf.rep_expr(c_arr) is not rep_s:
                                 continue
-                            reasons = tuple(
-                                dict.fromkeys(euf.explain_terms_equal(st, c_arr))
-                            )
+                            reasons = tuple(dict.fromkeys(euf.explain_terms_equal(st, c_arr)))
                             v_c = c_arr.args[0]
                             for elem in domain_elems:
                                 sel_e = self._ctx.mk_select(st, elem)
-                                if not euf.are_equal(sel_e, v_c) and emit(
-                                    reasons, self._ctx.mk_eq(sel_e, v_c)
-                                ):
+                                if not euf.are_equal(sel_e, v_c) and emit(reasons, self._ctx.mk_eq(sel_e, v_c)):
                                     self._stats.const_lemmas += 1
                         a_st, i_st, v_st = st.args
                         for elem in domain_elems:
                             sel_e = self._ctx.mk_select(st, elem)
                             if euf.are_equal(i_st, elem):
                                 if not euf.are_equal(sel_e, v_st):
-                                    reasons = tuple(
-                                        dict.fromkeys(
-                                            euf.explain_terms_equal(i_st, elem)
-                                        )
-                                    )
+                                    reasons = tuple(dict.fromkeys(euf.explain_terms_equal(i_st, elem)))
                                     if emit(reasons, self._ctx.mk_eq(sel_e, v_st)):
                                         self._stats.const_lemmas += 1
                             else:
@@ -444,25 +414,17 @@ class ArraySolver:
         for st in self._stores:
             sort = st.sort
             stores_by_sort.setdefault(sort, []).append(st)
-            stores_by_res_rep.setdefault(sort, {}).setdefault(
-                euf.rep_expr(st), []
-            ).append(st)
-            stores_by_base_rep.setdefault(sort, {}).setdefault(
-                euf.rep_expr(st.args[0]), []
-            ).append(st)
+            stores_by_res_rep.setdefault(sort, {}).setdefault(euf.rep_expr(st), []).append(st)
+            stores_by_base_rep.setdefault(sort, {}).setdefault(euf.rep_expr(st.args[0]), []).append(st)
 
         consts_by_sort_rep: dict[Sort, dict[Expr, list[App]]] = {}
         for c_arr in self._const_arrays:
-            consts_by_sort_rep.setdefault(c_arr.sort, {}).setdefault(
-                euf.rep_expr(c_arr), []
-            ).append(c_arr)
+            consts_by_sort_rep.setdefault(c_arr.sort, {}).setdefault(euf.rep_expr(c_arr), []).append(c_arr)
 
         selects_by_sort_rep: dict[Sort, dict[Expr, list[App]]] = {}
         for sel in self._selects:
             arr_arg = sel.args[0]
-            selects_by_sort_rep.setdefault(arr_arg.sort, {}).setdefault(
-                euf.rep_expr(arr_arg), []
-            ).append(sel)
+            selects_by_sort_rep.setdefault(arr_arg.sort, {}).setdefault(euf.rep_expr(arr_arg), []).append(sel)
 
         for (sort, j), seed_list in seeds.items():
             adj_j: dict[Expr, list[tuple[Expr, Expr, Expr]]] = {}
@@ -504,11 +466,7 @@ class ArraySolver:
                     _parent: dict[Expr, tuple[Expr, Expr, Expr]] = parent,
                 ) -> tuple[TheoryLit, ...]:
                     if target_rep is _start_rep:
-                        return tuple(
-                            dict.fromkeys(
-                                euf.explain_terms_equal(_src_arr, target_term)
-                            )
-                        )
+                        return tuple(dict.fromkeys(euf.explain_terms_equal(_src_arr, target_term)))
                     edges: list[tuple[Expr, Expr]] = []
                     walk = target_rep
                     while walk is not _start_rep:
@@ -598,12 +556,14 @@ class ArraySolver:
                             if emit(_explain(target_rep, a2), formula):
                                 self._stats.row2_lemmas += 1
 
-    def _check_extensionality(self, euf: EUFSolver, emit) -> None:
+    def _check_extensionality(
+        self,
+        euf: EUFSolver,
+        emit: Callable[[tuple[TheoryLit, ...], Expr], bool],
+    ) -> None:
         const_val_by_rep: dict[Expr, Expr] = {}
         for c_arr in self._const_arrays:
-            const_val_by_rep.setdefault(
-                euf.rep_expr(c_arr), euf.rep_expr(c_arr.args[0])
-            )
+            const_val_by_rep.setdefault(euf.rep_expr(c_arr), euf.rep_expr(c_arr.args[0]))
 
         reads_by_rep: dict[Expr, dict[Expr, Expr]] = {}
         for sel in self._selects:
@@ -699,16 +659,10 @@ class ArraySolver:
             if isinstance(expr, Const):
                 return expr
             if expr.is_bool:
-                return (
-                    self._ctx.mk_true()
-                    if euf.are_equal(expr, self._ctx.true_expr)
-                    else self._ctx.mk_false()
-                )
+                return self._ctx.mk_true() if euf.are_equal(expr, self._ctx.true_expr) else self._ctx.mk_false()
             return _default_for(expr.sort)
 
-        sorted_sorts = sorted(
-            self._arrays_by_sort, key=lambda s: (_array_depth(s), s.id)
-        )
+        sorted_sorts = sorted(self._arrays_by_sort, key=lambda s: (_array_depth(s), s.id))
         out: dict[Expr, Expr] = {}
 
         for sort in sorted_sorts:
@@ -772,9 +726,7 @@ class ArraySolver:
 
             for comp in comp_nodes:
                 comp_set = set(comp)
-                comp_edges = [
-                    (ra, rs, ki) for ra, rs, ki, _ in sort_stores if rs in comp_set
-                ]
+                comp_edges = [(ra, rs, ki) for ra, rs, ki, _ in sort_stores if rs in comp_set]
                 for _ in range(len(comp) + 1):
                     changed = False
                     for ra, rs, ki in comp_edges:

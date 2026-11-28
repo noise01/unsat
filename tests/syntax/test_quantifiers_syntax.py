@@ -74,10 +74,7 @@ def test_quantifier_ast_debruijn_and_helpers() -> None:
 
     # Pattern formatting includes (! ... :pattern (...))
     rendered_pat = format_expr(q)
-    assert (
-        rendered_pat
-        == "(forall ((x Int) (y Int)) (! (> (f x y) z) :pattern ((f x y))))"
-    )
+    assert rendered_pat == "(forall ((x Int) (y Int)) (! (> (f x y) z) :pattern ((f x y))))"
 
     # Capture-avoiding instantiation with open term containing BoundVar(0).
     sub_outer = instantiate_quantifier(outer, (g(b0),))
@@ -94,10 +91,7 @@ def test_quantifier_ast_debruijn_and_helpers() -> None:
         ctx.mk_and(ctx.mk_eq(z, x), outer),
         {z: b0},
     )
-    expected_subst = (
-        "(and (= (:var 0) x) "
-        "(forall ((x Int)) (exists ((y Int)) (= (f x y) (:var 2)))))"
-    )
+    expected_subst = "(and (= (:var 0) x) (forall ((x Int)) (exists ((y Int)) (= (f x y) (:var 2)))))"
     assert format_expr(subst_res) == expected_subst
 
 
@@ -126,10 +120,7 @@ def test_model_eval_quantifiers_finite_and_open() -> None:
     assert model.eval_bool(ctx.mk_exists((a, b), ctx.mk_distinct(a, b))) is True
     assert model.eval_bool(ctx.mk_exists((a,), pred(a))) is True
     assert model.eval_bool(ctx.mk_forall((a,), pred(a))) is False
-    assert (
-        model.eval_bool(ctx.mk_forall((bv,), ctx.mk_eq(bv & ctx.mk_bv_val(3, 2), bv)))
-        is True
-    )
+    assert model.eval_bool(ctx.mk_forall((bv,), ctx.mk_eq(bv & ctx.mk_bv_val(3, 2), bv))) is True
 
     # Infinite Int quantifier leaves bound vars intact while evaluating free constants.
     open_q = ctx.mk_forall((i,), ctx.mk_gt(i, c))

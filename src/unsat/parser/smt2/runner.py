@@ -185,9 +185,7 @@ class SMT2Runner:
         return self.solver.statistics()
 
     def _lookup_sort_entry(self, name: str) -> Sort | _SortDef | None:
-        for sort_scope, def_scope in zip(
-            reversed(self._sorts_stack), reversed(self._sort_defs_stack), strict=True
-        ):
+        for sort_scope, def_scope in zip(reversed(self._sorts_stack), reversed(self._sort_defs_stack), strict=True):
             if name in def_scope:
                 return def_scope[name]
             if name in sort_scope:
@@ -195,9 +193,7 @@ class SMT2Runner:
         return None
 
     def _lookup_callable(self, name: str) -> FuncDecl | _FuncDef | None:
-        for decl_scope, def_scope in zip(
-            reversed(self._decls_stack), reversed(self._defs_stack), strict=True
-        ):
+        for decl_scope, def_scope in zip(reversed(self._decls_stack), reversed(self._defs_stack), strict=True):
             if name in def_scope:
                 return def_scope[name]
             if name in decl_scope:
@@ -239,31 +235,19 @@ class SMT2Runner:
                     width = self._parse_nonneg_int(sexpr[2], context_desc)
                     return self.ctx.mk_bv_sort(width)
             if not head.quoted and head.name == "Array" and len(sexpr) == 3:
-                idx_sort = self._resolve_sort(
-                    sexpr[1], context_desc, sort_env=sort_env, resolving=resolving
-                )
-                elem_sort = self._resolve_sort(
-                    sexpr[2], context_desc, sort_env=sort_env, resolving=resolving
-                )
+                idx_sort = self._resolve_sort(sexpr[1], context_desc, sort_env=sort_env, resolving=resolving)
+                elem_sort = self._resolve_sort(sexpr[2], context_desc, sort_env=sort_env, resolving=resolving)
                 return self.ctx.mk_array_sort(idx_sort, elem_sort)
             if head.name in resolving:
-                msg = (
-                    f"Cyclic sort definition involving {head.name!r} in {context_desc}"
-                )
+                msg = f"Cyclic sort definition involving {head.name!r} in {context_desc}"
                 raise ValueError(msg)
             entry = self._lookup_sort_entry(head.name)
             if isinstance(entry, _SortDef):
                 if len(sexpr) - 1 != len(entry.params):
-                    msg = (
-                        f"Sort {head.name!r} expects {len(entry.params)} arguments, "
-                        f"got {len(sexpr) - 1}"
-                    )
+                    msg = f"Sort {head.name!r} expects {len(entry.params)} arguments, got {len(sexpr) - 1}"
                     raise ValueError(msg)
                 resolved_args = [
-                    self._resolve_sort(
-                        arg, context_desc, sort_env=sort_env, resolving=resolving
-                    )
-                    for arg in sexpr[1:]
+                    self._resolve_sort(arg, context_desc, sort_env=sort_env, resolving=resolving) for arg in sexpr[1:]
                 ]
                 next_env = dict(zip(entry.params, resolved_args, strict=True))
                 return self._resolve_sort(
@@ -297,10 +281,7 @@ class SMT2Runner:
             return entry
         if isinstance(entry, _SortDef):
             if entry.params:
-                msg = (
-                    f"Parameterized sort {sym.name!r} expects "
-                    f"{len(entry.params)} arguments"
-                )
+                msg = f"Parameterized sort {sym.name!r} expects {len(entry.params)} arguments"
                 raise ValueError(msg)
             return self._resolve_sort(
                 entry.body,
@@ -336,10 +317,7 @@ class SMT2Runner:
                     raise ValueError(msg)
                 logic = self._expect_symbol(args[0], "set-logic").name
                 if logic not in _SUPPORTED_LOGICS:
-                    msg = (
-                        f"Unsupported logic {logic!r}; supported logics are: "
-                        f"{', '.join(sorted(_SUPPORTED_LOGICS))}"
-                    )
+                    msg = f"Unsupported logic {logic!r}; supported logics are: {', '.join(sorted(_SUPPORTED_LOGICS))}"
                     raise ValueError(msg)
                 self._logic = logic
                 return False, None
@@ -352,10 +330,7 @@ class SMT2Runner:
                 sym = self._expect_symbol(args[0], "declare-sort")
                 arity = self._parse_nonneg_int(args[1], "declare-sort")
                 if arity != 0:
-                    msg = (
-                        f"Parameterized sort '{sym.name}' (arity {arity}) is not "
-                        "supported"
-                    )
+                    msg = f"Parameterized sort '{sym.name}' (arity {arity}) is not supported"
                     raise ValueError(msg)
                 if not sym.quoted and sym.name in (
                     "Bool",
@@ -366,15 +341,10 @@ class SMT2Runner:
                 ):
                     msg = f"Cannot redeclare built-in sort '{sym.name}'"
                     raise ValueError(msg)
-                if (
-                    sym.name in self._sorts_stack[-1]
-                    or sym.name in self._sort_defs_stack[-1]
-                ):
+                if sym.name in self._sorts_stack[-1] or sym.name in self._sort_defs_stack[-1]:
                     msg = f"Sort {sym.name!r} already declared in current scope"
                     raise ValueError(msg)
-                self._sorts_stack[-1][sym.name] = self.ctx.mk_uninterpreted_sort(
-                    sym.name
-                )
+                self._sorts_stack[-1][sym.name] = self.ctx.mk_uninterpreted_sort(sym.name)
                 return False, None
             case "define-sort":
                 if len(args) != 3:
@@ -392,10 +362,7 @@ class SMT2Runner:
                 ):
                     msg = f"Cannot redefine built-in sort '{sym.name}'"
                     raise ValueError(msg)
-                if (
-                    sym.name in self._sorts_stack[-1]
-                    or sym.name in self._sort_defs_stack[-1]
-                ):
+                if sym.name in self._sorts_stack[-1] or sym.name in self._sort_defs_stack[-1]:
                     msg = f"Sort {sym.name!r} already defined in current scope"
                     raise ValueError(msg)
                 if not isinstance(args[1], tuple):
@@ -404,9 +371,7 @@ class SMT2Runner:
                 param_names: list[str] = []
                 seen_params: set[str] = set()
                 for param_sexpr in args[1]:
-                    param_sym = self._expect_symbol(
-                        param_sexpr, "define-sort parameter"
-                    )
+                    param_sym = self._expect_symbol(param_sexpr, "define-sort parameter")
                     if not param_sym.quoted and param_sym.name in (
                         "Bool",
                         "Int",
@@ -414,26 +379,21 @@ class SMT2Runner:
                         "String",
                         "RegLan",
                     ):
-                        msg = (
-                            f"Cannot use built-in sort '{param_sym.name}' as "
-                            "define-sort parameter"
-                        )
+                        msg = f"Cannot use built-in sort '{param_sym.name}' as define-sort parameter"
                         raise ValueError(msg)
                     if param_sym.name in seen_params:
                         msg = f"Duplicate parameter {param_sym.name!r} in define-sort"
                         raise ValueError(msg)
                     seen_params.add(param_sym.name)
                     param_names.append(param_sym.name)
-                dummy_env = {pname: self.ctx.bool_sort for pname in param_names}
+                dummy_env = dict.fromkeys(param_names, self.ctx.bool_sort)
                 self._resolve_sort(
                     args[2],
                     "define-sort body",
                     sort_env=dummy_env,
                     resolving=frozenset({sym.name}),
                 )
-                self._sort_defs_stack[-1][sym.name] = _SortDef(
-                    params=tuple(param_names), body=args[2]
-                )
+                self._sort_defs_stack[-1][sym.name] = _SortDef(params=tuple(param_names), body=args[2])
                 return False, None
             case "declare-const":
                 if len(args) != 2:
@@ -451,10 +411,7 @@ class SMT2Runner:
                 if not isinstance(args[1], tuple):
                     msg = "declare-fun domain must be a sort list"
                     raise ValueError(msg)
-                domain = tuple(
-                    self._resolve_sort(sort_sexpr, "declare-fun domain")
-                    for sort_sexpr in args[1]
-                )
+                domain = tuple(self._resolve_sort(sort_sexpr, "declare-fun domain") for sort_sexpr in args[1])
                 range_sort = self._resolve_sort(args[2], "declare-fun range")
                 self._register_decl(sym.name, domain, range_sort)
                 return False, None
@@ -466,10 +423,7 @@ class SMT2Runner:
                 if not isinstance(args[1], tuple):
                     msg = "define-fun parameter list must be a list"
                     raise ValueError(msg)
-                if (
-                    sym.name in self._decls_stack[-1]
-                    or sym.name in self._defs_stack[-1]
-                ):
+                if sym.name in self._decls_stack[-1] or sym.name in self._defs_stack[-1]:
                     msg = f"Symbol {sym.name!r} already defined in current scope"
                     raise ValueError(msg)
                 param_env: dict[str, Expr] = {}
@@ -511,9 +465,7 @@ class SMT2Runner:
                     raise ValueError(msg)
                 inner_sexpr, named_sym = self._unwrap_assert_named(args[0])
                 if named_sym is not None and any(
-                    existing == named_sym
-                    for scope in self._named_stack
-                    for _, existing in scope
+                    existing == named_sym for scope in self._named_stack for _, existing in scope
                 ):
                     msg = f"Duplicate assertion name {named_sym!r}"
                     raise ValueError(msg)
@@ -556,11 +508,7 @@ class SMT2Runner:
                 if args:
                     msg = "get-assertions takes no arguments"
                     raise ValueError(msg)
-                rendered = [
-                    format_expr(expr)
-                    for scope in self._assertions_stack
-                    for expr in scope
-                ]
+                rendered = [format_expr(expr) for scope in self._assertions_stack for expr in scope]
                 return False, "(" + " ".join(rendered) + ")"
             case "echo":
                 if len(args) != 1 or not isinstance(args[0], _StringLit):
@@ -572,9 +520,7 @@ class SMT2Runner:
                 if args:
                     msg = "get-model takes no arguments"
                     raise ValueError(msg)
-                return False, format_smt2_model(
-                    self.solver.model(), decls=self.declared_decls()
-                )
+                return False, format_smt2_model(self.solver.model(), decls=self.declared_decls())
             case "get-value":
                 if len(args) != 1 or not isinstance(args[0], tuple) or not args[0]:
                     msg = "get-value expects a non-empty list of terms"
@@ -686,11 +632,7 @@ class SMT2Runner:
         cur = sexpr
         named_sym: str | None = None
         while (
-            isinstance(cur, tuple)
-            and cur
-            and isinstance(cur[0], _Symbol)
-            and not cur[0].quoted
-            and cur[0].name == "!"
+            isinstance(cur, tuple) and cur and isinstance(cur[0], _Symbol) and not cur[0].quoted and cur[0].name == "!"
         ):
             ann_args = cur[1:]
             if len(ann_args) < 3 or len(ann_args) % 2 == 0:
@@ -705,9 +647,7 @@ class SMT2Runner:
                     if named_sym is not None:
                         msg = "Multiple :named attributes on a single assertion"
                         raise ValueError(msg)
-                    name_atom = self._expect_symbol(
-                        ann_args[idx + 1], ":named attribute"
-                    )
+                    name_atom = self._expect_symbol(ann_args[idx + 1], ":named attribute")
                     named_sym = name_atom.name
             cur = ann_args[0]
         return cur, named_sym
@@ -717,22 +657,14 @@ class SMT2Runner:
         all_assumps = [*(ind for ind, _ in active_named), *assumptions]
         verdict = self.solver.check(*all_assumps)
         self._last_check_result = verdict
-        self._last_named_map = (
-            {ind: name for ind, name in active_named}
-            if verdict is SolveResult.UNSAT
-            else {}
-        )
+        self._last_named_map = dict(active_named) if verdict is SolveResult.UNSAT else {}
         return self._format_verdict(verdict)
 
-    def _coerce_domain_args(
-        self, parsed: list[Expr], domain: tuple[Sort, ...]
-    ) -> list[Expr]:
+    def _coerce_domain_args(self, parsed: list[Expr], domain: tuple[Sort, ...]) -> list[Expr]:
         if len(parsed) != len(domain):
             return parsed
         return [
-            self.ctx.mk_to_real(arg)
-            if isinstance(arg, Const) and arg.is_int and exp.is_real
-            else arg
+            self.ctx.mk_to_real(arg) if isinstance(arg, Const) and arg.is_int and exp.is_real else arg
             for arg, exp in zip(parsed, domain, strict=True)
         ]
 
@@ -753,10 +685,7 @@ class SMT2Runner:
         coerced = self._coerce_domain_args(parsed, fdef.param_sorts)
         for arg, exp in zip(coerced, fdef.param_sorts, strict=True):
             if arg.sort is not exp:
-                msg = (
-                    f"Argument sort '{arg.sort}' does not match parameter sort "
-                    f"'{exp}' in {name!r}"
-                )
+                msg = f"Argument sort '{arg.sort}' does not match parameter sort '{exp}' in {name!r}"
                 raise TypeError(msg)
         if not fdef.params:
             return fdef.body
@@ -765,12 +694,7 @@ class SMT2Runner:
     def _coerce_int_literals_for_real(self, exprs: list[Expr]) -> list[Expr]:
         if not any(item.is_real for item in exprs):
             return exprs
-        return [
-            self.ctx.mk_to_real(item)
-            if isinstance(item, Const) and item.is_int
-            else item
-            for item in exprs
-        ]
+        return [self.ctx.mk_to_real(item) if isinstance(item, Const) and item.is_int else item for item in exprs]
 
     def _parse_term(self, sexpr: SExpr, local_env: dict[str, Expr]) -> Expr:
         if isinstance(sexpr, _BVLiteral):
@@ -826,10 +750,7 @@ class SMT2Runner:
                     )
                     raise ValueError(msg)
                 return target()
-            msg = (
-                f"Line {sexpr.line}, col {sexpr.col}: "
-                f"undeclared identifier {sexpr.name!r}"
-            )
+            msg = f"Line {sexpr.line}, col {sexpr.col}: undeclared identifier {sexpr.name!r}"
             raise ValueError(msg)
 
         if not isinstance(sexpr, tuple) or not sexpr:
@@ -850,21 +771,14 @@ class SMT2Runner:
             if target is not None:
                 parsed = [self._parse_term(arg, local_env) for arg in args]
                 return target(*self._coerce_domain_args(parsed, target.domain))
-            msg = (
-                f"Line {head.line}, col {head.col}: "
-                f"unknown function application {head.name!r}"
-            )
+            msg = f"Line {head.line}, col {head.col}: unknown function application {head.name!r}"
             raise ValueError(msg)
 
         op = head.name
         if op == "_":
             if len(args) == 2:
                 bv_sym = self._expect_symbol(args[0], "indexed bitvector")
-                if (
-                    not bv_sym.quoted
-                    and bv_sym.name.startswith("bv")
-                    and bv_sym.name[2:].isdigit()
-                ):
+                if not bv_sym.quoted and bv_sym.name.startswith("bv") and bv_sym.name[2:].isdigit():
                     bv_val = int(bv_sym.name[2:])
                     bv_width = self._parse_nonneg_int(args[1], "(_ bv...)")
                     return self.ctx.mk_bv_val(bv_val, bv_width)
@@ -950,11 +864,7 @@ class SMT2Runner:
             raw_body = self._parse_term(body_sexpr, merged_env)
             abs_body = abstract_vars(raw_body, placeholders)
             abs_patterns = tuple(
-                tuple(
-                    abstract_vars(self._parse_term(t, merged_env), placeholders)
-                    for t in pat
-                )
-                for pat in raw_patterns
+                tuple(abstract_vars(self._parse_term(t, merged_env), placeholders) for t in pat) for pat in raw_patterns
             )
             return self.ctx.mk_quantifier(
                 op == "forall",
@@ -1004,12 +914,7 @@ class SMT2Runner:
                 coerced = self._coerce_int_literals_for_real(parsed)
                 if len(coerced) == 2:
                     return self.ctx.mk_eq(coerced[0], coerced[1])
-                return self.ctx.mk_and(
-                    *(
-                        self.ctx.mk_eq(coerced[i], coerced[i + 1])
-                        for i in range(len(coerced) - 1)
-                    )
-                )
+                return self.ctx.mk_and(*(self.ctx.mk_eq(coerced[i], coerced[i + 1]) for i in range(len(coerced) - 1)))
             case "distinct":
                 if len(parsed) < 2:
                     msg = "'distinct' expects at least 2 arguments"
@@ -1050,10 +955,7 @@ class SMT2Runner:
                     msg = "'/' expects at least 2 arguments"
                     raise ValueError(msg)
                 real_args = [
-                    self.ctx.mk_to_real(item)
-                    if isinstance(item, Const) and item.is_int
-                    else item
-                    for item in parsed
+                    self.ctx.mk_to_real(item) if isinstance(item, Const) and item.is_int else item for item in parsed
                 ]
                 acc = real_args[0]
                 for item in real_args[1:]:
@@ -1075,12 +977,7 @@ class SMT2Runner:
                 )
                 if len(coerced) == 2:
                     return mk_cmp(coerced[0], coerced[1])
-                return self.ctx.mk_and(
-                    *(
-                        mk_cmp(coerced[i], coerced[i + 1])
-                        for i in range(len(coerced) - 1)
-                    )
-                )
+                return self.ctx.mk_and(*(mk_cmp(coerced[i], coerced[i + 1]) for i in range(len(coerced) - 1)))
             case "to_real":
                 if len(parsed) != 1:
                     msg = "'to_real' expects 1 argument"
@@ -1090,21 +987,13 @@ class SMT2Runner:
                 if len(parsed) != 1:
                     msg = "'to_int' expects 1 argument"
                     raise ValueError(msg)
-                arg = (
-                    self.ctx.mk_to_real(parsed[0])
-                    if isinstance(parsed[0], Const) and parsed[0].is_int
-                    else parsed[0]
-                )
+                arg = self.ctx.mk_to_real(parsed[0]) if isinstance(parsed[0], Const) and parsed[0].is_int else parsed[0]
                 return self.ctx.mk_to_int(arg)
             case "is_int":
                 if len(parsed) != 1:
                     msg = "'is_int' expects 1 argument"
                     raise ValueError(msg)
-                arg = (
-                    self.ctx.mk_to_real(parsed[0])
-                    if isinstance(parsed[0], Const) and parsed[0].is_int
-                    else parsed[0]
-                )
+                arg = self.ctx.mk_to_real(parsed[0]) if isinstance(parsed[0], Const) and parsed[0].is_int else parsed[0]
                 return self.ctx.mk_is_int(arg)
             case "abs":
                 if len(parsed) != 1:
@@ -1278,12 +1167,7 @@ class SMT2Runner:
                     msg = "'select' expects 2 arguments"
                     raise ValueError(msg)
                 arr, idx = parsed
-                if (
-                    arr.is_array
-                    and arr.sort.index_sort.is_real
-                    and isinstance(idx, Const)
-                    and idx.is_int
-                ):
+                if arr.is_array and arr.sort.index_sort.is_real and isinstance(idx, Const) and idx.is_int:
                     idx = self.ctx.mk_to_real(idx)
                 return self.ctx.mk_select(arr, idx)
             case "store":
@@ -1292,17 +1176,9 @@ class SMT2Runner:
                     raise ValueError(msg)
                 arr, idx, val = parsed
                 if arr.is_array:
-                    if (
-                        arr.sort.index_sort.is_real
-                        and isinstance(idx, Const)
-                        and idx.is_int
-                    ):
+                    if arr.sort.index_sort.is_real and isinstance(idx, Const) and idx.is_int:
                         idx = self.ctx.mk_to_real(idx)
-                    if (
-                        arr.sort.element_sort.is_real
-                        and isinstance(val, Const)
-                        and val.is_int
-                    ):
+                    if arr.sort.element_sort.is_real and isinstance(val, Const) and val.is_int:
                         val = self.ctx.mk_to_real(val)
                 return self.ctx.mk_store(arr, idx, val)
             case "str.++":
@@ -1362,9 +1238,7 @@ class SMT2Runner:
                 mk_scmp = self.ctx.mk_str_lt if op == "str.<" else self.ctx.mk_str_le
                 if len(parsed) == 2:
                     return mk_scmp(parsed[0], parsed[1])
-                return self.ctx.mk_and(
-                    *(mk_scmp(parsed[i], parsed[i + 1]) for i in range(len(parsed) - 1))
-                )
+                return self.ctx.mk_and(*(mk_scmp(parsed[i], parsed[i + 1]) for i in range(len(parsed) - 1)))
             case "str.to_int" | "str.to.int":
                 if len(parsed) != 1:
                     msg = f"'{op}' expects 1 argument"
@@ -1454,10 +1328,7 @@ class SMT2Runner:
                     return self._expand_def(op, target, parsed, head.line, head.col)
                 if target is not None:
                     return target(*self._coerce_domain_args(parsed, target.domain))
-                msg = (
-                    f"Line {head.line}, col {head.col}: "
-                    f"unsupported operator or undeclared function {op!r}"
-                )
+                msg = f"Line {head.line}, col {head.col}: unsupported operator or undeclared function {op!r}"
                 raise ValueError(msg)
 
     def _parse_compound_head_term(

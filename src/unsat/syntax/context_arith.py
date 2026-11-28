@@ -104,9 +104,7 @@ def build_idiv(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
             assert not isinstance(lhs.value, bool)
             q, _ = _int_div_mod(lhs.value, rhs.value)
             return ctx.mk_int_val(q)
-    decl = ctx._intern_decl(
-        DeclKind.IDIV, "div", (ctx.int_sort, ctx.int_sort), ctx.int_sort
-    )
+    decl = ctx._intern_decl(DeclKind.IDIV, "div", (ctx.int_sort, ctx.int_sort), ctx.int_sort)
     return ctx._intern_app(decl, (lhs, rhs))
 
 
@@ -124,9 +122,7 @@ def build_mod(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
             assert not isinstance(lhs.value, bool)
             _, r = _int_div_mod(lhs.value, rhs.value)
             return ctx.mk_int_val(r)
-    decl = ctx._intern_decl(
-        DeclKind.MOD, "mod", (ctx.int_sort, ctx.int_sort), ctx.int_sort
-    )
+    decl = ctx._intern_decl(DeclKind.MOD, "mod", (ctx.int_sort, ctx.int_sort), ctx.int_sort)
     return ctx._intern_app(decl, (lhs, rhs))
 
 
@@ -294,9 +290,7 @@ def build_div(ctx: Context, lhs: Expr, rhs: Expr) -> Expr:
         if isinstance(lhs, Const) and rhs.value != 0:
             assert isinstance(lhs.value, Fraction)
             return ctx.mk_real_val(lhs.value / rhs.value)
-    decl = ctx._intern_decl(
-        DeclKind.DIV, "/", (ctx.real_sort, ctx.real_sort), ctx.real_sort
-    )
+    decl = ctx._intern_decl(DeclKind.DIV, "/", (ctx.real_sort, ctx.real_sort), ctx.real_sort)
     return ctx._intern_app(decl, (lhs, rhs))
 
 

@@ -206,13 +206,9 @@ class _PlaistedGreenbaumEncoder:
         """Guarded universal quantifiers ``(active_lit, norm_q, owner_lits)``."""
         return tuple(self._universal_entries)
 
-    def mark_quantifier_owners(
-        self, expr: Expr, owners: Lit | Iterable[Lit | None] | None
-    ) -> None:
+    def mark_quantifier_owners(self, expr: Expr, owners: Lit | Iterable[Lit | None] | None) -> None:
         """Associate ``owners`` with quantifiers appearing in ``expr``."""
-        owner_set = (
-            {owners} if (owners is None or isinstance(owners, int)) else set(owners)
-        )
+        owner_set = {owners} if (owners is None or isinstance(owners, int)) else set(owners)
         if not owner_set:
             return
         for node in iter_subexprs(expr):
@@ -235,9 +231,7 @@ class _PlaistedGreenbaumEncoder:
                 self._skolem_decls.add(app.decl)
                 return app
 
-    def _emit_existential_witness(
-        self, guard_cond_lit: Lit, node: Quantifier, *, negate_body: bool
-    ) -> None:
+    def _emit_existential_witness(self, guard_cond_lit: Lit, node: Quantifier, *, negate_body: bool) -> None:
         sk_consts = tuple(self._alloc_skolem_const(s) for s in node.var_sorts)
         inst = instantiate_quantifier(node, sk_consts)
         target = self._ctx.mk_not(inst) if negate_body else inst
@@ -255,11 +249,7 @@ class _PlaistedGreenbaumEncoder:
         for decl in sk_decls:
             self._skolem_decls.add(decl)
             self._reserved_names.add(decl.name)
-        conjuncts = (
-            sk_expr.args
-            if isinstance(sk_expr, App) and sk_expr.decl.kind is DeclKind.AND
-            else (sk_expr,)
-        )
+        conjuncts = sk_expr.args if isinstance(sk_expr, App) and sk_expr.decl.kind is DeclKind.AND else (sk_expr,)
         for conj in conjuncts:
             if isinstance(conj, Quantifier) and conj.is_forall:
                 idx = len(self._universal_entries)
@@ -291,9 +281,7 @@ class _PlaistedGreenbaumEncoder:
                 if node.is_forall:
                     self._register_universal_branch(q_lit, node)
                 else:
-                    self._emit_existential_witness(
-                        negate(q_lit), node, negate_body=False
-                    )
+                    self._emit_existential_witness(negate(q_lit), node, negate_body=False)
             if emit_neg:
                 if node.is_forall:
                     self._emit_existential_witness(q_lit, node, negate_body=True)
@@ -327,9 +315,7 @@ class _PlaistedGreenbaumEncoder:
         else:
             self._sat.add_clause(lits)
 
-    def encode_lemma(
-        self, expr: Expr, polarity: int = 1
-    ) -> tuple[Lit, list[list[Lit]]]:
+    def encode_lemma(self, expr: Expr, polarity: int = 1) -> tuple[Lit, list[list[Lit]]]:
         """Encode ``expr`` during ``check()``, capturing definition clauses."""
         prev_sink = self._clause_sink
         clauses: list[list[Lit]] = []
@@ -475,8 +461,7 @@ class _PlaistedGreenbaumEncoder:
                 eff_arith_euf = euf_flag or div_congruent or str_arith
                 if not expanded:
                     stack.append((node, eff_arith_euf, True))
-                    for arg in reversed(node.args):
-                        stack.append((arg, eff_arith_euf, False))
+                    stack.extend((arg, eff_arith_euf, False) for arg in reversed(node.args))
                     continue
                 if eff_arith_euf:
                     self._terms_euf.add(node)
@@ -507,8 +492,7 @@ class _PlaistedGreenbaumEncoder:
             if kind in _STRING_TERM_KINDS:
                 if not expanded:
                     stack.append((node, True, True))
-                    for arg in reversed(node.args):
-                        stack.append((arg, True, False))
+                    stack.extend((arg, True, False) for arg in reversed(node.args))
                     continue
                 self._terms_euf.add(node)
                 self._euf.register_term(node)
@@ -521,8 +505,7 @@ class _PlaistedGreenbaumEncoder:
             if kind in _RE_OP_KINDS:
                 if not expanded and node.args:
                     stack.append((node, True, True))
-                    for arg in reversed(node.args):
-                        stack.append((arg, True, False))
+                    stack.extend((arg, True, False) for arg in reversed(node.args))
                     continue
                 self._terms_euf.add(node)
                 self._euf.register_term(node)
@@ -531,8 +514,7 @@ class _PlaistedGreenbaumEncoder:
             if kind in _BV_OP_KINDS:
                 if not expanded:
                     stack.append((node, euf_flag, True))
-                    for arg in reversed(node.args):
-                        stack.append((arg, euf_flag, False))
+                    stack.extend((arg, euf_flag, False) for arg in reversed(node.args))
                     continue
                 if euf_flag:
                     self._terms_euf.add(node)
@@ -587,22 +569,21 @@ class _PlaistedGreenbaumEncoder:
                         self._strings.register_term(node)
                         if node not in self._str_axioms_emitted:
                             str_axiom_nodes.append(node)
+                elif euf_flag or node.is_string or node.is_reglan:
+                    self._terms_euf.add(node)
+                    self._euf.register_term(node)
+                    if node.is_arith:
+                        self._prop.add_shared_arith_term(node)
+                    elif node.is_bv:
+                        self._prop.add_shared_bv_term(node)
+                    elif node.is_array:
+                        self._arrays.register_term(node)
+                    elif node.is_string:
+                        self._strings.register_term(node)
+                        if node not in self._str_axioms_emitted:
+                            str_axiom_nodes.append(node)
                 else:
-                    if euf_flag or node.is_string or node.is_reglan:
-                        self._terms_euf.add(node)
-                        self._euf.register_term(node)
-                        if node.is_arith:
-                            self._prop.add_shared_arith_term(node)
-                        elif node.is_bv:
-                            self._prop.add_shared_bv_term(node)
-                        elif node.is_array:
-                            self._arrays.register_term(node)
-                        elif node.is_string:
-                            self._strings.register_term(node)
-                            if node not in self._str_axioms_emitted:
-                                str_axiom_nodes.append(node)
-                    else:
-                        self._terms_non_euf.add(node)
+                    self._terms_non_euf.add(node)
                 continue
 
             if node.is_bool:
@@ -647,9 +628,7 @@ class _PlaistedGreenbaumEncoder:
         if node.is_string and not isinstance(node, Const):
             len_node = ctx.mk_str_len(node)
             empty_s = ctx.mk_string_val("")
-            self._emit_clause(
-                [self.encode(ctx.mk_ge(len_node, ctx.mk_int_val(0)), polarity=1)]
-            )
+            self._emit_clause([self.encode(ctx.mk_ge(len_node, ctx.mk_int_val(0)), polarity=1)])
             self._emit_clause(
                 [
                     self.encode(
@@ -687,9 +666,7 @@ class _PlaistedGreenbaumEncoder:
             len_s = ctx.mk_str_len(s)
             len_r = ctx.mk_str_len(node)
             rem = ctx.mk_sub(len_s, idx)
-            valid = ctx.mk_and(
-                ctx.mk_ge(idx, z0), ctx.mk_lt(idx, len_s), ctx.mk_gt(n, z0)
-            )
+            valid = ctx.mk_and(ctx.mk_ge(idx, z0), ctx.mk_lt(idx, len_s), ctx.mk_gt(n, z0))
             sk_pre = self._alloc_skolem_const(ctx.string_sort)
             sk_suf = self._alloc_skolem_const(ctx.string_sort)
             exp_len = ctx.mk_ite(ctx.mk_le(n, rem), n, rem)
@@ -701,9 +678,7 @@ class _PlaistedGreenbaumEncoder:
                     ctx.mk_eq(len_r, exp_len),
                 ),
             )
-            ax_invalid = ctx.mk_implies(
-                ctx.mk_not(valid), ctx.mk_eq(node, ctx.mk_string_val(""))
-            )
+            ax_invalid = ctx.mk_implies(ctx.mk_not(valid), ctx.mk_eq(node, ctx.mk_string_val("")))
             for ax in (ax_valid, ax_invalid):
                 self._emit_clause([self.encode(ax, polarity=1)])
         elif skind is DeclKind.STR_INDEXOF:
@@ -779,12 +754,8 @@ class _PlaistedGreenbaumEncoder:
         elif skind is DeclKind.STR_REPLACE_ALL:
             s, src, _dst = node.args
             axioms_ra = (
-                ctx.mk_implies(
-                    ctx.mk_eq(src, ctx.mk_string_val("")), ctx.mk_eq(node, s)
-                ),
-                ctx.mk_implies(
-                    ctx.mk_not(ctx.mk_str_contains(s, src)), ctx.mk_eq(node, s)
-                ),
+                ctx.mk_implies(ctx.mk_eq(src, ctx.mk_string_val("")), ctx.mk_eq(node, s)),
+                ctx.mk_implies(ctx.mk_not(ctx.mk_str_contains(s, src)), ctx.mk_eq(node, s)),
             )
             for ax in axioms_ra:
                 self._emit_clause([self.encode(ax, polarity=1)])
@@ -812,16 +783,12 @@ class _PlaistedGreenbaumEncoder:
                         ctx.mk_eq(ctx.mk_str_to_code(node), n),
                     ),
                 ),
-                ctx.mk_implies(
-                    ctx.mk_not(in_rng), ctx.mk_eq(node, ctx.mk_string_val(""))
-                ),
+                ctx.mk_implies(ctx.mk_not(in_rng), ctx.mk_eq(node, ctx.mk_string_val(""))),
             ):
                 self._emit_clause([self.encode(ax, polarity=1)])
         elif skind is DeclKind.STR_TO_INT:
             s = node.args[0]
-            digits_re = ctx.mk_re_plus(
-                ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9"))
-            )
+            digits_re = ctx.mk_re_plus(ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9")))
             in_digits = ctx.mk_str_in_re(s, digits_re)
             for ax in (
                 ctx.mk_ge(node, ctx.mk_int_val(-1)),
@@ -831,9 +798,7 @@ class _PlaistedGreenbaumEncoder:
                         ctx.mk_eq(ctx.mk_str_len(s), ctx.mk_int_val(1)),
                         ctx.mk_ge(node, ctx.mk_int_val(0)),
                     ),
-                    ctx.mk_eq(
-                        node, ctx.mk_sub(ctx.mk_str_to_code(s), ctx.mk_int_val(48))
-                    ),
+                    ctx.mk_eq(node, ctx.mk_sub(ctx.mk_str_to_code(s), ctx.mk_int_val(48))),
                 ),
             ):
                 self._emit_clause([self.encode(ax, polarity=1)])
@@ -843,16 +808,12 @@ class _PlaistedGreenbaumEncoder:
                 ctx.mk_str_to_re(ctx.mk_string_val("0")),
                 ctx.mk_re_concat(
                     ctx.mk_re_range(ctx.mk_string_val("1"), ctx.mk_string_val("9")),
-                    ctx.mk_re_star(
-                        ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9"))
-                    ),
+                    ctx.mk_re_star(ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9"))),
                 ),
             )
             z0 = ctx.mk_int_val(0)
             for ax in (
-                ctx.mk_implies(
-                    ctx.mk_lt(n, z0), ctx.mk_eq(node, ctx.mk_string_val(""))
-                ),
+                ctx.mk_implies(ctx.mk_lt(n, z0), ctx.mk_eq(node, ctx.mk_string_val(""))),
                 ctx.mk_implies(
                     ctx.mk_ge(n, z0),
                     ctx.mk_and(
@@ -943,11 +904,7 @@ class _PlaistedGreenbaumEncoder:
 
     def _distinct_eq_pairs(self, node: App) -> list[Expr]:
         args = node.args
-        return [
-            self._ctx.mk_eq(args[i], args[j])
-            for i in range(len(args))
-            for j in range(i + 1, len(args))
-        ]
+        return [self._ctx.mk_eq(args[i], args[j]) for i in range(len(args)) for j in range(i + 1, len(args))]
 
     def _child_polarities(self, node: App, pol: int) -> list[tuple[Expr, int]]:
         kind = node.decl.kind
@@ -962,9 +919,7 @@ class _PlaistedGreenbaumEncoder:
             case DeclKind.DISTINCT:
                 if node.args and not node.args[0].is_bool:
                     neg_pol = -pol if pol != 0 else 0
-                    return [
-                        (eq_expr, neg_pol) for eq_expr in self._distinct_eq_pairs(node)
-                    ]
+                    return [(eq_expr, neg_pol) for eq_expr in self._distinct_eq_pairs(node)]
                 return [(arg, 0) for arg in node.args]
             case DeclKind.ITE:
                 return [(node.args[0], 0), (node.args[1], pol), (node.args[2], pol)]
@@ -978,14 +933,8 @@ class _PlaistedGreenbaumEncoder:
         emit_pos = pol >= 0 and node not in self._pos_encoded
         emit_neg = pol <= 0 and node not in self._neg_encoded
 
-        if (
-            node.decl.kind is DeclKind.DISTINCT
-            and node.args
-            and not node.args[0].is_bool
-        ):
-            pair_lits = [
-                self._get_lit(eq_expr) for eq_expr in self._distinct_eq_pairs(node)
-            ]
+        if node.decl.kind is DeclKind.DISTINCT and node.args and not node.args[0].is_bool:
+            pair_lits = [self._get_lit(eq_expr) for eq_expr in self._distinct_eq_pairs(node)]
             if emit_pos:
                 for eq_lit in pair_lits:
                     self._emit_clause([nv, negate(eq_lit)])
@@ -1084,9 +1033,7 @@ class _PlaistedGreenbaumEncoder:
             kind = node.decl.kind
             if kind is DeclKind.IS_INT:
                 arg = node.args[0]
-                reduced = self._ctx.mk_eq(
-                    arg, self._ctx.mk_to_real(self._ctx.mk_to_int(arg))
-                )
+                reduced = self._ctx.mk_eq(arg, self._ctx.mk_to_real(self._ctx.mk_to_int(arg)))
                 lit_red = self.encode(reduced, polarity=0)
                 lit_v = pos_lit(self.ensure_expr_var(node))
                 self._emit_clause([negate(lit_v), lit_red])
@@ -1135,9 +1082,7 @@ class _PlaistedGreenbaumEncoder:
                 reduced = self._ctx.mk_and(
                     self._ctx.mk_le(lsuf, ls),
                     self._ctx.mk_eq(
-                        self._ctx.mk_str_substr(
-                            s_arg, self._ctx.mk_sub(ls, lsuf), lsuf
-                        ),
+                        self._ctx.mk_str_substr(s_arg, self._ctx.mk_sub(ls, lsuf), lsuf),
                         suf_arg,
                     ),
                 )
@@ -1153,9 +1098,7 @@ class _PlaistedGreenbaumEncoder:
                 s_arg = node.args[0]
                 tc = self._ctx.mk_str_to_code(s_arg)
                 reduced = self._ctx.mk_and(
-                    self._ctx.mk_eq(
-                        self._ctx.mk_str_len(s_arg), self._ctx.mk_int_val(1)
-                    ),
+                    self._ctx.mk_eq(self._ctx.mk_str_len(s_arg), self._ctx.mk_int_val(1)),
                     self._ctx.mk_ge(tc, self._ctx.mk_int_val(48)),
                     self._ctx.mk_le(tc, self._ctx.mk_int_val(57)),
                 )
@@ -1175,10 +1118,7 @@ class _PlaistedGreenbaumEncoder:
                 self._prop.bind_string(pos_lit(var), node, catch_up=catch_up)
                 self._pos_encoded.add(node)
                 self._neg_encoded.add(node)
-                if (
-                    kind is DeclKind.STR_CONTAINS
-                    and node not in self._str_axioms_emitted
-                ):
+                if kind is DeclKind.STR_CONTAINS and node not in self._str_axioms_emitted:
                     self._str_axioms_emitted.add(node)
                     s_arg, t_arg = node.args
                     sk1 = self._alloc_skolem_const(self._ctx.string_sort)
@@ -1186,13 +1126,9 @@ class _PlaistedGreenbaumEncoder:
                     for ax in (
                         self._ctx.mk_implies(
                             node,
-                            self._ctx.mk_eq(
-                                s_arg, self._ctx.mk_str_concat(sk1, t_arg, sk2)
-                            ),
+                            self._ctx.mk_eq(s_arg, self._ctx.mk_str_concat(sk1, t_arg, sk2)),
                         ),
-                        self._ctx.mk_implies(
-                            self._ctx.mk_eq(t_arg, self._ctx.mk_string_val("")), node
-                        ),
+                        self._ctx.mk_implies(self._ctx.mk_eq(t_arg, self._ctx.mk_string_val("")), node),
                         self._ctx.mk_implies(
                             self._ctx.mk_lt(
                                 self._ctx.mk_str_len(s_arg),

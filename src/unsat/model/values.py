@@ -37,8 +37,7 @@ def _is_concrete_value(expr: Expr) -> bool:
         if isinstance(node, Const):
             continue
         if isinstance(node, App) and (
-            node.decl.kind in (DeclKind.CONST_ARRAY, DeclKind.STORE)
-            or node.decl.kind in _CONCRETE_RE_KINDS
+            node.decl.kind in (DeclKind.CONST_ARRAY, DeclKind.STORE) or node.decl.kind in _CONCRETE_RE_KINDS
         ):
             stack.extend(node.args)
             continue
@@ -105,16 +104,10 @@ def _concrete_values_equal(
     idx_sort = a.sort.index_sort
     if idx_sort.is_bool:
         return all(
-            _concrete_values_equal(
-                _lookup(d1, ov1, probe), _lookup(d2, ov2, probe), universes
-            )
+            _concrete_values_equal(_lookup(d1, ov1, probe), _lookup(d2, ov2, probe), universes)
             for probe in (a.ctx.false_expr, a.ctx.true_expr)
         )
-    if (
-        idx_sort.is_bv
-        and idx_sort.size <= 8
-        and len(unique_keys) >= (1 << idx_sort.size)
-    ):
+    if idx_sort.is_bv and idx_sort.size <= 8 and len(unique_keys) >= (1 << idx_sort.size):
         width = idx_sort.size
         return all(
             _concrete_values_equal(
@@ -127,10 +120,7 @@ def _concrete_values_equal(
 
     if not _concrete_values_equal(d1, d2, universes):
         return False
-    return all(
-        _concrete_values_equal(_lookup(d1, ov1, k), _lookup(d2, ov2, k), universes)
-        for k in unique_keys
-    )
+    return all(_concrete_values_equal(_lookup(d1, ov1, k), _lookup(d2, ov2, k), universes) for k in unique_keys)
 
 
 class FuncInterp:
@@ -139,9 +129,7 @@ class FuncInterp:
     def __init__(
         self,
         decl: FuncDecl,
-        entries: (
-            Mapping[tuple[Expr, ...], Expr] | Sequence[tuple[tuple[Expr, ...], Expr]]
-        ),
+        entries: (Mapping[tuple[Expr, ...], Expr] | Sequence[tuple[tuple[Expr, ...], Expr]]),
         else_value: Expr,
     ) -> None:
         if not decl.is_uninterpreted or decl.arity < 1:
@@ -154,10 +142,7 @@ class FuncInterp:
             msg = "FuncInterp else_value belongs to a different Context"
             raise ValueError(msg)
         if else_value.sort is not decl.range_sort:
-            msg = (
-                f"FuncInterp else_value sort '{else_value.sort}' does not match "
-                f"range sort '{decl.range_sort}'"
-            )
+            msg = f"FuncInterp else_value sort '{else_value.sort}' does not match range sort '{decl.range_sort}'"
             raise TypeError(msg)
 
         self._decl = decl
@@ -167,14 +152,9 @@ class FuncInterp:
         pairs = entries.items() if isinstance(entries, Mapping) else entries
         for key, result in pairs:
             if len(key) != decl.arity:
-                msg = (
-                    f"FuncInterp entry for '{decl}' expects {decl.arity} args, "
-                    f"got {len(key)}"
-                )
+                msg = f"FuncInterp entry for '{decl}' expects {decl.arity} args, got {len(key)}"
                 raise ValueError(msg)
-            for i, (arg, expected_sort) in enumerate(
-                zip(key, decl.domain, strict=True)
-            ):
+            for i, (arg, expected_sort) in enumerate(zip(key, decl.domain, strict=True)):
                 if not isinstance(arg, Expr) or not _is_concrete_value(arg):
                     msg = f"FuncInterp key argument {i} must be concrete"
                     raise TypeError(msg)
@@ -182,10 +162,7 @@ class FuncInterp:
                     msg = f"FuncInterp key argument {i} belongs to a different Context"
                     raise ValueError(msg)
                 if arg.sort is not expected_sort:
-                    msg = (
-                        f"FuncInterp key argument {i} sort '{arg.sort}' does not "
-                        f"match '{expected_sort}'"
-                    )
+                    msg = f"FuncInterp key argument {i} sort '{arg.sort}' does not match '{expected_sort}'"
                     raise TypeError(msg)
             if not isinstance(result, Expr) or not _is_concrete_value(result):
                 msg = f"FuncInterp entry result must be concrete, got {result!r}"
@@ -194,10 +171,7 @@ class FuncInterp:
                 msg = "FuncInterp entry result belongs to a different Context"
                 raise ValueError(msg)
             if result.sort is not decl.range_sort:
-                msg = (
-                    f"FuncInterp entry result sort '{result.sort}' does not match "
-                    f"range sort '{decl.range_sort}'"
-                )
+                msg = f"FuncInterp entry result sort '{result.sort}' does not match range sort '{decl.range_sort}'"
                 raise TypeError(msg)
             self._table[tuple(key)] = result
 
@@ -225,27 +199,19 @@ class FuncInterp:
 
     def __call__(self, *args: Expr) -> Expr:
         if len(args) != self._decl.arity:
-            msg = (
-                f"FuncInterp for '{self._decl}' expects {self._decl.arity} args, "
-                f"got {len(args)}"
-            )
+            msg = f"FuncInterp for '{self._decl}' expects {self._decl.arity} args, got {len(args)}"
             raise ValueError(msg)
         direct = self._table.get(args)
         if direct is not None:
             return direct
         if any(not isinstance(arg, Const) for arg in args):
             for key, result in self._table.items():
-                if all(
-                    _concrete_values_equal(a, k) for a, k in zip(args, key, strict=True)
-                ):
+                if all(_concrete_values_equal(a, k) for a, k in zip(args, key, strict=True)):
                     return result
         return self._else_value
 
     def __repr__(self) -> str:
-        items = ", ".join(
-            f"({', '.join(str(a) for a in key)}) -> {val}"
-            for key, val in self._table.items()
-        )
+        items = ", ".join(f"({', '.join(str(a) for a in key)}) -> {val}" for key, val in self._table.items())
         if items:
             return f"FuncInterp({self._decl.name}: {items}, else -> {self._else_value})"
         return f"FuncInterp({self._decl.name}: else -> {self._else_value})"

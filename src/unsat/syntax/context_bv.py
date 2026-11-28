@@ -73,11 +73,7 @@ def build_bv_and(ctx: Context, *args: Expr) -> Expr:
             non_const.append(item)
     if const_bits == 0 or not non_const:
         return ctx.mk_bv_val(const_bits, width)
-    terms = (
-        tuple(non_const)
-        if const_bits == mask
-        else (*non_const, ctx.mk_bv_val(const_bits, width))
-    )
+    terms = tuple(non_const) if const_bits == mask else (*non_const, ctx.mk_bv_val(const_bits, width))
     if len(terms) == 1:
         return terms[0]
     decl = ctx._intern_decl(DeclKind.BV_AND, "bvand", (sort,) * len(terms), sort)
@@ -113,11 +109,7 @@ def build_bv_or(ctx: Context, *args: Expr) -> Expr:
             non_const.append(item)
     if const_bits == mask or not non_const:
         return ctx.mk_bv_val(const_bits, width)
-    terms = (
-        tuple(non_const)
-        if const_bits == 0
-        else (*non_const, ctx.mk_bv_val(const_bits, width))
-    )
+    terms = tuple(non_const) if const_bits == 0 else (*non_const, ctx.mk_bv_val(const_bits, width))
     if len(terms) == 1:
         return terms[0]
     decl = ctx._intern_decl(DeclKind.BV_OR, "bvor", (sort,) * len(terms), sort)
@@ -147,18 +139,15 @@ def build_bv_xor(ctx: Context, *args: Expr) -> Expr:
             assert isinstance(item.value, int)
             assert not isinstance(item.value, bool)
             const_bits ^= item.value
+        elif item not in counts:
+            order.append(item)
+            counts[item] = 1
         else:
-            if item not in counts:
-                order.append(item)
-                counts[item] = 1
-            else:
-                counts[item] += 1
+            counts[item] += 1
     kept = [item for item in order if counts[item] % 2 == 1]
     if not kept:
         return ctx.mk_bv_val(const_bits, width)
-    terms = (
-        tuple(kept) if const_bits == 0 else (*kept, ctx.mk_bv_val(const_bits, width))
-    )
+    terms = tuple(kept) if const_bits == 0 else (*kept, ctx.mk_bv_val(const_bits, width))
     if len(terms) == 1:
         return terms[0]
     decl = ctx._intern_decl(DeclKind.BV_XOR, "bvxor", (sort,) * len(terms), sort)
@@ -296,9 +285,7 @@ def build_bv_cmp(ctx: Context, kind: DeclKind, lhs: Expr, rhs: Expr) -> Expr:
     """Build a normalized bit-vector comparison atom."""
     width = ctx._check_bv_pair(lhs, rhs, kind.value)
     if lhs is rhs:
-        return ctx.mk_bool_val(
-            kind in (DeclKind.BV_ULE, DeclKind.BV_UGE, DeclKind.BV_SLE, DeclKind.BV_SGE)
-        )
+        return ctx.mk_bool_val(kind in (DeclKind.BV_ULE, DeclKind.BV_UGE, DeclKind.BV_SLE, DeclKind.BV_SGE))
     if isinstance(lhs, Const) and isinstance(rhs, Const):
         assert isinstance(lhs.value, int)
         assert isinstance(rhs.value, int)
@@ -354,9 +341,7 @@ def build_concat(ctx: Context, *args: Expr) -> Expr:
             assert not isinstance(prev.value, bool)
             assert not isinstance(item.value, bool)
             w_item = item.sort.size
-            merged[-1] = ctx.mk_bv_val(
-                (prev.value << w_item) | item.value, prev.sort.size + w_item
-            )
+            merged[-1] = ctx.mk_bv_val((prev.value << w_item) | item.value, prev.sort.size + w_item)
         else:
             merged.append(item)
 
@@ -372,12 +357,7 @@ def build_concat(ctx: Context, *args: Expr) -> Expr:
 def build_extract(ctx: Context, high: int, low: int, arg: Expr) -> Expr:
     """Extract bits ``[high:low]`` (inclusive, 0 = LSB) from ``arg``."""
     width = ctx._check_bv(arg)
-    if (
-        isinstance(high, bool)
-        or isinstance(low, bool)
-        or not isinstance(high, int)
-        or not isinstance(low, int)
-    ):
+    if isinstance(high, bool) or isinstance(low, bool) or not isinstance(high, int) or not isinstance(low, int):
         msg = "Extract bounds must be int"
         raise TypeError(msg)
     if low < 0 or high < low or high >= width:
@@ -530,10 +510,7 @@ def build_select(ctx: Context, array: Expr, index: Expr) -> Expr:
     arr_sort = ctx._check_array(array)
     ctx._check_expr(index)
     if index.sort is not arr_sort.index_sort:
-        msg = (
-            f"Sort mismatch in Array select index: "
-            f"expected '{arr_sort.index_sort}', got '{index.sort}'"
-        )
+        msg = f"Sort mismatch in Array select index: expected '{arr_sort.index_sort}', got '{index.sort}'"
         raise TypeError(msg)
 
     cur = array
@@ -565,36 +542,18 @@ def build_store(ctx: Context, array: Expr, index: Expr, value: Expr) -> Expr:
     ctx._check_expr(index)
     ctx._check_expr(value)
     if index.sort is not arr_sort.index_sort:
-        msg = (
-            f"Sort mismatch in Array store index: "
-            f"expected '{arr_sort.index_sort}', got '{index.sort}'"
-        )
+        msg = f"Sort mismatch in Array store index: expected '{arr_sort.index_sort}', got '{index.sort}'"
         raise TypeError(msg)
     if value.sort is not arr_sort.element_sort:
-        msg = (
-            f"Sort mismatch in Array store value: "
-            f"expected '{arr_sort.element_sort}', got '{value.sort}'"
-        )
+        msg = f"Sort mismatch in Array store value: expected '{arr_sort.element_sort}', got '{value.sort}'"
         raise TypeError(msg)
 
     cur = array
-    if (
-        isinstance(cur, App)
-        and cur.decl.kind is DeclKind.CONST_ARRAY
-        and cur.args[0] is value
-    ):
+    if isinstance(cur, App) and cur.decl.kind is DeclKind.CONST_ARRAY and cur.args[0] is value:
         return cur
-    while (
-        isinstance(cur, App)
-        and cur.decl.kind is DeclKind.STORE
-        and cur.args[1] is index
-    ):
+    while isinstance(cur, App) and cur.decl.kind is DeclKind.STORE and cur.args[1] is index:
         cur = cur.args[0]
-    if (
-        isinstance(cur, App)
-        and cur.decl.kind is DeclKind.CONST_ARRAY
-        and cur.args[0] is value
-    ):
+    if isinstance(cur, App) and cur.decl.kind is DeclKind.CONST_ARRAY and cur.args[0] is value:
         return cur
 
     decl = ctx._intern_decl(

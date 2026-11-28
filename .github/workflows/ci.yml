@@ -19,15 +19,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,31 +32,31 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
           enable-cache: true
 
-      - name: Install the project
+      - name: Sync
         run: uv sync --locked --all-extras --dev
 
-      - name: Run ruff check
+      - name: Lint
         run: uv run ruff check .
 
-      - name: Run ruff format check
+      - name: Format
         run: uv run ruff format --check .
 
-      - name: Run ty check
+      - name: Types
         run: uv run ty check
 
-      - name: Run import-linter
+      - name: Import contracts
         run: uv run lint-imports
 
-      - name: Run rumdl check
+      - name: Markdown lint
         run: uv run rumdl check .
 
-      - name: Run tests
-        run: uv run pytest tests
+      - name: Test
+        run: uv run pytest tests --cov=unsat
 
-      - name: Run unsat-legacy tests
+      - name: Test legacy
         run: uv run pytest packages/unsat-legacy/tests
 
       - name: Run benchmark suite check
@@ -93,6 +89,35 @@ jobs:
               raise SystemExit("Wheel smoke check failed: expected SAT for x > 0")
           EOF
           uv run --isolated --no-project --with "${wheels[0]}" unsat --version
-          printf '(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n' \
-            | uv run --isolated --no-project --with "${wheels[0]}" unsat - --format smt2 \
-            | grep -qx 'sat'
+          uv run --isolated --no-project --with "${wheels[0]}" unsat - --format smt2 <<'EOF' | grep -qx 'sat'
+          (set-logic QF_LIA)
+          (declare-const x Int)
+          (assert (> x 0))
+          (check-sat)
+          EOF
+
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Sync
+        run: uv sync --locked --all-extras --dev
+
+      - name: Test
+        run: uv run pytest tests

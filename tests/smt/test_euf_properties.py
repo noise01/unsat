@@ -95,9 +95,7 @@ def _to_z3(expr: Expr, sig: _Signature) -> z3.ExprRef:
             continue
         if not expanded:
             stack.append((node, True))
-            for arg in reversed(node.args):
-                if arg not in memo:
-                    stack.append((arg, False))
+            stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
             continue
 
         zargs = [memo[arg] for arg in node.args]
@@ -289,9 +287,7 @@ def test_euf_incremental_push_pop_and_assumptions_vs_z3(
     zsolver.pop(1)
 
     # Check under assumptions on restored base scope.
-    assumption = sig.ctx.mk_eq(
-        sig.s_consts[0], sig.s_consts[extra_idx % len(sig.s_consts)]
-    )
+    assumption = sig.ctx.mk_eq(sig.s_consts[0], sig.s_consts[extra_idx % len(sig.s_consts)])
     neg_assumption = sig.ctx.mk_not(
         sig.ctx.mk_eq(
             sig.f_ss(sig.s_consts[0]),

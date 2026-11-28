@@ -52,7 +52,7 @@ def _check_module_annotations(module_name: str) -> list[str]:
         for qualname, target in targets:
             try:
                 typing.get_type_hints(target)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 failures.append(f"{qualname}: {type(exc).__name__}: {exc}")
     return failures
 
@@ -81,7 +81,7 @@ def test_expected_m2_modules_are_covered() -> None:
 
 def test_type_checking_only_annotation_is_detected() -> None:
     namespace: dict[str, object] = {}
-    exec(
+    exec(  # noqa: S102
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
         "    from collections.abc import Sequence\n"

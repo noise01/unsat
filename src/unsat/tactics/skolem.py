@@ -49,10 +49,7 @@ def _pull_foralls(ctx: Context, is_and: bool, args: list[Expr]) -> Expr:
             body2 = shift_bound_vars(body1, after)
             shifted_args.append(body2)
             for pat in arg.patterns:
-                shifted_pat = tuple(
-                    shift_bound_vars(shift_bound_vars(term, before, cutoff=k_j), after)
-                    for term in pat
-                )
+                shifted_pat = tuple(shift_bound_vars(shift_bound_vars(term, before, cutoff=k_j), after) for term in pat)
                 comb_pats.append(shifted_pat)
         before += k_j
 
@@ -86,18 +83,10 @@ def _skolemize_nnf(
             if node.is_exists:
                 free = free_bound_var_indices(node)
                 # Keep only enclosing universal slots referenced inside this Exists.
-                needed_slots = sorted(
-                    (slot for slot in free if slot < depth), reverse=True
-                )
+                needed_slots = sorted((slot for slot in free if slot < depth), reverse=True)
                 sk_domain = tuple(univ_sorts[depth - 1 - slot] for slot in needed_slots)
-                sk_args = tuple(
-                    ctx.mk_bound_var(slot, univ_sorts[depth - 1 - slot])
-                    for slot in needed_slots
-                )
-                replacements = tuple(
-                    _fresh_skolem_decl(sk_domain, sort)(*sk_args)
-                    for sort in node.var_sorts
-                )
+                sk_args = tuple(ctx.mk_bound_var(slot, univ_sorts[depth - 1 - slot]) for slot in needed_slots)
+                replacements = tuple(_fresh_skolem_decl(sk_domain, sort)(*sk_args) for sort in node.var_sorts)
                 instantiated = instantiate_quantifier(node, replacements)
                 return _walk(instantiated, univ_sorts)
 
@@ -105,10 +94,7 @@ def _skolemize_nnf(
             body_sk = _walk(node.body, new_univ)
             if isinstance(body_sk, Quantifier) and body_sk.is_forall:
                 k_inner = body_sk.num_vars
-                shifted_pats = [
-                    tuple(shift_bound_vars(term, k_inner) for term in pat)
-                    for pat in node.patterns
-                ]
+                shifted_pats = [tuple(shift_bound_vars(term, k_inner) for term in pat) for pat in node.patterns]
                 shifted_pats.extend(body_sk.patterns)
                 return ctx.mk_quantifier(
                     True,
@@ -182,9 +168,7 @@ class SkolemizeTactic:
             for decl in new_sk:
                 reserved.add(decl.name)
             if sk_expr is ctx.false_expr:
-                return TacticResult(
-                    (ctx.false_expr,), ProjectionModelConverter(all_skolems)
-                )
+                return TacticResult((ctx.false_expr,), ProjectionModelConverter(all_skolems))
             if sk_expr is not ctx.true_expr:
                 kept.append(sk_expr)
 

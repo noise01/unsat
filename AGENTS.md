@@ -30,7 +30,8 @@ uv run ruff format --check .
 uv run ty check
 uv run lint-imports
 uv run rumdl check .
-uv run pytest tests
+uv run pytest tests --cov=unsat
+uv run pytest packages/unsat-legacy/tests
 uv run python benchmarks/run.py --check
 ```
 

@@ -234,10 +234,7 @@ class StringSolver:
         emitted_lemmas: set[Expr],
         counter: str,
     ) -> list[StringLemma] | StringUnknown:
-        if (
-            len(emitted_lemmas) + len(self._emitted_conditional)
-            >= self._budget.max_lemmas
-        ):
+        if len(emitted_lemmas) + len(self._emitted_conditional) >= self._budget.max_lemmas:
             self._stats.unknowns += 1
             return StringUnknown("String lemma budget exhausted")
         if lemma_expr is self._ctx.true_expr:
@@ -338,9 +335,7 @@ class StringSolver:
                 assert isinstance(term.value, str)
                 if rep in rep_const and rep_const[rep] != term.value:
                     rsns = tuple(euf.explain_terms_equal(rep_const_expr[rep], term))
-                    return self._emit(
-                        ctx.false_expr, rsns, emitted_lemmas, "word_splits"
-                    )
+                    return self._emit(ctx.false_expr, rsns, emitted_lemmas, "word_splits")
                 rep_const[rep] = term.value
                 rep_const_expr[rep] = term
                 rep_lengths[rep] = len(term.value)
@@ -426,9 +421,7 @@ class StringSolver:
                         *rsns,
                         *euf.explain_terms_equal(concat, rep_const_expr[rep_c]),
                     ]
-                    return self._emit(
-                        ctx.false_expr, tuple(full_rsns), emitted_lemmas, "word_splits"
-                    )
+                    return self._emit(ctx.false_expr, tuple(full_rsns), emitted_lemmas, "word_splits")
                 c_target = ctx.mk_string_val(cs)
                 if not euf.are_equal(concat, c_target):
                     eq_c = ctx.mk_eq(concat, c_target)
@@ -489,16 +482,14 @@ class StringSolver:
 
             empt = re_is_empty(comb)
             if empt is True:
-                return self._emit(
-                    ctx.false_expr, tuple(rsns), emitted_lemmas, "regex_lemmas"
-                )
+                return self._emit(ctx.false_expr, tuple(rsns), emitted_lemmas, "regex_lemmas")
 
             cur_len = rep_lengths.get(rep)
             len_host = rep_len_term.get(rep, anchor)
             if cur_len is not None and not isinstance(len_host, Const):
                 min_len, max_len = re_min_max_length(comb)
                 len_node = ctx.mk_str_len(len_host)
-                base_rsns = tuple([*rsns, *euf.explain_terms_equal(len_host, anchor)])
+                base_rsns = (*rsns, *euf.explain_terms_equal(len_host, anchor))
                 if min_len is not None and cur_len < min_len:
                     return self._emit(
                         ctx.mk_ge(len_node, ctx.mk_int_val(min_len)),
@@ -518,18 +509,12 @@ class StringSolver:
                         ctx.mk_lt(len_node, ctx.mk_int_val(cur_len)),
                         ctx.mk_gt(len_node, ctx.mk_int_val(cur_len)),
                     )
-                    return self._emit(
-                        neq_len, base_rsns, emitted_lemmas, "regex_lemmas"
-                    )
+                    return self._emit(neq_len, base_rsns, emitted_lemmas, "regex_lemmas")
 
         # 3. Word-equation alignment & length-guided Nielsen splits across E-classes.
         for rep in str_reps:
             members = euf.eclass_members(rep)
-            concats = [
-                m
-                for m in members
-                if isinstance(m, App) and m.decl.kind is DeclKind.STR_CONCAT
-            ]
+            concats = [m for m in members if isinstance(m, App) and m.decl.kind is DeclKind.STR_CONCAT]
             if not concats:
                 continue
             target_lhs: Expr | None = rep_const_expr.get(rep)
@@ -548,8 +533,7 @@ class StringSolver:
                     rep_const_expr,
                     rep_concat,
                     set(),
-                    expand_root=isinstance(target_lhs, App)
-                    and target_lhs.decl.kind is DeclKind.STR_CONCAT,
+                    expand_root=isinstance(target_lhs, App) and target_lhs.decl.kind is DeclKind.STR_CONCAT,
                 )
                 rhs_seq, r_rsns = self._flatten_term_with_reasons(
                     rhs_e,
@@ -558,15 +542,10 @@ class StringSolver:
                     rep_const_expr,
                     rep_concat,
                     set(),
-                    expand_root=isinstance(rhs_e, App)
-                    and rhs_e.decl.kind is DeclKind.STR_CONCAT,
+                    expand_root=isinstance(rhs_e, App) and rhs_e.decl.kind is DeclKind.STR_CONCAT,
                 )
-                eq_rsns = tuple(
-                    [*euf.explain_terms_equal(target_lhs, rhs_e), *l_rsns, *r_rsns]
-                )
-                res = self._align_sequences(
-                    lhs_seq, rhs_seq, eq_rsns, euf, rep_lengths, emitted_lemmas
-                )
+                eq_rsns = (*euf.explain_terms_equal(target_lhs, rhs_e), *l_rsns, *r_rsns)
+                res = self._align_sequences(lhs_seq, rhs_seq, eq_rsns, euf, rep_lengths, emitted_lemmas)
                 if res is not None:
                     return res
 
@@ -590,9 +569,7 @@ class StringSolver:
 
         return None
 
-    def _toks_equal(
-        self, a: _Token, b: _Token, euf: EUFSolver
-    ) -> list[TheoryLit] | None:
+    def _toks_equal(self, a: _Token, b: _Token, euf: EUFSolver) -> list[TheoryLit] | None:
         if isinstance(a, _TokChar) and isinstance(b, _TokChar):
             return [] if a.char == b.char else None
         if isinstance(a, _TokVar) and isinstance(b, _TokVar) and a.rep is b.rep:
@@ -635,12 +612,10 @@ class StringSolver:
 
         base_rsns = tuple(dict.fromkeys(all_rsns))
         if not rem_l or not rem_r:
-            non_empty = rem_l if rem_l else rem_r
+            non_empty = rem_l or rem_r
             for tok in non_empty:
                 if isinstance(tok, _TokChar):
-                    return self._emit(
-                        ctx.false_expr, base_rsns, emitted_lemmas, "word_splits"
-                    )
+                    return self._emit(ctx.false_expr, base_rsns, emitted_lemmas, "word_splits")
             empty_s = ctx.mk_string_val("")
             guards = [
                 ctx.mk_eq(tok.term, empty_s)
@@ -657,26 +632,16 @@ class StringSolver:
         h_r = rem_r[0]
         if isinstance(h_l, _TokChar) and isinstance(h_r, _TokChar):
             if h_l.char != h_r.char:
-                return self._emit(
-                    ctx.false_expr, base_rsns, emitted_lemmas, "word_splits"
-                )
+                return self._emit(ctx.false_expr, base_rsns, emitted_lemmas, "word_splits")
             return None
 
         t_l = rem_l[-1]
         t_r = rem_r[-1]
-        if (
-            isinstance(t_l, _TokChar)
-            and isinstance(t_r, _TokChar)
-            and t_l.char != t_r.char
-        ):
+        if isinstance(t_l, _TokChar) and isinstance(t_r, _TokChar) and t_l.char != t_r.char:
             return self._emit(ctx.false_expr, base_rsns, emitted_lemmas, "word_splits")
 
         # Direct variable-to-constant and variable-to-variable equality fast-paths.
-        if (
-            len(rem_l) == 1
-            and isinstance(rem_l[0], _TokVar)
-            and all(isinstance(t, _TokChar) for t in rem_r)
-        ):
+        if len(rem_l) == 1 and isinstance(rem_l[0], _TokVar) and all(isinstance(t, _TokChar) for t in rem_r):
             cs = "".join(t.char for t in rem_r if isinstance(t, _TokChar))
             c_expr = ctx.mk_string_val(cs)
             if not euf.are_equal(rem_l[0].term, c_expr):
@@ -685,11 +650,7 @@ class StringSolver:
                     return self._emit(lemma, base_rsns, emitted_lemmas, "word_splits")
             return None
 
-        if (
-            len(rem_r) == 1
-            and isinstance(rem_r[0], _TokVar)
-            and all(isinstance(t, _TokChar) for t in rem_l)
-        ):
+        if len(rem_r) == 1 and isinstance(rem_r[0], _TokVar) and all(isinstance(t, _TokChar) for t in rem_l):
             cs = "".join(t.char for t in rem_l if isinstance(t, _TokChar))
             c_expr = ctx.mk_string_val(cs)
             if not euf.are_equal(rem_r[0].term, c_expr):
@@ -698,12 +659,7 @@ class StringSolver:
                     return self._emit(lemma, base_rsns, emitted_lemmas, "word_splits")
             return None
 
-        if (
-            len(rem_l) == 1
-            and len(rem_r) == 1
-            and isinstance(rem_l[0], _TokVar)
-            and isinstance(rem_r[0], _TokVar)
-        ):
+        if len(rem_l) == 1 and len(rem_r) == 1 and isinstance(rem_l[0], _TokVar) and isinstance(rem_r[0], _TokVar):
             if not euf.are_equal(rem_l[0].term, rem_r[0].term):
                 lemma = ctx.mk_eq(rem_l[0].term, rem_r[0].term)
                 if not self._already_emitted(lemma, base_rsns, emitted_lemmas):
@@ -726,9 +682,7 @@ class StringSolver:
             and all(isinstance(t, _TokChar) for t in rem_r[:-1])
             and all(isinstance(t, _TokChar) for t in rem_l[1:])
         ):
-            if isinstance(rem_l[-1], _TokVar) and all(
-                isinstance(t, _TokChar) for t in rem_l[:-1]
-            ):
+            if isinstance(rem_l[-1], _TokVar) and all(isinstance(t, _TokChar) for t in rem_l[:-1]):
                 var_l, var_r = rem_l[-1], rem_r[0]
                 u_toks, v_toks = rem_l[:-1], rem_r[1:]
             else:
@@ -738,22 +692,12 @@ class StringSolver:
             assert isinstance(var_r, _TokVar)
             u_str = "".join(t.char for t in u_toks if isinstance(t, _TokChar))
             v_str = "".join(t.char for t in v_toks if isinstance(t, _TokChar))
-            if (
-                u_str
-                and v_str
-                and (len(u_str) != len(v_str) or v_str not in u_str + u_str)
-            ):
+            if u_str and v_str and (len(u_str) != len(v_str) or v_str not in u_str + u_str):
                 conj_rsns = (
                     *base_rsns,
-                    *(
-                        euf.explain_terms_equal(var_l.term, var_r.term)
-                        if var_l.term is not var_r.term
-                        else ()
-                    ),
+                    *(euf.explain_terms_equal(var_l.term, var_r.term) if var_l.term is not var_r.term else ()),
                 )
-                return self._emit(
-                    ctx.false_expr, conj_rsns, emitted_lemmas, "word_splits"
-                )
+                return self._emit(ctx.false_expr, conj_rsns, emitted_lemmas, "word_splits")
 
         # Prefix split on unaligned (Var, Const...) or (Var, Var) frontier.
         if isinstance(h_l, _TokChar) and isinstance(h_r, _TokVar):
@@ -780,9 +724,7 @@ class StringSolver:
                         ctx.mk_eq(h_l.term, empty_e),
                     )
                     if not self._already_emitted(lemma, base_rsns, emitted_lemmas):
-                        return self._emit(
-                            lemma, base_rsns, emitted_lemmas, "word_splits"
-                        )
+                        return self._emit(lemma, base_rsns, emitted_lemmas, "word_splits")
                 return None
 
             if len_hl == len(const_prefix):
@@ -792,9 +734,7 @@ class StringSolver:
                         ctx.mk_eq(h_l.term, c_e),
                     )
                     if not self._already_emitted(lemma, base_rsns, emitted_lemmas):
-                        return self._emit(
-                            lemma, base_rsns, emitted_lemmas, "word_splits"
-                        )
+                        return self._emit(lemma, base_rsns, emitted_lemmas, "word_splits")
                 return None
 
             if len_hl < len(const_prefix):
@@ -805,16 +745,11 @@ class StringSolver:
                         ctx.mk_eq(h_l.term, trunc_e),
                     )
                     if not self._already_emitted(lemma, base_rsns, emitted_lemmas):
-                        return self._emit(
-                            lemma, base_rsns, emitted_lemmas, "word_splits"
-                        )
+                        return self._emit(lemma, base_rsns, emitted_lemmas, "word_splits")
                 return None
 
             # len_hl > len(const_prefix)
-            if (
-                len(emitted_lemmas) + len(self._emitted_conditional)
-                >= self._budget.max_lemmas
-            ):
+            if len(emitted_lemmas) + len(self._emitted_conditional) >= self._budget.max_lemmas:
                 self._stats.unknowns += 1
                 return StringUnknown("String lemma budget exhausted")
             if self._splits_used >= self._budget.max_splits:
@@ -844,13 +779,9 @@ class StringSolver:
             ln2 = ctx.mk_str_len(h_r.term)
             if l1 == l2:
                 if not euf.are_equal(h_l.term, h_r.term):
-                    lemma = ctx.mk_implies(
-                        ctx.mk_eq(ln1, ln2), ctx.mk_eq(h_l.term, h_r.term)
-                    )
+                    lemma = ctx.mk_implies(ctx.mk_eq(ln1, ln2), ctx.mk_eq(h_l.term, h_r.term))
                     if not self._already_emitted(lemma, base_rsns, emitted_lemmas):
-                        return self._emit(
-                            lemma, base_rsns, emitted_lemmas, "word_splits"
-                        )
+                        return self._emit(lemma, base_rsns, emitted_lemmas, "word_splits")
                 return None
 
             if self._splits_used >= self._budget.max_splits:
@@ -917,21 +848,16 @@ class StringSolver:
         slot_owner: list[tuple[Expr, int]] = []
         for rep in str_reps:
             rep_slot_base[rep] = len(slot_owner)
-            for pos in range(len_map[rep]):
-                slot_owner.append((rep, pos))
+            slot_owner.extend((rep, pos) for pos in range(len_map[rep]))
 
         n_slots = len(slot_owner)
         parent = list(range(n_slots))
         slot_char: list[str | None] = [None] * n_slots
         slot_root_pin: list[int | None] = [None] * n_slots
         # Per-slot hard pin: (char, guards, euf_reasons)
-        slot_pin: list[tuple[str, tuple[Expr, ...], tuple[TheoryLit, ...]] | None] = [
-            None
-        ] * n_slots
+        slot_pin: list[tuple[str, tuple[Expr, ...], tuple[TheoryLit, ...]] | None] = [None] * n_slots
         # Spanning-tree edges for minimal conflict explanation on slot collisions.
-        slot_edges: list[list[tuple[int, tuple[Expr, ...], tuple[TheoryLit, ...]]]] = [
-            [] for _ in range(n_slots)
-        ]
+        slot_edges: list[list[tuple[int, tuple[Expr, ...], tuple[TheoryLit, ...]]]] = [[] for _ in range(n_slots)]
 
         def _find(x: int) -> int:
             while parent[x] != x:
@@ -939,14 +865,10 @@ class StringSolver:
                 x = parent[x]
             return x
 
-        def _collect_path(
-            src: int, dst: int
-        ) -> tuple[list[Expr], list[TheoryLit]] | None:
+        def _collect_path(src: int, dst: int) -> tuple[list[Expr], list[TheoryLit]] | None:
             if src == dst:
                 return ([], [])
-            prev_edge: dict[
-                int, tuple[int, tuple[Expr, ...], tuple[TheoryLit, ...]]
-            ] = {}
+            prev_edge: dict[int, tuple[int, tuple[Expr, ...], tuple[TheoryLit, ...]]] = {}
             queue = [src]
             seen = {src}
             idx = 0
@@ -989,11 +911,7 @@ class StringSolver:
             p_guards, p_rsns = path
             all_guards = list(dict.fromkeys([*guards_a, *guards_b, *p_guards]))
             all_rsns = tuple(dict.fromkeys([*rsns_a, *rsns_b, *p_rsns]))
-            lemma = (
-                ctx.false_expr
-                if not all_guards
-                else ctx.mk_not(ctx.mk_and(*all_guards))
-            )
+            lemma = ctx.false_expr if not all_guards else ctx.mk_not(ctx.mk_and(*all_guards))
             if not self._already_emitted(lemma, all_rsns, emitted_lemmas):
                 return self._emit(lemma, all_rsns, emitted_lemmas, counter)
             return None
@@ -1012,9 +930,7 @@ class StringSolver:
                 assert prev_pin is not None
                 prev_ch, prev_guards, prev_rsns = prev_pin
                 if prev_ch != ch:
-                    conf = _emit_slot_conflict(
-                        s_id, guards, rsns, prev_holder, prev_guards, prev_rsns, counter
-                    )
+                    conf = _emit_slot_conflict(s_id, guards, rsns, prev_holder, prev_guards, prev_rsns, counter)
                     if conf is not None:
                         return conf
                     self._stats.unknowns += 1
@@ -1046,9 +962,7 @@ class StringSolver:
                 assert py is not None
                 slot_edges[x].append((y, guards, rsns))
                 slot_edges[y].append((x, guards, rsns))
-                conf = _emit_slot_conflict(
-                    hx, px[1], px[2], hy, py[1], py[2], "word_splits"
-                )
+                conf = _emit_slot_conflict(hx, px[1], px[2], hy, py[1], py[2], "word_splits")
                 if conf is not None:
                     return conf
                 self._stats.unknowns += 1
@@ -1085,29 +999,19 @@ class StringSolver:
                 # Enforce sum length equality directly if LIA lagged behind.
                 ln_lhs = ctx.mk_str_len(concat)
                 ln_rhs = ctx.mk_add(*(ctx.mk_str_len(a) for a in concat.args))
-                return self._emit(
-                    ctx.mk_eq(ln_lhs, ln_rhs), (), emitted_lemmas, "length_lemmas"
-                )
+                return self._emit(ctx.mk_eq(ln_lhs, ln_rhs), (), emitted_lemmas, "length_lemmas")
             concat_rsns = tuple(euf.explain_terms_equal(concat, rep_anchor[rep]))
             cursor = 0
-            for arg_idx, (arg, ar) in enumerate(
-                zip(concat.args, arg_reps, strict=True)
-            ):
+            for arg_idx, (arg, ar) in enumerate(zip(concat.args, arg_reps, strict=True)):
                 a_len = len_map.get(ar, 0)
                 if arg_idx == 0:
                     prefix_guard: tuple[Expr, ...] = ()
                 elif arg_idx == 1:
-                    prefix_guard = (
-                        ctx.mk_eq(
-                            ctx.mk_str_len(concat.args[0]), ctx.mk_int_val(cursor)
-                        ),
-                    )
+                    prefix_guard = (ctx.mk_eq(ctx.mk_str_len(concat.args[0]), ctx.mk_int_val(cursor)),)
                 else:
                     prefix_guard = (
                         ctx.mk_eq(
-                            ctx.mk_add(
-                                *(ctx.mk_str_len(pa) for pa in concat.args[:arg_idx])
-                            ),
+                            ctx.mk_add(*(ctx.mk_str_len(pa) for pa in concat.args[:arg_idx])),
                             ctx.mk_int_val(cursor),
                         ),
                     )
@@ -1124,7 +1028,7 @@ class StringSolver:
                             return conf
                 elif ar in rep_slot_base:
                     arg_rsns = tuple(euf.explain_terms_equal(arg, rep_anchor[ar]))
-                    edge_rsns = tuple([*concat_rsns, *arg_rsns])
+                    edge_rsns = (*concat_rsns, *arg_rsns)
                     for p in range(a_len):
                         edge_guards = (
                             *prefix_guard,
@@ -1146,32 +1050,19 @@ class StringSolver:
             s_arg = tc.args[0]
             rep_s = euf.rep_expr(s_arg)
             v = self._lra_int(lra_conc, tc)
-            if (
-                v is not None
-                and 0 <= v <= MAX_CHAR_CODE
-                and len_map.get(rep_s) == 1
-                and rep_s in class_combined_re
-            ):
+            if v is not None and 0 <= v <= MAX_CHAR_CODE and len_map.get(rep_s) == 1 and rep_s in class_combined_re:
                 comb = class_combined_re[rep_s]
                 if not re_matches(comb, chr(v)):
                     valid_1char = normalize_intervals(
-                        [
-                            iv
-                            for iv in re_minterms(comb)
-                            if re_nullable(re_deriv(comb, iv[0]))
-                        ]
+                        [iv for iv in re_minterms(comb) if re_nullable(re_deriv(comb, iv[0]))]
                     )
-                    reg_rsns = tuple(
-                        [
-                            *class_regex_reasons[rep_s],
-                            *euf.explain_terms_equal(s_arg, class_regex_anchor[rep_s]),
-                        ]
+                    reg_rsns = (
+                        *class_regex_reasons[rep_s],
+                        *euf.explain_terms_equal(s_arg, class_regex_anchor[rep_s]),
                     )
                     len_1 = ctx.mk_eq(ctx.mk_str_len(s_arg), ctx.mk_int_val(1))
                     if not valid_1char:
-                        return self._emit(
-                            ctx.mk_not(len_1), reg_rsns, emitted_lemmas, "regex_lemmas"
-                        )
+                        return self._emit(ctx.mk_not(len_1), reg_rsns, emitted_lemmas, "regex_lemmas")
                     in_bounds = [
                         ctx.mk_and(
                             ctx.mk_ge(tc, ctx.mk_int_val(lo)),
@@ -1181,14 +1072,10 @@ class StringSolver:
                         else ctx.mk_eq(tc, ctx.mk_int_val(lo))
                         for lo, hi in valid_1char
                     ]
-                    allowed_disj = (
-                        in_bounds[0] if len(in_bounds) == 1 else ctx.mk_or(*in_bounds)
-                    )
+                    allowed_disj = in_bounds[0] if len(in_bounds) == 1 else ctx.mk_or(*in_bounds)
                     lemma = ctx.mk_implies(len_1, allowed_disj)
                     if not self._already_emitted(lemma, reg_rsns, emitted_lemmas):
-                        return self._emit(
-                            lemma, reg_rsns, emitted_lemmas, "regex_lemmas"
-                        )
+                        return self._emit(lemma, reg_rsns, emitted_lemmas, "regex_lemmas")
 
         # Propagate str.to_code(s) == v and str.from_code(n) == r into 1-char slots.
         for tc in self._to_code_terms:
@@ -1221,17 +1108,11 @@ class StringSolver:
                         )
                     )
                     eq_target = ctx.mk_eq(tc, ctx.mk_int_val(ord(prev)))
-                    lemma = (
-                        eq_target
-                        if not ant_guards
-                        else ctx.mk_implies(ctx.mk_and(*ant_guards), eq_target)
-                    )
+                    lemma = eq_target if not ant_guards else ctx.mk_implies(ctx.mk_and(*ant_guards), eq_target)
                     all_rsns = tuple(dict.fromkeys([*tc_rsns, *prev_pin[2], *p_rsns]))
                     if not self._already_emitted(lemma, all_rsns, emitted_lemmas):
                         return self._emit(lemma, all_rsns, emitted_lemmas, "ext_lemmas")
-                conf = _pin_slot(
-                    rep_slot_base[rep_s], ch, tc_guards, tc_rsns, "ext_lemmas"
-                )
+                conf = _pin_slot(rep_slot_base[rep_s], ch, tc_guards, tc_rsns, "ext_lemmas")
                 if conf is not None:
                     return conf
 
@@ -1243,9 +1124,7 @@ class StringSolver:
                 ch = chr(v)
                 fc_guards = (ctx.mk_eq(n_arg, ctx.mk_int_val(v)),)
                 fc_rsns = tuple(euf.explain_terms_equal(fc, rep_anchor[rep_fc]))
-                conf = _pin_slot(
-                    rep_slot_base[rep_fc], ch, fc_guards, fc_rsns, "ext_lemmas"
-                )
+                conf = _pin_slot(rep_slot_base[rep_fc], ch, fc_guards, fc_rsns, "ext_lemmas")
                 if conf is not None:
                     return conf
 
@@ -1286,9 +1165,7 @@ class StringSolver:
                     return self._emit(
                         ctx.mk_implies(
                             ctx.mk_ge(ti, ctx.mk_int_val(v)),
-                            ctx.mk_ge(
-                                ctx.mk_str_len(s_arg), ctx.mk_int_val(len(digits))
-                            ),
+                            ctx.mk_ge(ctx.mk_str_len(s_arg), ctx.mk_int_val(len(digits))),
                         ),
                         (),
                         emitted_lemmas,
@@ -1337,16 +1214,10 @@ class StringSolver:
             for p in range(ln):
                 r = _find(base + p)
                 ch_hard = slot_char[r]
-                hard_allowed_at.append(
-                    ((ord(ch_hard), ord(ch_hard)),) if ch_hard is not None else None
-                )
+                hard_allowed_at.append(((ord(ch_hard), ord(ch_hard)),) if ch_hard is not None else None)
                 ch_eff = ch_hard if ch_hard is not None else soft_to_int_slots.get(r)
-                soft_allowed_at.append(
-                    ((ord(ch_eff), ord(ch_eff)),) if ch_eff is not None else None
-                )
-            forbidden = {
-                rep_word[peer] for peer in diseq_peers.get(rep, ()) if peer in rep_word
-            }
+                soft_allowed_at.append(((ord(ch_eff), ord(ch_eff)),) if ch_eff is not None else None)
+            forbidden = {rep_word[peer] for peer in diseq_peers.get(rep, ()) if peer in rep_word}
             comb = class_combined_re[rep]
             word = re_find_word_of_length(
                 comb,
@@ -1365,17 +1236,13 @@ class StringSolver:
                 host = rep_len_term.get(rep, rep)
                 ln_node = ctx.mk_str_len(host)
                 reg_anchor = class_regex_anchor[rep]
-                reg_rsns = tuple(
-                    [
-                        *class_regex_reasons[rep],
-                        *euf.explain_terms_equal(host, reg_anchor),
-                    ]
+                reg_rsns = (
+                    *class_regex_reasons[rep],
+                    *euf.explain_terms_equal(host, reg_anchor),
                 )
                 word_unpinned = re_find_word_of_length(comb, ln, forbidden=forbidden)
                 if word_unpinned is None:
-                    word_no_forbid = (
-                        re_find_word_of_length(comb, ln) if forbidden else None
-                    )
+                    word_no_forbid = re_find_word_of_length(comb, ln) if forbidden else None
                     if word_no_forbid is not None and forbidden:
                         eq_target = ctx.mk_string_val(word_no_forbid)
                         return self._emit(
@@ -1410,11 +1277,7 @@ class StringSolver:
                         pin_rsns.extend(p_info[2])
                         pin_rsns.extend(p_rsns)
                 pin_guards = list(dict.fromkeys(pin_guards))
-                pin_lemma = (
-                    ctx.false_expr
-                    if not pin_guards
-                    else ctx.mk_not(ctx.mk_and(*pin_guards))
-                )
+                pin_lemma = ctx.false_expr if not pin_guards else ctx.mk_not(ctx.mk_and(*pin_guards))
                 pin_rsns_t = tuple(dict.fromkeys(pin_rsns))
                 if not self._already_emitted(pin_lemma, pin_rsns_t, emitted_lemmas):
                     return self._emit(
@@ -1442,9 +1305,7 @@ class StringSolver:
                 continue
             ln = len_map[rep]
             base = rep_slot_base[rep]
-            forbidden = {
-                rep_word[peer] for peer in diseq_peers.get(rep, ()) if peer in rep_word
-            }
+            forbidden = {rep_word[peer] for peer in diseq_peers.get(rep, ()) if peer in rep_word}
             chars: list[str] = []
             for p in range(ln):
                 r = _find(base + p)
@@ -1460,9 +1321,7 @@ class StringSolver:
                     r_free = _find(base + p_free)
                     if slot_char[r_free] is None:
                         for ch_alt in alpha:
-                            trial = (
-                                candidate[:p_free] + ch_alt + candidate[p_free + 1 :]
-                            )
+                            trial = candidate[:p_free] + ch_alt + candidate[p_free + 1 :]
                             if trial not in forbidden:
                                 slot_char[r_free] = ch_alt
                                 candidate = trial
@@ -1473,9 +1332,7 @@ class StringSolver:
             for p, r in enumerate(_find(base + pos) for pos in range(ln)):
                 if slot_char[r] is None:
                     slot_char[r] = candidate[p]
-            rep_word[rep] = "".join(
-                slot_char[_find(base + pos)] or "a" for pos in range(ln)
-            )
+            rep_word[rep] = "".join(slot_char[_find(base + pos)] or "a" for pos in range(ln))
 
         # Recompute concrete strings for every rep after all shared slots converged.
         for rep in str_reps:
@@ -1483,9 +1340,7 @@ class StringSolver:
                 rep_word.setdefault(rep, "")
                 continue
             base = rep_slot_base[rep]
-            rep_word[rep] = "".join(
-                slot_char[_find(base + pos)] or "a" for pos in range(len_map[rep])
-            )
+            rep_word[rep] = "".join(slot_char[_find(base + pos)] or "a" for pos in range(len_map[rep]))
 
         # 5. Full verification against all active constraints & extended ops!
         def _val(e: Expr) -> str:
@@ -1563,9 +1418,7 @@ class StringSolver:
                             ctx.mk_not(atom),
                         ),
                         ctx.mk_distinct(
-                            ctx.mk_str_substr(
-                                s_e, ctx.mk_int_val(idx), ctx.mk_int_val(lt)
-                            ),
+                            ctx.mk_str_substr(s_e, ctx.mk_int_val(idx), ctx.mk_int_val(lt)),
                             t_e,
                         ),
                     )
@@ -1595,9 +1448,7 @@ class StringSolver:
                     return self._emit(
                         ctx.mk_implies(
                             ctx.mk_eq(ctx.mk_str_len(s_arg), ctx.mk_int_val(len(vs))),
-                            ctx.mk_ge(tc, ctx.mk_int_val(0))
-                            if len(vs) == 1
-                            else ctx.mk_eq(tc, ctx.mk_int_val(-1)),
+                            ctx.mk_ge(tc, ctx.mk_int_val(0)) if len(vs) == 1 else ctx.mk_eq(tc, ctx.mk_int_val(-1)),
                         ),
                         (),
                         emitted_lemmas,
@@ -1647,17 +1498,13 @@ class StringSolver:
                 rep_dst = euf.rep_expr(dst_arg)
                 if rep_s in rep_const and rep_src in rep_const and rep_dst in rep_const:
                     const_lemma = ctx.mk_eq(ra, ctx.mk_string_val(expected_ra))
-                    c_rsns = tuple(
-                        [
-                            *euf.explain_terms_equal(s_arg, rep_const_expr[rep_s]),
-                            *euf.explain_terms_equal(src_arg, rep_const_expr[rep_src]),
-                            *euf.explain_terms_equal(dst_arg, rep_const_expr[rep_dst]),
-                        ]
+                    c_rsns = (
+                        *euf.explain_terms_equal(s_arg, rep_const_expr[rep_s]),
+                        *euf.explain_terms_equal(src_arg, rep_const_expr[rep_src]),
+                        *euf.explain_terms_equal(dst_arg, rep_const_expr[rep_dst]),
                     )
                     if not self._already_emitted(const_lemma, c_rsns, emitted_lemmas):
-                        return self._emit(
-                            const_lemma, c_rsns, emitted_lemmas, "ext_lemmas"
-                        )
+                        return self._emit(const_lemma, c_rsns, emitted_lemmas, "ext_lemmas")
                 if vsrc and vsrc in vs:
                     k_expr = ctx.mk_str_indexof(s_arg, src_arg, ctx.mk_int_val(0))
                     tail_start = ctx.mk_add(k_expr, ctx.mk_str_len(src_arg))
@@ -1722,13 +1569,9 @@ class StringSolver:
         want_le = atom.decl.kind is DeclKind.STR_LE
         if lcp == m:
             if pol:
-                conseq = (
-                    ctx.mk_bool_val(la <= lb) if want_le else ctx.mk_bool_val(la < lb)
-                )
+                conseq = ctx.mk_bool_val(la <= lb) if want_le else ctx.mk_bool_val(la < lb)
             else:
-                conseq = (
-                    ctx.mk_bool_val(la > lb) if want_le else ctx.mk_bool_val(la >= lb)
-                )
+                conseq = ctx.mk_bool_val(la > lb) if want_le else ctx.mk_bool_val(la >= lb)
             return ctx.mk_implies(cond, conseq)
 
         ca = ctx.mk_str_to_code(ctx.mk_str_at(a_e, ctx.mk_int_val(lcp)))

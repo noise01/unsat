@@ -105,9 +105,7 @@ class VarMaxHeap:
             if right_idx < size:
                 right_var = heap[right_idx]
                 right_act = act[right_var]
-                if right_act > best_act or (
-                    right_act == best_act and right_var < best_var
-                ):
+                if right_act > best_act or (right_act == best_act and right_var < best_var):
                     best_idx = right_idx
                     best_var = right_var
                     best_act = right_act

@@ -32,9 +32,7 @@ def _make_sig(is_int: bool) -> _ArithSig:
     uf_unary = ctx.mk_decl("f", (sort,), sort)
     uf_pred = ctx.mk_decl("P", (sort,), ctx.bool_sort)
 
-    z3_vars: dict[FuncDecl, z3.ExprRef] = {
-        bv.decl: z3.Bool(bv.name) for bv in bool_vars
-    }
+    z3_vars: dict[FuncDecl, z3.ExprRef] = {bv.decl: z3.Bool(bv.name) for bv in bool_vars}
     for nv in num_vars:
         z3_vars[nv.decl] = z3.Int(nv.name) if is_int else z3.Real(nv.name)
 
@@ -83,9 +81,7 @@ def _to_z3(expr: Expr, sig: _ArithSig) -> z3.ExprRef:
             continue
         if not expanded:
             stack.append((node, True))
-            for arg in reversed(node.args):
-                if arg not in memo:
-                    stack.append((arg, False))
+            stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
             continue
 
         zargs = [memo[arg] for arg in node.args]
@@ -202,9 +198,7 @@ def _arith_formulas(
             return ctx.mk_not(eq) if draw(st.booleans()) else eq
         if choice == 3 and with_uf:
             k = draw(st.integers(min_value=2, max_value=3))
-            return ctx.mk_distinct(
-                *(draw(st.sampled_from(term_pool)) for _ in range(k))
-            )
+            return ctx.mk_distinct(*(draw(st.sampled_from(term_pool)) for _ in range(k)))
         lhs = _lin_combo()
         rhs = _lin_combo()
         cmp_op = draw(st.sampled_from((ctx.mk_lt, ctx.mk_le, ctx.mk_gt, ctx.mk_ge)))
@@ -222,9 +216,7 @@ def _arith_formulas(
             return ctx.mk_or(_rand_bool(depth - 1), _rand_bool(depth - 1))
         if op == 3:
             return ctx.mk_implies(_rand_bool(depth - 1), _rand_bool(depth - 1))
-        return ctx.mk_ite(
-            _rand_bool(depth - 1), _rand_bool(depth - 1), _rand_bool(depth - 1)
-        )
+        return ctx.mk_ite(_rand_bool(depth - 1), _rand_bool(depth - 1), _rand_bool(depth - 1))
 
     # Bound range on integer variables in UF+LIA fuzzing to keep B&B snappy.
     num_formulas = draw(st.integers(min_value=2, max_value=7))
@@ -245,9 +237,7 @@ def _z3_verdict(solver: z3.Solver) -> SolveResult:
     return SolveResult.UNKNOWN
 
 
-def _assert_differential_match(
-    sig: _ArithSig, formulas: list[Expr], *, check_int: bool = False
-) -> None:
+def _assert_differential_match(sig: _ArithSig, formulas: list[Expr], *, check_int: bool = False) -> None:
     usolver = SMTSolver(sig.ctx)
     zsolver = z3.Solver()
     for f in formulas:

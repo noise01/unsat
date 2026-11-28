@@ -72,7 +72,5 @@ class SubSolverStatus(Enum):
 class SubSolver(Protocol):
     """Callback protocol injected by ``smt`` so MBQI stays decoupled from ``sat``."""
 
-    def check_formula(
-        self, formulas: Sequence[Expr]
-    ) -> tuple[SubSolverStatus, Model | None]:
+    def check_formula(self, formulas: Sequence[Expr]) -> tuple[SubSolverStatus, Model | None]:
         """Check satisfiability of ``formulas``, returning ``(status, model)``."""

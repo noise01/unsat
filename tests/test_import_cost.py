@@ -38,8 +38,5 @@ def test_importing_core_module_avoids_cli_parser_and_z3(module: str) -> None:
 
 
 def test_cli_import_control_loads_parser_and_argparse() -> None:
-    script = (
-        "import sys, unsat.cli; "
-        "print('unsat.parser' in sys.modules and 'argparse' in sys.modules)"
-    )
+    script = "import sys, unsat.cli; print('unsat.parser' in sys.modules and 'argparse' in sys.modules)"
     assert _run_fresh(script) == "True"

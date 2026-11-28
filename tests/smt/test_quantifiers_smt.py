@@ -77,9 +77,7 @@ def test_quantifiers_arithmetic_arrays_and_bv() -> None:
 
     # ForAll x. (x > 0 => Exists y. (y > x /\ y < x + 1)) -> UNSAT over Int!
     s.reset()
-    no_between = unsat.ForAll(
-        ix, unsat.Implies(ix > 0, unsat.Exists(iy, unsat.And(iy > ix, iy < ix + 1)))
-    )
+    no_between = unsat.ForAll(ix, unsat.Implies(ix > 0, unsat.Exists(iy, unsat.And(iy > ix, iy < ix + 1))))
     s.add(no_between)
     assert s.check() is unsat.UNSAT
 
@@ -199,10 +197,7 @@ def test_ematch_check_wide_budget_partial_truncation_and_disjunction() -> None:
         unsat.ForAll([x], unsat.Implies(p(x), p(f(x))), patterns=[p(x)]),
         p(a),
     )
-    assert (
-        s_chain.check(max_quantifier_rounds=10, max_quantifier_matches=2)
-        is unsat.UNKNOWN
-    )
+    assert s_chain.check(max_quantifier_rounds=10, max_quantifier_matches=2) is unsat.UNKNOWN
     assert s_chain.statistics()["quantifier_ematch_candidates"] <= 2
 
     # 2. Partial round-1 truncation still allows ground UNSAT when contradicted,

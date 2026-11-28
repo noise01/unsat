@@ -20,12 +20,8 @@ from unsat.parser import execute_smt2, parse_dimacs, solve_dimacs
 from unsat.sat import SolveResult
 
 _ROOT = Path(__file__).resolve().parent
-_DIMACS_STATUS_RE = re.compile(
-    r"^c\s+status:\s*(sat|unsat|unknown)\b", re.IGNORECASE | re.MULTILINE
-)
-_SMT2_STATUS_RE = re.compile(
-    r"\(set-info\s+:status\s+(sat|unsat|unknown)\s*\)", re.IGNORECASE
-)
+_DIMACS_STATUS_RE = re.compile(r"^c\s+status:\s*(sat|unsat|unknown)\b", re.IGNORECASE | re.MULTILINE)
+_SMT2_STATUS_RE = re.compile(r"\(set-info\s+:status\s+(sat|unsat|unknown)\s*\)", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +67,7 @@ def _group_name(path: Path) -> str:
     return parts[0]
 
 
-def _discover_benchmarks(
-    suite: str, logic: str | None, pattern: str | None
-) -> list[Path]:
+def _discover_benchmarks(suite: str, logic: str | None, pattern: str | None) -> list[Path]:
     files = sorted([*_ROOT.rglob("*.cnf"), *_ROOT.rglob("*.smt2")])
     selected: list[Path] = []
     for path in files:
@@ -119,14 +113,7 @@ def _run_z3_check(path: Path, text: str, timeout: float, z3_mod: Any) -> str:
         vars_map = [z3_mod.Bool(f"v_{i + 1}") for i in range(cnf.num_vars)]
         for clause in cnf.clauses:
             solver.add(
-                z3_mod.Or(
-                    *(
-                        vars_map[lit >> 1]
-                        if (lit & 1) == 0
-                        else z3_mod.Not(vars_map[lit >> 1])
-                        for lit in clause
-                    )
-                )
+                z3_mod.Or(*(vars_map[lit >> 1] if (lit & 1) == 0 else z3_mod.Not(vars_map[lit >> 1]) for lit in clause))
             )
     else:
         solver.from_string(_strip_script_commands_for_z3(text))
@@ -160,16 +147,8 @@ def _run_benchmark(
         if path.suffix == ".cnf":
             cnf = parse_dimacs(text)
             res, _, sat_stats = solve_dimacs(cnf, timeout=timeout)
-            stats: dict[str, int] = {
-                k: v for k, v in sat_stats.items() if isinstance(v, int)
-            }
-            verdict = (
-                "sat"
-                if res is SolveResult.SAT
-                else "unsat"
-                if res is SolveResult.UNSAT
-                else "unknown"
-            )
+            stats: dict[str, int] = {k: v for k, v in sat_stats.items() if isinstance(v, int)}
+            verdict = "sat" if res is SolveResult.SAT else "unsat" if res is SolveResult.UNSAT else "unknown"
         else:
             outputs, stats = execute_smt2(text, timeout=timeout)
             verdict = next(
@@ -189,9 +168,7 @@ def _run_benchmark(
         alloc_count = sum(stat.count for stat in snap.statistics("filename"))
         peak_kib = peak_bytes / 1024.0
 
-    z3_verdict = (
-        _run_z3_check(path, text, timeout, z3_mod) if z3_mod is not None else None
-    )
+    z3_verdict = _run_z3_check(path, text, timeout, z3_mod) if z3_mod is not None else None
     return BenchmarkResult(
         rel_path=path.relative_to(_ROOT).as_posix(),
         group=_group_name(path),
@@ -217,11 +194,7 @@ def _save_baseline(path: Path, suite: str, results: list[BenchmarkResult]) -> No
         "total_alloc_count": sum(rec.alloc_count for rec in results),
         "max_peak_kib": max((rec.peak_kib for rec in results), default=0.0),
         "benchmarks": {
-            rec.rel_path: {
-                k: v
-                for k, v in asdict(rec).items()
-                if k not in ("rel_path", "z3_verdict")
-            }
+            rec.rel_path: {k: v for k, v in asdict(rec).items() if k not in ("rel_path", "z3_verdict")}
             for rec in results
         },
     }
@@ -233,10 +206,7 @@ def _print_comparison(baseline_path: Path, results: list[BenchmarkResult]) -> No
     raw = json.loads(baseline_path.read_text(encoding="utf-8"))
     base_map: dict[str, dict[str, Any]] = raw.get("benchmarks", {})
 
-    header = (
-        f"\n{'Benchmark':<48} {'Base ms':>9} {'Curr ms':>9} {'Speedup':>8} "
-        f"{'Base KiB':>9} {'Curr KiB':>9}"
-    )
+    header = f"\n{'Benchmark':<48} {'Base ms':>9} {'Curr ms':>9} {'Speedup':>8} {'Base KiB':>9} {'Curr KiB':>9}"
     print(header)
     print("-" * len(header.lstrip("\n")))
 
@@ -251,16 +221,10 @@ def _print_comparison(baseline_path: Path, results: list[BenchmarkResult]) -> No
         curr_total += rec.elapsed_ms
         speedup = (b_ms / rec.elapsed_ms) if rec.elapsed_ms > 0 else float("inf")
         b_kib = float(b.get("peak_kib", 0.0))
-        print(
-            f"{rec.rel_path:<48} {b_ms:9.2f} {rec.elapsed_ms:9.2f} {speedup:7.2f}x "
-            f"{b_kib:9.1f} {rec.peak_kib:9.1f}"
-        )
+        print(f"{rec.rel_path:<48} {b_ms:9.2f} {rec.elapsed_ms:9.2f} {speedup:7.2f}x {b_kib:9.1f} {rec.peak_kib:9.1f}")
 
     if curr_total > 0 and base_total > 0:
-        print(
-            f"\nMatched total: {base_total:.2f} ms -> {curr_total:.2f} ms "
-            f"({base_total / curr_total:.2f}x)"
-        )
+        print(f"\nMatched total: {base_total:.2f} ms -> {curr_total:.2f} ms ({base_total / curr_total:.2f}x)")
 
 
 def _print_profile(profiler: cProfile.Profile, top_n: int) -> None:
@@ -277,9 +241,7 @@ def _print_profile(profiler: cProfile.Profile, top_n: int) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for ``benchmarks/run.py``."""
-    parser = argparse.ArgumentParser(
-        description="Run the curated unsat benchmark suite."
-    )
+    parser = argparse.ArgumentParser(description="Run the curated unsat benchmark suite.")
     parser.add_argument(
         "--suite",
         choices=("core", "scale", "all"),
@@ -373,10 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.alloc:
             tracemalloc.stop()
 
-    header = (
-        f"{'Benchmark':<48} {'Group':<14} {'Exp':<7} {'Got':<7} {'Time ms':>8} "
-        f"{'Confl':>6}"
-    )
+    header = f"{'Benchmark':<48} {'Group':<14} {'Exp':<7} {'Got':<7} {'Time ms':>8} {'Confl':>6}"
     if args.alloc:
         header += f" {'PeakKiB':>8} {'Blocks':>8}"
     if args.z3:
@@ -404,8 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         print(row)
 
     print(
-        f"\nRan {len(results)} benchmarks in {total_ms:.2f} ms "
-        f"({len(results) - failures} passed, {failures} failed)."
+        f"\nRan {len(results)} benchmarks in {total_ms:.2f} ms ({len(results) - failures} passed, {failures} failed)."
     )
 
     if args.save_baseline is not None:

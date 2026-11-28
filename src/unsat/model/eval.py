@@ -44,9 +44,7 @@ class Model:
         self._values: dict[FuncDecl, Value] = {}
         self._functions: dict[FuncDecl, FuncInterp] = {}
         self._universes: dict[Sort, tuple[Const, ...]] = {}
-        self._div_zero: dict[tuple[DeclKind, Const], Const] = (
-            dict(div_zero) if div_zero is not None else {}
-        )
+        self._div_zero: dict[tuple[DeclKind, Const], Const] = dict(div_zero) if div_zero is not None else {}
 
         if values is not None:
             for decl, val in values.items():
@@ -136,10 +134,7 @@ class Model:
                 msg = f"Value '{val}' belongs to a different Context"
                 raise ValueError(msg)
             if val.sort is not decl.range_sort:
-                msg = (
-                    f"Value sort '{val.sort}' does not match declaration sort "
-                    f"'{decl.range_sort}'"
-                )
+                msg = f"Value sort '{val.sort}' does not match declaration sort '{decl.range_sort}'"
                 raise TypeError(msg)
             return val
 
@@ -165,10 +160,7 @@ class Model:
                 msg = f"Value '{val}' belongs to a different Context"
                 raise ValueError(msg)
             if val.sort is not decl.range_sort:
-                msg = (
-                    f"Value sort '{val.sort}' does not match declaration sort "
-                    f"'{decl.range_sort}'"
-                )
+                msg = f"Value sort '{val.sort}' does not match declaration sort '{decl.range_sort}'"
                 raise TypeError(msg)
             return val
 
@@ -179,10 +171,7 @@ class Model:
             msg = f"Value '{val}' belongs to a different Context"
             raise ValueError(msg)
         if val.sort is not decl.range_sort:
-            msg = (
-                f"Value sort '{val.sort}' does not match declaration sort "
-                f"'{decl.range_sort}'"
-            )
+            msg = f"Value sort '{val.sort}' does not match declaration sort '{decl.range_sort}'"
             raise TypeError(msg)
         return val
 
@@ -335,9 +324,7 @@ class Model:
         decl = self._resolve_decl(key)
         return self._values.get(decl, default)
 
-    def _finite_domain_elements(
-        self, sort: Sort, *, model_completion: bool
-    ) -> tuple[Expr, ...] | None:
+    def _finite_domain_elements(self, sort: Sort, *, model_completion: bool) -> tuple[Expr, ...] | None:
         kind = sort.kind
         if kind is SortKind.BOOL:
             return (self._ctx.false_expr, self._ctx.true_expr)
@@ -349,9 +336,7 @@ class Model:
                 return (self._ctx.mk_domain_val(sort, 0),)
             return None
         if kind is SortKind.BITVEC and sort.size <= 6:
-            return tuple(
-                self._ctx.mk_bv_val(i, sort.size) for i in range(1 << sort.size)
-            )
+            return tuple(self._ctx.mk_bv_val(i, sort.size) for i in range(1 << sort.size))
         return None
 
     def _eval_quantifier(
@@ -412,9 +397,7 @@ class Model:
                 memo[node] = node
                 continue
             if isinstance(node, Quantifier):
-                memo[node] = self._eval_quantifier(
-                    node, memo, model_completion=model_completion
-                )
+                memo[node] = self._eval_quantifier(node, memo, model_completion=model_completion)
                 continue
             if not isinstance(node, App):
                 memo[node] = node
@@ -444,9 +427,7 @@ class Model:
                 case DeclKind.EQ:
                     a0, a1 = eval_args
                     if _is_concrete_value(a0) and _is_concrete_value(a1):
-                        memo[node] = self._ctx.mk_bool_val(
-                            _concrete_values_equal(a0, a1, self._universes)
-                        )
+                        memo[node] = self._ctx.mk_bool_val(_concrete_values_equal(a0, a1, self._universes))
                     else:
                         memo[node] = self._ctx.mk_eq(a0, a1)
                 case DeclKind.DISTINCT:
@@ -456,9 +437,7 @@ class Model:
                         all_diff = True
                         for i in range(len(eval_args)):
                             for j in range(i + 1, len(eval_args)):
-                                if _concrete_values_equal(
-                                    eval_args[i], eval_args[j], self._universes
-                                ):
+                                if _concrete_values_equal(eval_args[i], eval_args[j], self._universes):
                                     all_diff = False
                                     break
                             if not all_diff:
@@ -467,9 +446,7 @@ class Model:
                     else:
                         memo[node] = self._ctx.mk_distinct(*eval_args)
                 case DeclKind.ITE:
-                    memo[node] = self._ctx.mk_ite(
-                        eval_args[0], eval_args[1], eval_args[2]
-                    )
+                    memo[node] = self._ctx.mk_ite(eval_args[0], eval_args[1], eval_args[2])
                 case DeclKind.NEG:
                     memo[node] = self._ctx.mk_neg(eval_args[0])
                 case DeclKind.ADD:
@@ -480,9 +457,7 @@ class Model:
                     memo[node] = self._ctx.mk_mul(*eval_args)
                 case DeclKind.DIV | DeclKind.IDIV | DeclKind.MOD:
                     if isinstance(eval_args[1], Const) and eval_args[1].value == 0:
-                        if isinstance(eval_args[0], Const) and _is_concrete_value(
-                            eval_args[0]
-                        ):
+                        if isinstance(eval_args[0], Const) and _is_concrete_value(eval_args[0]):
                             mapped = self._div_zero.get((node.decl.kind, eval_args[0]))
                             if mapped is not None:
                                 memo[node] = mapped
@@ -511,9 +486,7 @@ class Model:
                 case DeclKind.IS_INT:
                     memo[node] = self._ctx.mk_is_int(eval_args[0])
                 case DeclKind.DIVISIBLE:
-                    memo[node] = self._ctx.mk_divisible(
-                        node.decl.params[0], eval_args[0]
-                    )
+                    memo[node] = self._ctx.mk_divisible(node.decl.params[0], eval_args[0])
                 case DeclKind.SELECT:
                     arr_e, idx_e = eval_args
                     if _is_concrete_value(arr_e) and _is_concrete_value(idx_e):
@@ -619,9 +592,7 @@ class Model:
             raise TypeError(msg)
         evaluated = self.eval(expr, model_completion=model_completion)
         if not isinstance(evaluated, Const) or not isinstance(evaluated.value, bool):
-            msg = (
-                f"Expression '{expr}' did not reduce to a Boolean constant: {evaluated}"
-            )
+            msg = f"Expression '{expr}' did not reduce to a Boolean constant: {evaluated}"
             raise ValueError(msg)
         return evaluated.value
 
@@ -646,9 +617,7 @@ class Model:
             msg = f"Expected Real expression, got sort '{expr.sort}'"
             raise TypeError(msg)
         evaluated = self.eval(expr, model_completion=model_completion)
-        if not isinstance(evaluated, Const) or not isinstance(
-            evaluated.value, Fraction
-        ):
+        if not isinstance(evaluated, Const) or not isinstance(evaluated.value, Fraction):
             msg = f"Expression '{expr}' did not reduce to a Real constant: {evaluated}"
             raise ValueError(msg)
         return evaluated.value
@@ -664,9 +633,7 @@ class Model:
             or not isinstance(evaluated.value, int)
             or isinstance(evaluated.value, bool)
         ):
-            msg = (
-                f"Expression '{expr}' did not reduce to a BitVec constant: {evaluated}"
-            )
+            msg = f"Expression '{expr}' did not reduce to a BitVec constant: {evaluated}"
             raise ValueError(msg)
         return evaluated.value
 
@@ -677,9 +644,7 @@ class Model:
             raise TypeError(msg)
         evaluated = self.eval(expr, model_completion=model_completion)
         if not isinstance(evaluated, Const) or not isinstance(evaluated.value, str):
-            msg = (
-                f"Expression '{expr}' did not reduce to a String constant: {evaluated}"
-            )
+            msg = f"Expression '{expr}' did not reduce to a String constant: {evaluated}"
             raise ValueError(msg)
         return evaluated.value
 

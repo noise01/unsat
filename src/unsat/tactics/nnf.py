@@ -76,9 +76,7 @@ def to_nnf(expr: Expr) -> Expr:
 
             if kind in (DeclKind.AND, DeclKind.OR):
                 stack.append((node, neg, True))
-                for arg in reversed(node.args):
-                    if (arg, neg) not in memo:
-                        stack.append((arg, neg, False))
+                stack.extend((arg, neg, False) for arg in reversed(node.args) if (arg, neg) not in memo)
                 continue
 
             if kind is DeclKind.IMPLIES:
@@ -169,45 +167,31 @@ def to_nnf(expr: Expr) -> Expr:
                 lhs, rhs = node.args
                 lhs_nnf = memo[(lhs, not neg)]
                 rhs_nnf = memo[(rhs, neg)]
-                memo[key] = (
-                    ctx.mk_and(lhs_nnf, rhs_nnf) if neg else ctx.mk_or(lhs_nnf, rhs_nnf)
-                )
+                memo[key] = ctx.mk_and(lhs_nnf, rhs_nnf) if neg else ctx.mk_or(lhs_nnf, rhs_nnf)
             case DeclKind.XOR:
                 lhs, rhs = node.args
                 lhs_t, lhs_f = memo[(lhs, False)], memo[(lhs, True)]
                 rhs_t, rhs_f = memo[(rhs, False)], memo[(rhs, True)]
                 if neg:
-                    memo[key] = ctx.mk_or(
-                        ctx.mk_and(lhs_t, rhs_t), ctx.mk_and(lhs_f, rhs_f)
-                    )
+                    memo[key] = ctx.mk_or(ctx.mk_and(lhs_t, rhs_t), ctx.mk_and(lhs_f, rhs_f))
                 else:
-                    memo[key] = ctx.mk_or(
-                        ctx.mk_and(lhs_t, rhs_f), ctx.mk_and(lhs_f, rhs_t)
-                    )
+                    memo[key] = ctx.mk_or(ctx.mk_and(lhs_t, rhs_f), ctx.mk_and(lhs_f, rhs_t))
             case DeclKind.EQ:
                 lhs, rhs = node.args
                 lhs_t, lhs_f = memo[(lhs, False)], memo[(lhs, True)]
                 rhs_t, rhs_f = memo[(rhs, False)], memo[(rhs, True)]
                 if neg:
-                    memo[key] = ctx.mk_or(
-                        ctx.mk_and(lhs_t, rhs_f), ctx.mk_and(lhs_f, rhs_t)
-                    )
+                    memo[key] = ctx.mk_or(ctx.mk_and(lhs_t, rhs_f), ctx.mk_and(lhs_f, rhs_t))
                 else:
-                    memo[key] = ctx.mk_or(
-                        ctx.mk_and(lhs_t, rhs_t), ctx.mk_and(lhs_f, rhs_f)
-                    )
+                    memo[key] = ctx.mk_or(ctx.mk_and(lhs_t, rhs_t), ctx.mk_and(lhs_f, rhs_f))
             case DeclKind.DISTINCT:
                 lhs, rhs = node.args
                 lhs_t, lhs_f = memo[(lhs, False)], memo[(lhs, True)]
                 rhs_t, rhs_f = memo[(rhs, False)], memo[(rhs, True)]
                 if neg:
-                    memo[key] = ctx.mk_or(
-                        ctx.mk_and(lhs_t, rhs_t), ctx.mk_and(lhs_f, rhs_f)
-                    )
+                    memo[key] = ctx.mk_or(ctx.mk_and(lhs_t, rhs_t), ctx.mk_and(lhs_f, rhs_f))
                 else:
-                    memo[key] = ctx.mk_or(
-                        ctx.mk_and(lhs_t, rhs_f), ctx.mk_and(lhs_f, rhs_t)
-                    )
+                    memo[key] = ctx.mk_or(ctx.mk_and(lhs_t, rhs_f), ctx.mk_and(lhs_f, rhs_t))
             case DeclKind.ITE:
                 cond, then_b, else_b = node.args
                 memo[key] = ctx.mk_or(

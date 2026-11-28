@@ -85,9 +85,7 @@ def _bound_from_cmp(kind: DeclKind, polarity: bool) -> tuple[bool, bool]:
             raise TypeError(msg)
 
 
-def _tighten_bound(
-    is_int: bool, bound: Fraction, *, is_upper: bool, strict: bool
-) -> DeltaRational:
+def _tighten_bound(is_int: bool, bound: Fraction, *, is_upper: bool, strict: bool) -> DeltaRational:
     """Convert numeric bound into an exact ``DeltaRational`` (tightening ``Int``)."""
     if is_int:
         if is_upper:
@@ -142,9 +140,7 @@ class LRASolver:
         # Registered comparison atoms:
         # atom -> bool (constant truth)
         #       | (vid, true_is_upper, true_req, false_is_upper, false_req)
-        self._atom_info: dict[
-            Expr, bool | tuple[int, bool, DeltaRational, bool, DeltaRational]
-        ] = {}
+        self._atom_info: dict[Expr, bool | tuple[int, bool, DeltaRational, bool, DeltaRational]] = {}
         self._var_atoms: dict[int, list[Expr]] = {}
         self._asserted_atoms: dict[Expr, bool] = {}
 
@@ -185,14 +181,10 @@ class LRASolver:
         if num_levels == 0:
             return
         if num_levels > len(self._trail_marks):
-            msg = (
-                f"Cannot pop {num_levels} levels: only {len(self._trail_marks)} active"
-            )
+            msg = f"Cannot pop {num_levels} levels: only {len(self._trail_marks)} active"
             raise ValueError(msg)
 
-        target_len, saved_conflict = self._trail_marks[
-            len(self._trail_marks) - num_levels
-        ]
+        target_len, saved_conflict = self._trail_marks[len(self._trail_marks) - num_levels]
         del self._trail_marks[len(self._trail_marks) - num_levels :]
 
         self._pending_props.clear()
@@ -237,10 +229,7 @@ class LRASolver:
     def register_atom(self, atom: Expr) -> None:
         """Register an arithmetic comparison atom ``<``, ``<=``, ``>``, ``>=``."""
         self._check_expr(atom)
-        if not (
-            isinstance(atom, App)
-            and atom.decl.kind in (DeclKind.LT, DeclKind.LE, DeclKind.GT, DeclKind.GE)
-        ):
+        if not (isinstance(atom, App) and atom.decl.kind in (DeclKind.LT, DeclKind.LE, DeclKind.GT, DeclKind.GE)):
             msg = f"Expected arithmetic comparison expression, got '{atom}'"
             raise TypeError(msg)
         if atom in self._atom_info:
@@ -269,14 +258,10 @@ class LRASolver:
         cmp_kind = atom.decl.kind
         raw_upper_t, strict_t = _bound_from_cmp(cmp_kind, True)
         true_is_upper, true_strict = _apply_dir(raw_upper_t, strict_t, dir_sign)
-        true_req = _tighten_bound(
-            var_int, scaled_rhs, is_upper=true_is_upper, strict=true_strict
-        )
+        true_req = _tighten_bound(var_int, scaled_rhs, is_upper=true_is_upper, strict=true_strict)
         raw_upper_f, strict_f = _bound_from_cmp(cmp_kind, False)
         false_is_upper, false_strict = _apply_dir(raw_upper_f, strict_f, dir_sign)
-        false_req = _tighten_bound(
-            var_int, scaled_rhs, is_upper=false_is_upper, strict=false_strict
-        )
+        false_req = _tighten_bound(var_int, scaled_rhs, is_upper=false_is_upper, strict=false_strict)
         self._atom_info[atom] = (
             vid,
             true_is_upper,
@@ -357,13 +342,11 @@ class LRASolver:
             ub = self._upper[vid]
             if ub is not None and r_v < ub.real and d_v > ub.delta:
                 cand = (ub.real - r_v) / (2 * (d_v - ub.delta))
-                if cand < eps:
-                    eps = cand
+                eps = min(eps, cand)
             lb = self._lower[vid]
             if lb is not None and r_v > lb.real and lb.delta > d_v:
                 cand = (r_v - lb.real) / (2 * (lb.delta - d_v))
-                if cand < eps:
-                    eps = cand
+                eps = min(eps, cand)
 
         result: dict[Expr, Fraction] = {}
         for expr, vid in self._expr_to_var.items():
@@ -467,9 +450,7 @@ class LRASolver:
 
     def var_bounds_with_reasons(
         self, vid: int
-    ) -> tuple[
-        DeltaRational | None, TheoryLit | None, DeltaRational | None, TheoryLit | None
-    ]:
+    ) -> tuple[DeltaRational | None, TheoryLit | None, DeltaRational | None, TheoryLit | None]:
         """Return ``(lower, lower_reason, upper, upper_reason)`` for ``vid``."""
         return (
             self._lower[vid],
@@ -496,9 +477,7 @@ class LRASolver:
     # LIA integrality patching & vertex tightening
     # ------------------------------------------------------------------
 
-    def _real_freedom_interval(
-        self, j_nb: int
-    ) -> tuple[Fraction | None, bool, Fraction | None, bool]:
+    def _real_freedom_interval(self, j_nb: int) -> tuple[Fraction | None, bool, Fraction | None, bool]:
         """Return ``(lo_d, lo_strict, hi_d, hi_strict)`` for shifts of ``j_nb``."""
         lo_d: Fraction | None = None
         lo_strict = False
@@ -507,21 +486,13 @@ class LRASolver:
 
         def _tighten_hi(bound: Fraction, strict: bool) -> None:
             nonlocal hi_d, hi_strict
-            if (
-                hi_d is None
-                or bound < hi_d
-                or (bound == hi_d and strict and not hi_strict)
-            ):
+            if hi_d is None or bound < hi_d or (bound == hi_d and strict and not hi_strict):
                 hi_d = bound
                 hi_strict = strict
 
         def _tighten_lo(bound: Fraction, strict: bool) -> None:
             nonlocal lo_d, lo_strict
-            if (
-                lo_d is None
-                or bound > lo_d
-                or (bound == lo_d and strict and not lo_strict)
-            ):
+            if lo_d is None or bound > lo_d or (bound == lo_d and strict and not lo_strict):
                 lo_d = bound
                 lo_strict = strict
 
@@ -600,28 +571,11 @@ class LRASolver:
                             (Fraction(math.ceil(r_i)) - r_i) / a_ij,
                         ]
                         candidates = [
-                            d
-                            for d in raw
-                            if d != 0
-                            and self._in_real_interval(
-                                d, lo_d, lo_strict, hi_d, hi_strict
-                            )
+                            d for d in raw if d != 0 and self._in_real_interval(d, lo_d, lo_strict, hi_d, hi_strict)
                         ]
                     else:
-                        int_lo = (
-                            None
-                            if lo_d is None
-                            else (
-                                math.floor(lo_d) + 1 if lo_strict else math.ceil(lo_d)
-                            )
-                        )
-                        int_hi = (
-                            None
-                            if hi_d is None
-                            else (
-                                math.ceil(hi_d) - 1 if hi_strict else math.floor(hi_d)
-                            )
-                        )
+                        int_lo = None if lo_d is None else (math.floor(lo_d) + 1 if lo_strict else math.ceil(lo_d))
+                        int_hi = None if hi_d is None else (math.ceil(hi_d) - 1 if hi_strict else math.floor(hi_d))
                         if (
                             int_lo is not None
                             and int_hi is not None
@@ -679,12 +633,8 @@ class LRASolver:
                             old_f = 0 if old_v.is_integer() else 1
                             new_f = 0 if new_v.is_integer() else 1
                             delta_frac += new_f - old_f
-                            old_den = old_v.real.denominator + (
-                                1 if old_v.delta != 0 else 0
-                            )
-                            new_den = new_v.real.denominator + (
-                                1 if new_v.delta != 0 else 0
-                            )
+                            old_den = old_v.real.denominator + (1 if old_v.delta != 0 else 0)
+                            new_den = new_v.real.denominator + (1 if new_v.delta != 0 else 0)
                             delta_denom += new_den - old_den
                         if delta_frac < 0 or (delta_frac == 0 and delta_denom < 0):
                             best_d = cand_d
@@ -851,9 +801,7 @@ class LRASolver:
 
             if not expanded:
                 stack.append((node, True))
-                for arg in reversed(node.args):
-                    if arg not in memo:
-                        stack.append((arg, False))
+                stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
                 continue
 
             if kind is DeclKind.TO_REAL:
@@ -912,9 +860,7 @@ class LRASolver:
                         nxt_const = cur_const * f_const
                         if cur_const != _FRAC_ZERO:
                             for v2, c2 in f_map.items():
-                                nxt_map[v2] = (
-                                    nxt_map.get(v2, _FRAC_ZERO) + cur_const * c2
-                                )
+                                nxt_map[v2] = nxt_map.get(v2, _FRAC_ZERO) + cur_const * c2
                         if f_const != _FRAC_ZERO:
                             for v1, c1 in cur_map.items():
                                 nxt_map[v1] = nxt_map.get(v1, _FRAC_ZERO) + f_const * c1
@@ -923,23 +869,12 @@ class LRASolver:
                             assert e1 is not None
                             for v2, c2 in f_map.items():
                                 if not self._allow_nonlinear:
-                                    msg = (
-                                        "Non-linear multiplication in linear "
-                                        f"arithmetic: {node}"
-                                    )
+                                    msg = f"Non-linear multiplication in linear arithmetic: {node}"
                                     raise ValueError(msg)
                                 e2 = self._var_expr[v2]
                                 assert e2 is not None
-                                s1 = (
-                                    self._ctx.mk_to_real(e1)
-                                    if (e1.is_int and (node.is_real or e2.is_real))
-                                    else e1
-                                )
-                                s2 = (
-                                    self._ctx.mk_to_real(e2)
-                                    if (e2.is_int and (node.is_real or e1.is_real))
-                                    else e2
-                                )
+                                s1 = self._ctx.mk_to_real(e1) if (e1.is_int and (node.is_real or e2.is_real)) else e1
+                                s2 = self._ctx.mk_to_real(e2) if (e2.is_int and (node.is_real or e1.is_real)) else e2
                                 a_e, b_e = (s1, s2) if s1.id <= s2.id else (s2, s1)
                                 prod = self._ctx.mk_mul(a_e, b_e)
                                 self._nonlinear_muls[prod] = (a_e, b_e)
@@ -956,9 +891,7 @@ class LRASolver:
                 r_map, r_const = memo[node.args[1]]
                 if r_map or r_const == 0:
                     if not self._allow_nonlinear:
-                        msg = (
-                            f"Non-linear or zero division in linear arithmetic: {node}"
-                        )
+                        msg = f"Non-linear or zero division in linear arithmetic: {node}"
                         raise ValueError(msg)
                     self._nonlinear_divs[node] = (node.args[0], node.args[1])
                     vid = self._alloc_orig_var(node)
@@ -975,9 +908,7 @@ class LRASolver:
         res_map, res_const = memo[expr]
         return dict(res_map), res_const
 
-    def _get_or_create_var_for_form(
-        self, coeffs: dict[int, Fraction], rhs: Fraction
-    ) -> tuple[int, Fraction, Fraction]:
+    def _get_or_create_var_for_form(self, coeffs: dict[int, Fraction], rhs: Fraction) -> tuple[int, Fraction, Fraction]:
         """Normalize linear form, returning ``(vid, scale, scaled_rhs)``."""
         items = sorted(coeffs.items())
         if len(items) == 1:
@@ -1048,15 +979,9 @@ class LRASolver:
     # Bound updates, subsumption propagation, pivoting & Simplex
     # ------------------------------------------------------------------
 
-    def _enqueue_prop(
-        self, atom: Expr, polarity: bool, reasons: list[TheoryLit]
-    ) -> None:
+    def _enqueue_prop(self, atom: Expr, polarity: bool, reasons: list[TheoryLit]) -> None:
         key = (atom, polarity)
-        if (
-            atom in self._asserted_atoms
-            or atom in self._pending_prop_set
-            or key in self._prop_reasons
-        ):
+        if atom in self._asserted_atoms or atom in self._pending_prop_set or key in self._prop_reasons:
             return
         self._pending_prop_set.add(atom)
         self._pending_props.append(key)
@@ -1129,9 +1054,7 @@ class LRASolver:
                     self._stats.conflicts += 1
                 return
             if self._trail_marks:
-                self._history.append(
-                    (_OP_UPPER, vid, cur_upper, self._upper_reason[vid])
-                )
+                self._history.append((_OP_UPPER, vid, cur_upper, self._upper_reason[vid]))
             self._upper[vid] = target
             self._upper_reason[vid] = reason
             if vid not in self._basic_rows and self._val[vid] > target:
@@ -1249,15 +1172,9 @@ class LRASolver:
                 assert target is not None
                 self._pivot_and_update(i_basic, entering_nb, target)
 
-    def _record_farkas_conflict(
-        self, i_basic: int, row: dict[int, Fraction], *, violated_lower: bool
-    ) -> None:
+    def _record_farkas_conflict(self, i_basic: int, row: dict[int, Fraction], *, violated_lower: bool) -> None:
         reasons: list[TheoryLit] = []
-        base_reason = (
-            self._lower_reason[i_basic]
-            if violated_lower
-            else self._upper_reason[i_basic]
-        )
+        base_reason = self._lower_reason[i_basic] if violated_lower else self._upper_reason[i_basic]
         assert base_reason is not None
         reasons.append(base_reason)
 
@@ -1270,9 +1187,7 @@ class LRASolver:
         self._conflict = _dedup_lits(reasons)
         self._stats.conflicts += 1
 
-    def _pivot_and_update(
-        self, i_basic: int, j_nb: int, target_val: DeltaRational
-    ) -> None:
+    def _pivot_and_update(self, i_basic: int, j_nb: int, target_val: DeltaRational) -> None:
         self._stats.pivots += 1
         basic_rows = self._basic_rows
         col_uses = self._col_uses

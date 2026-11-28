@@ -77,10 +77,7 @@ def parse_dimacs(text: str) -> DimacsCNF:
                 continue
 
             if abs(val) > num_vars:
-                msg = (
-                    f"Line {line_no}: literal {val} exceeds declared "
-                    f"num_vars={num_vars}"
-                )
+                msg = f"Line {line_no}: literal {val} exceeds declared num_vars={num_vars}"
                 raise ValueError(msg)
             current_clause.append(from_dimacs_lit(val))
 
@@ -143,9 +140,6 @@ def format_dimacs_result(
         raise ValueError(msg)
 
     assignments = model or {}
-    tokens = [
-        str(var + 1 if assignments.get(var, False) else -(var + 1))
-        for var in range(num_vars)
-    ]
+    tokens = [str(var + 1 if assignments.get(var, False) else -(var + 1)) for var in range(num_vars)]
     tokens.append("0")
     return "s SATISFIABLE\nv " + " ".join(tokens)

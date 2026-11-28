@@ -27,15 +27,12 @@ def validate_smt2_string(value: str) -> None:
     for ch in value:
         code = ord(ch)
         if code > MAX_CHAR_CODE:
-            msg = (
-                f"Character code point U+{code:X} exceeds SMT-LIB2 Unicode "
-                f"limit U+{MAX_CHAR_CODE:X}"
-            )
+            msg = f"Character code point U+{code:X} exceeds SMT-LIB2 Unicode limit U+{MAX_CHAR_CODE:X}"
             raise ValueError(msg)
 
 
 def unescape_smt2_string(raw: str) -> str:
-    """Decode SMT-LIB2 2.6 ``\\u{...}`` and ``\\uHHHH`` Unicode escape sequences."""
+    r"""Decode SMT-LIB2 2.6 ``\\u{...}`` and ``\\uHHHH`` Unicode escape sequences."""
     if "\\" not in raw:
         return raw
     out: list[str] = []
@@ -168,9 +165,7 @@ type Interval = tuple[int, int]
 def normalize_intervals(intervals: Sequence[Interval]) -> tuple[Interval, ...]:
     """Clamp intervals to ``[0, MAX_CHAR_CODE]``, sort, and merge overlaps."""
     valid = [
-        (max(0, lo), min(MAX_CHAR_CODE, hi))
-        for lo, hi in intervals
-        if lo <= MAX_CHAR_CODE and hi >= 0 and lo <= hi
+        (max(0, lo), min(MAX_CHAR_CODE, hi)) for lo, hi in intervals if lo <= MAX_CHAR_CODE and hi >= 0 and lo <= hi
     ]
     if not valid:
         return ()
@@ -201,9 +196,7 @@ def intervals_contain(intervals: tuple[Interval, ...], code: int) -> bool:
     return False
 
 
-def intervals_intersect(
-    a: tuple[Interval, ...], b: tuple[Interval, ...]
-) -> tuple[Interval, ...]:
+def intervals_intersect(a: tuple[Interval, ...], b: tuple[Interval, ...]) -> tuple[Interval, ...]:
     """Return the normalized intersection of two interval sets."""
     out: list[Interval] = []
     i = 0
@@ -490,9 +483,7 @@ def re_nullable(node: ReNode) -> bool:
             return not re_nullable(inner)
 
 
-def re_deriv(
-    node: ReNode, code: int, memo: dict[tuple[ReNode, int], ReNode] | None = None
-) -> ReNode:
+def re_deriv(node: ReNode, code: int, memo: dict[tuple[ReNode, int], ReNode] | None = None) -> ReNode:
     """Compute the Brzozowski derivative of ``node`` with respect to ``chr(code)``."""
     if memo is not None:
         cached = memo.get((node, code))
@@ -508,10 +499,7 @@ def re_deriv(
             head = parts[0]
             tail = ReConcat(parts[1:]) if len(parts) > 2 else parts[1]
             d_head = re_concat(re_deriv(head, code, memo), tail)
-            if re_nullable(head):
-                res = re_union(d_head, re_deriv(tail, code, memo))
-            else:
-                res = d_head
+            res = re_union(d_head, re_deriv(tail, code, memo)) if re_nullable(head) else d_head
         case ReUnion(alts=alts):
             res = re_union(*(re_deriv(alt, code, memo) for alt in alts))
         case ReInter(parts=parts):
@@ -644,11 +632,7 @@ def re_min_max_length(node: ReNode) -> tuple[int | None, int | None]:
             if not mins:
                 return (None, None)
             u_min = min(mins)
-            u_max = (
-                None
-                if any(m is None for m in maxes)
-                else max(m for m in maxes if m is not None)
-            )
+            u_max = None if any(m is None for m in maxes) else max(m for m in maxes if m is not None)
             return (u_min, u_max)
         case ReInter(parts=parts):
             cur_min = 0
@@ -671,9 +655,7 @@ def re_min_max_length(node: ReNode) -> tuple[int | None, int | None]:
             return (0, None)
 
 
-def re_allowed_intervals_at(
-    node: ReNode, length: int
-) -> tuple[tuple[Interval, ...] | None, ...] | None:
+def re_allowed_intervals_at(node: ReNode, length: int) -> tuple[tuple[Interval, ...] | None, ...] | None:
     """Return per-position allowed char intervals for fixed ``length``, if simple."""
     if length < 0:
         return None
@@ -721,9 +703,7 @@ def re_find_word_of_length(
 
         pos_allowed = allowed_at[pos] if allowed_at is not None else None
         mt = re_minterms(state)
-        candidate_ranges = (
-            intervals_intersect(mt, pos_allowed) if pos_allowed is not None else mt
-        )
+        candidate_ranges = intervals_intersect(mt, pos_allowed) if pos_allowed is not None else mt
         # Try alternative characters in the interval when avoiding forbidden words.
         for lo, hi in candidate_ranges:
             rep = _pick_rep_in_interval(lo, hi, 0)

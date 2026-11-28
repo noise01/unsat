@@ -88,12 +88,7 @@ def _interpret_under_model(
                 interp = model.func_interp(node.decl)
                 res = interp.else_value
                 for key_args, val_expr in reversed(interp.entries()):
-                    cond = ctx.mk_and(
-                        *(
-                            ctx.mk_eq(ea, ka)
-                            for ea, ka in zip(eval_args, key_args, strict=True)
-                        )
-                    )
+                    cond = ctx.mk_and(*(ctx.mk_eq(ea, ka) for ea, ka in zip(eval_args, key_args, strict=True)))
                     res = ctx.mk_ite(cond, val_expr, res)
                 memo[node] = res
             else:
@@ -116,9 +111,7 @@ class MBQIEngine:
         """Witness declarations synthesized for uninterpreted-sort instances."""
         return frozenset(self._internal_decls)
 
-    def _fresh_witness_for_domain(
-        self, ctx: Context, sort: Sort, domain_val: Expr, reserved_names: set[str]
-    ) -> App:
+    def _fresh_witness_for_domain(self, ctx: Context, sort: Sort, domain_val: Expr, reserved_names: set[str]) -> App:
         key = (sort, domain_val)
         existing = self._witness_by_val.get(key)
         if existing is not None:
@@ -133,9 +126,7 @@ class MBQIEngine:
                 self._internal_decls.add(witness.decl)
                 return witness
 
-    def _candidate_models(
-        self, model: Model, quantifiers: Sequence[Quantifier]
-    ) -> list[Model]:
+    def _candidate_models(self, model: Model, quantifiers: Sequence[Quantifier]) -> list[Model]:
         """Generate ``model`` plus safe ``else_value`` generalizations."""
         candidates = [model]
         func_decls = model.func_decls()
@@ -202,16 +193,10 @@ class MBQIEngine:
         candidates: list[tuple[tuple[int, int], Expr]] = []
         for rep in euf.terms_of_sort(sort):
             for member in euf.eclass_members(rep):
-                if isinstance(member, Const) or (
-                    isinstance(member, App) and member.is_const_symbol
-                ):
+                if isinstance(member, Const) or (isinstance(member, App) and member.is_const_symbol):
                     mval = model.eval(member, model_completion=True)
                     if mval is raw_val:
-                        pri = (
-                            0
-                            if (isinstance(member, App) and member.is_const_symbol)
-                            else 1
-                        )
+                        pri = 0 if (isinstance(member, App) and member.is_const_symbol) else 1
                         candidates.append(((pri, member.id), member))
         if candidates:
             candidates.sort(key=lambda item: item[0])
@@ -236,9 +221,7 @@ class MBQIEngine:
             return MBQIResult(True, model, (), budget_exhausted=False)
 
         ctx = quantifiers[0].ctx
-        reserved: set[str] = {d.name for d in model.decls()} | {
-            d.name for d in model.func_decls()
-        }
+        reserved: set[str] = {d.name for d in model.decls()} | {d.name for d in model.func_decls()}
         for q in quantifiers:
             for d in collect_func_decls(q):
                 reserved.add(d.name)
@@ -263,14 +246,10 @@ class MBQIEngine:
                         univ = cand_m.universe(sort)
                         if not univ:
                             univ = (ctx.mk_domain_val(sort, 0),)
-                        domain_constraints.append(
-                            ctx.mk_or(*(ctx.mk_eq(bc, u) for u in univ))
-                        )
+                        domain_constraints.append(ctx.mk_or(*(ctx.mk_eq(bc, u) for u in univ)))
 
                 inst_body = instantiate_quantifier(q, bconsts)
-                interpreted = _interpret_under_model(
-                    ctx, inst_body, cand_m, set(bconsts)
-                )
+                interpreted = _interpret_under_model(ctx, inst_body, cand_m, set(bconsts))
                 if interpreted is None:
                     all_verified = False
                     any_unknown = True
@@ -285,9 +264,7 @@ class MBQIEngine:
                     any_unknown = True
                     continue
                 if cand_idx == 0:
-                    raw_tuple = tuple(
-                        cex_model.eval(bc, model_completion=True) for bc in bconsts
-                    )
+                    raw_tuple = tuple(cex_model.eval(bc, model_completion=True) for bc in bconsts)
                     counterexamples.append((q, raw_tuple))
 
             if all_verified:
@@ -313,9 +290,7 @@ class MBQIEngine:
             if rep_key in emitted_set:
                 mixed_args = tuple(
                     raw_v if sort.kind is not SortKind.UNINTERPRETED else m_v
-                    for sort, raw_v, m_v in zip(
-                        q.var_sorts, raw_tuple, mapped_args, strict=True
-                    )
+                    for sort, raw_v, m_v in zip(q.var_sorts, raw_tuple, mapped_args, strict=True)
                 )
                 conc_key = (q, tuple(euf.rep_expr(arg) for arg in mixed_args))
                 if conc_key not in emitted_set:

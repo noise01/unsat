@@ -7,9 +7,7 @@ from unsat.syntax import Context, format_expr
 
 
 def test_smt2_lexing_and_parse_errors() -> None:
-    tokens = tokenize_smt2(
-        '\ufeff; comment\n(assert (and |a b| (not (= x "hi ""there"""))))'
-    )
+    tokens = tokenize_smt2('\ufeff; comment\n(assert (and |a b| (not (= x "hi ""there"""))))')
     assert any(tok.kind == "QSYMBOL" and tok.value == "a b" for tok in tokens)
     assert any(tok.kind == "STRING" and tok.value == 'hi "there"' for tok in tokens)
 
@@ -451,10 +449,7 @@ def test_smt2_define_sort_and_cycles() -> None:
 
     for bad in (
         "(push 1)\n(define-sort Local () Int)\n(pop 1)\n(declare-const n Local)",
-        (
-            "(define-sort A () Bool)\n(define-sort B () A)\n"
-            "(push 1)\n(define-sort A () B)\n(declare-const x A)"
-        ),
+        ("(define-sort A () Bool)\n(define-sort B () A)\n(push 1)\n(define-sort A () B)\n(declare-const x A)"),
         "(define-sort Pair (A B) (Array A B))\n(declare-const x Pair)",
         "(define-sort Pair (A B) (Array A B))\n(declare-const x (Pair Int))",
         "(define-sort Int () Bool)",
@@ -511,10 +506,7 @@ def test_smt2_named_unsat_core_get_assertions_and_echo() -> None:
     assert scoped_out[5] == "()"
 
     # Unnamed-only UNSAT returns empty core.
-    unnamed_script = (
-        "(declare-const p Bool)\n(assert p)\n(assert (not p))\n"
-        "(check-sat)\n(get-unsat-core)"
-    )
+    unnamed_script = "(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n(get-unsat-core)"
     assert run_smt2(unnamed_script) == ["unsat", "()"]
 
     # Quantified :named assertion core.

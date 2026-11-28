@@ -42,9 +42,7 @@ def _make_quf_env() -> _QUFEnv:
     pred_p = ctx.mk_decl("P", (sort_s,), ctx.bool_sort)
     pred_q = ctx.mk_decl("Q", (sort_s,), ctx.bool_sort)
 
-    z3_vars: dict[FuncDecl, z3.ExprRef] = {
-        c.decl: z3.Const(c.decl.name, zs) for c in consts
-    }
+    z3_vars: dict[FuncDecl, z3.ExprRef] = {c.decl: z3.Const(c.decl.name, zs) for c in consts}
     z3_funcs: dict[FuncDecl, z3.FuncDeclRef] = {
         f: z3.Function("f", zs, zs),
         g: z3.Function("g", zs, zs),
@@ -86,11 +84,7 @@ def _to_z3(
         if isinstance(node, Quantifier):
             qvars = [
                 z3.FreshConst(
-                    z3.IntSort()
-                    if vs.is_int
-                    else z3.BoolSort()
-                    if vs.is_bool
-                    else z3_sorts[vs.name],
+                    z3.IntSort() if vs.is_int else z3.BoolSort() if vs.is_bool else z3_sorts[vs.name],
                     vn,
                 )
                 for vn, vs in zip(node.var_names, node.var_sorts, strict=True)
@@ -147,31 +141,17 @@ def _quf_cases(draw: st.DrawFn) -> tuple[_QUFEnv, list[Expr]]:
     for _ in range(n_axioms):
         ax_kind = draw(st.integers(min_value=0, max_value=3))
         if ax_kind == 0:
-            body = ctx.mk_implies(
-                ctx.mk_app(env.pred_p, x), ctx.mk_app(env.pred_q, ctx.mk_app(env.f, x))
-            )
+            body = ctx.mk_implies(ctx.mk_app(env.pred_p, x), ctx.mk_app(env.pred_q, ctx.mk_app(env.f, x)))
             formulas.append(ctx.mk_forall([x], body, patterns=[[ctx.mk_app(env.f, x)]]))
         elif ax_kind == 1:
-            body = ctx.mk_eq(
-                ctx.mk_app(env.f, ctx.mk_app(env.g, x)), ctx.mk_app(env.g, x)
-            )
-            formulas.append(
-                ctx.mk_forall(
-                    [x], body, patterns=[[ctx.mk_app(env.f, ctx.mk_app(env.g, x))]]
-                )
-            )
+            body = ctx.mk_eq(ctx.mk_app(env.f, ctx.mk_app(env.g, x)), ctx.mk_app(env.g, x))
+            formulas.append(ctx.mk_forall([x], body, patterns=[[ctx.mk_app(env.f, ctx.mk_app(env.g, x))]]))
         elif ax_kind == 2:
             body = ctx.mk_or(ctx.mk_app(env.pred_p, x), ctx.mk_app(env.pred_q, x))
-            formulas.append(
-                ctx.mk_forall([x], body, patterns=[[ctx.mk_app(env.pred_p, x)]])
-            )
+            formulas.append(ctx.mk_forall([x], body, patterns=[[ctx.mk_app(env.pred_p, x)]]))
         else:
-            body = ctx.mk_implies(
-                ctx.mk_app(env.pred_q, x), ctx.mk_not(ctx.mk_app(env.pred_p, x))
-            )
-            formulas.append(
-                ctx.mk_forall([x], body, patterns=[[ctx.mk_app(env.pred_q, x)]])
-            )
+            body = ctx.mk_implies(ctx.mk_app(env.pred_q, x), ctx.mk_not(ctx.mk_app(env.pred_p, x)))
+            formulas.append(ctx.mk_forall([x], body, patterns=[[ctx.mk_app(env.pred_q, x)]]))
 
     n_ground = draw(st.integers(min_value=2, max_value=5))
     for _ in range(n_ground):
@@ -255,9 +235,7 @@ def test_quantifier_push_pop_matches_fresh_solver(
             ctx.mk_app(env.pred_p, ctx.mk_app(env.f, x)),
             patterns=[[ctx.mk_app(env.f, x)]],
         ),
-        ctx.mk_not(ctx.mk_app(env.pred_p, c))
-        if flag2
-        else ctx.mk_app(env.pred_q, target),
+        ctx.mk_not(ctx.mk_app(env.pred_p, c)) if flag2 else ctx.mk_app(env.pred_q, target),
     ]
 
     inc = SMTSolver(ctx, max_quantifier_rounds=8)
@@ -293,9 +271,7 @@ def _bounded_qlia_cases(
     b = ctx.mk_const("b", int_s)
     p = ctx.mk_decl("P", (int_s,), ctx.bool_sort)
     z3_vars: dict[FuncDecl, z3.ExprRef] = {a.decl: z3.Int("a"), b.decl: z3.Int("b")}
-    z3_funcs: dict[FuncDecl, z3.FuncDeclRef] = {
-        p: z3.Function("P", z3.IntSort(), z3.BoolSort())
-    }
+    z3_funcs: dict[FuncDecl, z3.FuncDeclRef] = {p: z3.Function("P", z3.IntSort(), z3.BoolSort())}
 
     lo = draw(st.integers(min_value=-2, max_value=1))
     hi = draw(st.integers(min_value=lo, max_value=lo + 3))
@@ -305,9 +281,7 @@ def _bounded_qlia_cases(
     formulas: list[Expr] = []
     # Mix decidable guarded LIA quantified constraints + ground integer facts.
     if draw(st.booleans()):
-        guard = ctx.mk_and(
-            ctx.mk_ge(x, ctx.mk_int_val(lo)), ctx.mk_le(x, ctx.mk_int_val(hi))
-        )
+        guard = ctx.mk_and(ctx.mk_ge(x, ctx.mk_int_val(lo)), ctx.mk_le(x, ctx.mk_int_val(hi)))
         concl = ctx.mk_le(x, a) if draw(st.booleans()) else ctx.mk_gt(x, b)
         formulas.append(ctx.mk_forall([x], ctx.mk_implies(guard, concl)))
     else:

@@ -2,7 +2,7 @@ import pytest
 import z3
 
 from unsat.smt import SMTSolver, SolveResult
-from unsat.syntax import App, Context, DeclKind
+from unsat.syntax import App, Context, DeclKind, iter_subexprs
 from unsat.tactics import (
     BitBlaster,
     BitBlastTactic,
@@ -13,9 +13,7 @@ from unsat.tactics import (
 )
 
 
-def _z3_bv_val(
-    ctx: Context, term_fn, z3_fn, a: int, b: int | None = None, w: int = 4
-) -> None:
+def _z3_bv_val(ctx: Context, term_fn, z3_fn, a: int, b: int | None = None, w: int = 4) -> None:
     if b is None:
         u_expr = term_fn(ctx.mk_bv_val(a, w))
         z_expr = z3.simplify(z3_fn(z3.BitVecVal(a, w)))
@@ -53,9 +51,7 @@ def _z3_bv_val(
         solver.add(ctx.mk_eq(y, ctx.mk_bv_val(b, w)))
         sym_expr = term_fn(x, y)
     # Use a fresh BitBlaster directly so bv_simplify doesn't rewrite away the op.
-    blasted_eq = blaster.blast_eq(
-        sym_expr, ctx.mk_bv_val(expected_int, sym_expr.bv_size)
-    )
+    blasted_eq = blaster.blast_eq(sym_expr, ctx.mk_bv_val(expected_int, sym_expr.bv_size))
     solver.add(blasted_eq)
     assert solver.check() is SolveResult.SAT
 
@@ -82,13 +78,8 @@ def test_bv_simplify_identities_and_inversions() -> None:
     cat = ctx.mk_concat(x, y)
     assert bv_simplify(ctx.mk_extract(15, 8, cat)) is x
     assert bv_simplify(ctx.mk_extract(7, 0, cat)) is y
-    assert bv_simplify(
-        ctx.mk_extract(11, 4, ctx.mk_extract(15, 2, cat))
-    ) is bv_simplify(ctx.mk_extract(13, 6, cat))
-    assert (
-        bv_simplify(ctx.mk_concat(ctx.mk_extract(7, 4, x), ctx.mk_extract(3, 0, x)))
-        is x
-    )
+    assert bv_simplify(ctx.mk_extract(11, 4, ctx.mk_extract(15, 2, cat))) is bv_simplify(ctx.mk_extract(13, 6, cat))
+    assert bv_simplify(ctx.mk_concat(ctx.mk_extract(7, 4, x), ctx.mk_extract(3, 0, x))) is x
     zext = ctx.mk_zero_ext(4, x)
     assert bv_simplify(ctx.mk_extract(11, 8, zext)) is ctx.mk_bv_val(0, 4)
     assert bv_simplify(ctx.mk_extract(5, 2, zext)) is ctx.mk_extract(5, 2, x)
@@ -106,10 +97,7 @@ def test_bv_simplify_identities_and_inversions() -> None:
     )
     expected_rhs = ctx.mk_bv_val(((~10) - 3) & 0xFF, 8)
     assert bv_simplify(inv_eq) is ctx.mk_eq(x, expected_rhs)
-    assert (
-        bv_simplify(ctx.mk_eq(ctx.mk_zero_ext(4, x), ctx.mk_bv_val(0x105, 12)))
-        is ctx.false_expr
-    )
+    assert bv_simplify(ctx.mk_eq(ctx.mk_zero_ext(4, x), ctx.mk_bv_val(0x105, 12))) is ctx.false_expr
 
     # Tactic short-circuiting
     tac = BVSimplifyTactic()
@@ -158,18 +146,10 @@ def test_bv_semantics_exhaustive_4bit_and_1bit_vs_z3() -> None:
         _z3_bv_val(ctx, lambda v: -v, lambda z: -z, a)
         _z3_bv_val(ctx, lambda v: ctx.mk_zero_ext(3, v), lambda z: z3.ZeroExt(3, z), a)
         _z3_bv_val(ctx, lambda v: ctx.mk_sign_ext(3, v), lambda z: z3.SignExt(3, z), a)
-        _z3_bv_val(
-            ctx, lambda v: ctx.mk_rotate_left(1, v), lambda z: z3.RotateLeft(z, 1), a
-        )
-        _z3_bv_val(
-            ctx, lambda v: ctx.mk_rotate_right(3, v), lambda z: z3.RotateRight(z, 3), a
-        )
-        _z3_bv_val(
-            ctx, lambda v: ctx.mk_repeat(2, v), lambda z: z3.RepeatBitVec(2, z), a
-        )
-        _z3_bv_val(
-            ctx, lambda v: ctx.mk_extract(2, 1, v), lambda z: z3.Extract(2, 1, z), a
-        )
+        _z3_bv_val(ctx, lambda v: ctx.mk_rotate_left(1, v), lambda z: z3.RotateLeft(z, 1), a)
+        _z3_bv_val(ctx, lambda v: ctx.mk_rotate_right(3, v), lambda z: z3.RotateRight(z, 3), a)
+        _z3_bv_val(ctx, lambda v: ctx.mk_repeat(2, v), lambda z: z3.RepeatBitVec(2, z), a)
+        _z3_bv_val(ctx, lambda v: ctx.mk_extract(2, 1, v), lambda z: z3.Extract(2, 1, z), a)
 
         for b in sample_vals:
             _z3_bv_val(ctx, lambda u, v: u + v, lambda x, y: x + y, a, b)
@@ -187,7 +167,7 @@ def test_bv_semantics_exhaustive_4bit_and_1bit_vs_z3() -> None:
             _z3_bv_val(ctx, ctx.mk_bv_ule, z3.ULE, a, b)
             _z3_bv_val(ctx, lambda u, v: u < v, lambda x, y: x < y, a, b)
             _z3_bv_val(ctx, lambda u, v: u <= v, lambda x, y: x <= y, a, b)
-            _z3_bv_val(ctx, ctx.mk_concat, lambda x, y: z3.Concat(x, y), a, b)
+            _z3_bv_val(ctx, ctx.mk_concat, z3.Concat, a, b)
 
     # 1-bit edge cases (shift >= 1, div/rem/sdiv/smod by 0 and -1)
     for a in (0, 1):
@@ -209,8 +189,6 @@ def test_bv_semantics_exhaustive_4bit_and_1bit_vs_z3() -> None:
 
 
 def test_bitblast_gate_compaction_and_sdiv_sharing() -> None:
-    from unsat.syntax import iter_subexprs
-
     ctx = Context()
     x = ctx.mk_bv("x", 16)
     y = ctx.mk_bv("y", 16)
@@ -221,9 +199,7 @@ def test_bitblast_gate_compaction_and_sdiv_sharing() -> None:
 
     # Multiplication by a sparse power-of-two constant emits no adder XOR gates.
     sparse_mul = bitblast(ctx.mk_eq(x * ctx.mk_bv_val(16, 16), y)).formulas[0]
-    sparse_kinds = {
-        node.decl.kind for node in iter_subexprs(sparse_mul) if isinstance(node, App)
-    }
+    sparse_kinds = {node.decl.kind for node in iter_subexprs(sparse_mul) if isinstance(node, App)}
     assert DeclKind.XOR not in sparse_kinds
 
     # Verify both operand orders of sparse multiplication match Z3.
@@ -236,9 +212,7 @@ def test_bitblast_gate_compaction_and_sdiv_sharing() -> None:
 
     # Unsigned < circuit omits XOR gates via direct borrow chain.
     ult_nodes = list(iter_subexprs(bitblast(ctx.mk_bv_ult(x, y)).formulas[0]))
-    assert all(
-        not (isinstance(n, App) and n.decl.kind is DeclKind.XOR) for n in ult_nodes
-    )
+    assert all(not (isinstance(n, App) and n.decl.kind is DeclKind.XOR) for n in ult_nodes)
 
     # Signed sdiv + srem sharing: blaster populates _sdiv_cache once for the pair.
     sdiv_only = BitBlaster(ctx)

@@ -40,10 +40,7 @@ def test_unicode_escape_and_formatting_roundtrip() -> None:
         c = ctx.mk_string_val(val)
         lit_str = format_smt2_string(val)
         assert format_expr(c) == lit_str
-        script = (
-            f"(declare-const s String)(assert (= s {lit_str}))"
-            "(check-sat)(get-value (s))"
-        )
+        script = f"(declare-const s String)(assert (= s {lit_str}))(check-sat)(get-value (s))"
         out = run_smt2(script)
         assert out[0] == "sat"
         # Round-trip parsed string value through SMT2Runner back to unescape.
@@ -58,9 +55,7 @@ def test_string_and_regex_concrete_eval_and_simplify() -> None:
     ctx = unsat.Context()
     s = ctx.mk_string("s")
     assert SimplifyTactic().apply((ctx.mk_eq(s + "", s),)).formulas == ()
-    assert (
-        SimplifyTactic().apply((ctx.mk_str_in_re(s, ctx.mk_re_all()),)).formulas == ()
-    )
+    assert SimplifyTactic().apply((ctx.mk_str_in_re(s, ctx.mk_re_all()),)).formulas == ()
 
     m = unsat.Model(ctx, {s.decl: "abc123abc"})
     assert m.eval_str(s + "!") == "abc123abc!"
@@ -96,9 +91,7 @@ def test_string_and_regex_concrete_eval_and_simplify() -> None:
 
     # Brzozowski regex engine checks
     digit = ctx.mk_re_range(ctx.mk_string_val("0"), ctx.mk_string_val("9"))
-    letters = ctx.mk_re_plus(
-        ctx.mk_re_range(ctx.mk_string_val("a"), ctx.mk_string_val("z"))
-    )
+    letters = ctx.mk_re_plus(ctx.mk_re_range(ctx.mk_string_val("a"), ctx.mk_string_val("z")))
     pattern = ctx.mk_re_concat(letters, ctx.mk_re_power(3, digit), letters)
     re_node = expr_to_re(pattern)
     assert re_node is not None
@@ -294,15 +287,15 @@ def test_combined_euf_arrays_incremental_and_smt2_strings() -> None:
 
 
 def _as_arith(ref: z3.ExprRef) -> z3.ArithRef:
-    return cast(z3.ArithRef, ref)
+    return cast("z3.ArithRef", ref)
 
 
 def _as_seq(ref: z3.ExprRef) -> z3.SeqRef:
-    return cast(z3.SeqRef, ref)
+    return cast("z3.SeqRef", ref)
 
 
 def _as_re(ref: z3.ExprRef) -> z3.ReRef:
-    return cast(z3.ReRef, ref)
+    return cast("z3.ReRef", ref)
 
 
 def _to_z3_expr(expr: Expr, env: dict[str, z3.ExprRef]) -> z3.ExprRef:
@@ -333,9 +326,7 @@ def _to_z3_expr(expr: Expr, env: dict[str, z3.ExprRef]) -> z3.ExprRef:
             continue
         if not expanded and node.args:
             stack.append((node, True))
-            for arg in reversed(node.args):
-                if arg not in memo:
-                    stack.append((arg, False))
+            stack.extend((arg, False) for arg in reversed(node.args) if arg not in memo)
             continue
         za = [memo[a] for a in node.args]
         k = node.decl.kind
@@ -421,9 +412,7 @@ def _to_z3_expr(expr: Expr, env: dict[str, z3.ExprRef]) -> z3.ExprRef:
                 p_n = node.decl.params[0]
                 memo[node] = z3.Loop(_as_re(za[0]), p_n, p_n)
             case DeclKind.RE_LOOP:
-                memo[node] = z3.Loop(
-                    _as_re(za[0]), node.decl.params[0], node.decl.params[1]
-                )
+                memo[node] = z3.Loop(_as_re(za[0]), node.decl.params[0], node.decl.params[1])
             case _:
                 msg = f"Unsupported op in test bridge: {k}"
                 raise AssertionError(msg)
@@ -450,10 +439,8 @@ def _string_formulas(draw: st.DrawFn) -> tuple[unsat.Context, list[Expr]]:
         ctx.mk_re_power(2, ab),
     ]
 
-    forms: list[Expr] = []
     # Bound variable lengths cleanly for fast differential fuzzing.
-    for v in vars_list:
-        forms.append(ctx.mk_le(ctx.mk_str_len(v), ctx.mk_int_val(3)))
+    forms: list[Expr] = [ctx.mk_le(ctx.mk_str_len(v), ctx.mk_int_val(3)) for v in vars_list]
 
     n_atoms = draw(st.integers(min_value=2, max_value=4))
     for _ in range(n_atoms):
@@ -464,11 +451,7 @@ def _string_formulas(draw: st.DrawFn) -> tuple[unsat.Context, list[Expr]]:
         if ch == 0:
             lhs = ctx.mk_str_concat(v1, t1)
             rhs = ctx.mk_str_concat(t2, draw(st.sampled_from(vars_list)))
-            forms.append(
-                ctx.mk_eq(lhs, rhs)
-                if draw(st.booleans())
-                else ctx.mk_distinct(lhs, rhs)
-            )
+            forms.append(ctx.mk_eq(lhs, rhs) if draw(st.booleans()) else ctx.mk_distinct(lhs, rhs))
         elif ch == 1:
             r = draw(st.sampled_from(res))
             atom = ctx.mk_str_in_re(v1, r)
@@ -508,13 +491,7 @@ def test_qf_slia_matches_z3_and_validates_models(
 
     ures = usolver.check()
     zres_raw = zsolver.check()
-    zres = (
-        SolveResult.SAT
-        if zres_raw == z3.sat
-        else SolveResult.UNSAT
-        if zres_raw == z3.unsat
-        else SolveResult.UNKNOWN
-    )
+    zres = SolveResult.SAT if zres_raw == z3.sat else SolveResult.UNSAT if zres_raw == z3.unsat else SolveResult.UNKNOWN
     if ures is not SolveResult.UNKNOWN and zres is not SolveResult.UNKNOWN:
         assert ures is zres
     if ures is SolveResult.SAT:

@@ -153,9 +153,7 @@ def test_qf_auflia_and_bv_arrays_mbtc_incremental() -> None:
     a1 = unsat.Eq(2 * i, unsat.IntVal(4))
     a2 = j >= 3
     a3 = j <= 3
-    a4 = unsat.Distinct(
-        f(unsat.Select(unsat.Store(arr, i + 1, 7), j)), f(unsat.IntVal(7))
-    )
+    a4 = unsat.Distinct(f(unsat.Select(unsat.Store(arr, i + 1, 7), j)), f(unsat.IntVal(7)))
     unused = i > -10
     assert s.check(a1, a2, a3, a4, unused) is unsat.UNSAT
     core = s.unsat_core()
@@ -184,9 +182,7 @@ def test_qf_auflia_and_bv_arrays_mbtc_incremental() -> None:
     f_abv = unsat.And(
         unsat.Eq(bv + 1, unsat.BitVecVal(4, 8)),
         unsat.Eq(bw, unsat.BitVecVal(3, 8)),
-        unsat.Eq(
-            unsat.Select(unsat.Store(barr, bv, 0x2A), bw), unsat.BitVecVal(0x2A, 8)
-        ),
+        unsat.Eq(unsat.Select(unsat.Store(barr, bv, 0x2A), bw), unsat.BitVecVal(0x2A, 8)),
         unsat.UGT(unsat.Select(barr, bv), 1),
     )
     s2.add(f_abv)

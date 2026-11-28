@@ -40,9 +40,7 @@ def test_parse_dimacs_valid_features(tmp_path) -> None:
     assert empty_cnf == DimacsCNF(num_vars=0, declared_clauses=0, clauses=())
 
     bom_cnf = parse_dimacs("\ufeffp cnf 1 1\n1 0\n")
-    assert bom_cnf == DimacsCNF(
-        num_vars=1, declared_clauses=1, clauses=((pos_lit(0),),)
-    )
+    assert bom_cnf == DimacsCNF(num_vars=1, declared_clauses=1, clauses=((pos_lit(0),),))
 
 
 @pytest.mark.parametrize(
@@ -72,8 +70,7 @@ def test_format_dimacs_result() -> None:
     assert format_dimacs_result(SolveResult.UNKNOWN) == "s UNKNOWN"
     assert format_dimacs_result(SolveResult.SAT) == "s SATISFIABLE\nv 0"
     assert (
-        format_dimacs_result(SolveResult.SAT, {0: True, 1: False, 2: True}, num_vars=3)
-        == "s SATISFIABLE\nv 1 -2 3 0"
+        format_dimacs_result(SolveResult.SAT, {0: True, 1: False, 2: True}, num_vars=3) == "s SATISFIABLE\nv 1 -2 3 0"
     )
     with pytest.raises(ValueError, match="model"):
         format_dimacs_result(SolveResult.SAT, None, num_vars=2)
@@ -103,10 +100,7 @@ def test_solve_dimacs_sat_and_unsat_benchmarks() -> None:
     assert model_sat is not None
     assert len(model_sat) == 9
     for clause in cnf_sat.clauses:
-        assert any(
-            (not model_sat[lit >> 1] if (lit & 1) else model_sat[lit >> 1])
-            for lit in clause
-        )
+        assert any((not model_sat[lit >> 1] if (lit & 1) else model_sat[lit >> 1]) for lit in clause)
 
     # PHP(4, 3) encoded in DIMACS (UNSAT).
     php_4_3 = """

@@ -65,17 +65,13 @@ class _GroundSubSolver:
         self._ctx = ctx
         self._budget = budget
 
-    def check_formula(
-        self, formulas: Sequence[Expr]
-    ) -> tuple[SubSolverStatus, Model | None]:
+    def check_formula(self, formulas: Sequence[Expr]) -> tuple[SubSolverStatus, Model | None]:
         if self._budget is not None and self._budget.timed_out():
             return SubSolverStatus.UNKNOWN, None
         solver = SMTSolver(self._ctx)
         solver.add(*formulas)
         timeout = None if self._budget is None else self._budget.remaining_timeout()
-        max_conflicts = (
-            None if self._budget is None else self._budget.remaining_conflicts
-        )
+        max_conflicts = None if self._budget is None else self._budget.remaining_conflicts
         res = solver.check(timeout=timeout, max_conflicts=max_conflicts)
         if self._budget is not None:
             self._budget.consume_conflicts(solver.statistics()["conflicts"])
@@ -109,16 +105,8 @@ class SMTSolver:
         else:
             default_b = QuantifierBudget()
             self._quant_budget = QuantifierBudget(
-                max_rounds=(
-                    default_b.max_rounds
-                    if max_quantifier_rounds is None
-                    else max_quantifier_rounds
-                ),
-                max_matches=(
-                    default_b.max_matches
-                    if max_quantifier_matches is None
-                    else max_quantifier_matches
-                ),
+                max_rounds=(default_b.max_rounds if max_quantifier_rounds is None else max_quantifier_rounds),
+                max_matches=(default_b.max_matches if max_quantifier_matches is None else max_quantifier_matches),
             )
         self._init_backend()
         self._scope_lits: list[Lit] = []
@@ -267,11 +255,7 @@ class SMTSolver:
             self._encoder.mark_quantifier_owners(simp, owner_tuple)
             return
         self._encoded_insts.add(key)
-        conjuncts = (
-            simp.args
-            if isinstance(simp, App) and simp.decl.kind is DeclKind.AND
-            else (simp,)
-        )
+        conjuncts = simp.args if isinstance(simp, App) and simp.decl.kind is DeclKind.AND else (simp,)
         for conj in conjuncts:
             if conj is self._ctx.true_expr:
                 continue
@@ -295,22 +279,14 @@ class SMTSolver:
         _validate_timeout(timeout)
         _validate_max_conflicts(max_conflicts)
         eff_timeout = self._timeout if timeout is None else timeout
-        eff_max_conflicts = (
-            self._max_conflicts if max_conflicts is None else max_conflicts
-        )
+        eff_max_conflicts = self._max_conflicts if max_conflicts is None else max_conflicts
         if max_quantifier_rounds is None and max_quantifier_matches is None:
             eff_quant_budget = self._quant_budget
         else:
             eff_quant_budget = QuantifierBudget(
-                max_rounds=(
-                    self._quant_budget.max_rounds
-                    if max_quantifier_rounds is None
-                    else max_quantifier_rounds
-                ),
+                max_rounds=(self._quant_budget.max_rounds if max_quantifier_rounds is None else max_quantifier_rounds),
                 max_matches=(
-                    self._quant_budget.max_matches
-                    if max_quantifier_matches is None
-                    else max_quantifier_matches
+                    self._quant_budget.max_matches if max_quantifier_matches is None else max_quantifier_matches
                 ),
                 max_instantiations=self._quant_budget.max_instantiations,
                 max_mbqi_rounds=self._quant_budget.max_mbqi_rounds,
@@ -353,9 +329,7 @@ class SMTSolver:
                 max_conflicts=budget.remaining_conflicts,
                 deadline=budget.deadline,
             )
-            budget.consume_conflicts(
-                self._sat.statistics()["conflicts"] - conflicts_before
-            )
+            budget.consume_conflicts(self._sat.statistics()["conflicts"] - conflicts_before)
             if result is SolveResult.UNSAT:
                 self._last_result = SolveResult.UNSAT
                 core: list[Expr] = []
@@ -365,11 +339,7 @@ class SMTSolver:
                         core.append(mapped[0])
                 self._unsat_core = list(dict.fromkeys(core))
                 return SolveResult.UNSAT
-            if (
-                result is SolveResult.UNKNOWN
-                or self._propagator.nla_unknown
-                or self._propagator.string_unknown
-            ):
+            if result is SolveResult.UNKNOWN or self._propagator.nla_unknown or self._propagator.string_unknown:
                 self._last_result = SolveResult.UNKNOWN
                 self._unsat_core = []
                 return SolveResult.UNKNOWN
@@ -383,8 +353,7 @@ class SMTSolver:
             active_entries = [
                 (u_lit, norm_q, {ol for ol in owners if ol in live_owner_lits})
                 for u_lit, norm_q, owners in entries
-                if any(ol in live_owner_lits for ol in owners)
-                and self._sat.value(u_lit) is True
+                if any(ol in live_owner_lits for ol in owners) and self._sat.value(u_lit) is True
             ]
             if not active_entries:
                 self._last_result = SolveResult.SAT
@@ -392,9 +361,7 @@ class SMTSolver:
 
             q_to_guards: dict[Quantifier, list[tuple[Lit, frozenset[Lit | None]]]] = {}
             for u_lit, norm_q, live_q_owners in active_entries:
-                q_to_guards.setdefault(norm_q, []).append(
-                    (u_lit, frozenset(live_q_owners))
-                )
+                q_to_guards.setdefault(norm_q, []).append((u_lit, frozenset(live_q_owners)))
             active_quants = list(q_to_guards)
 
             if total_rounds >= eff_quant_budget.max_rounds:
@@ -512,9 +479,7 @@ class SMTSolver:
                 sat_bv_vals[bv_term] = val
 
         bv_decl_vals: dict[FuncDecl, int] = {
-            decl: val
-            for decl, val in self._bv.concrete_values(sat_bv_vals).items()
-            if decl not in internal_decls
+            decl: val for decl, val in self._bv.concrete_values(sat_bv_vals).items() if decl not in internal_decls
         }
         for bv_decl, bits in self._bitblaster.bv_const_bits.items():
             if bv_decl not in internal_decls and bv_decl not in bv_decl_vals:
@@ -540,15 +505,9 @@ class SMTSolver:
         all_external = {**external_vals, **array_vals}
 
         euf_model = self._euf.build_model(external_values=all_external)
-        values: dict[FuncDecl, Value] = {
-            decl: val for decl, val in euf_model.items() if decl not in internal_decls
-        }
+        values: dict[FuncDecl, Value] = {decl: val for decl, val in euf_model.items() if decl not in internal_decls}
         for expr, frac in lra_conc.items():
-            if (
-                isinstance(expr, App)
-                and expr.is_const_symbol
-                and expr.decl not in internal_decls
-            ):
+            if isinstance(expr, App) and expr.is_const_symbol and expr.decl not in internal_decls:
                 if expr.is_int:
                     assert frac.denominator == 1
                     values[expr.decl] = frac.numerator
@@ -556,35 +515,22 @@ class SMTSolver:
                     values[expr.decl] = frac
         values.update(bv_decl_vals)
         for expr, s_val in str_conc.items():
-            if (
-                isinstance(expr, App)
-                and expr.is_const_symbol
-                and expr.decl not in internal_decls
-            ):
+            if isinstance(expr, App) and expr.is_const_symbol and expr.decl not in internal_decls:
                 values[expr.decl] = s_val
         for decl, var in self._encoder.decl_to_var.items():
             if decl not in internal_decls:
                 values[decl] = sat_model[var]
         for term, arr_val in array_vals.items():
-            if (
-                isinstance(term, App)
-                and term.is_const_symbol
-                and term.decl not in internal_decls
-            ):
+            if isinstance(term, App) and term.is_const_symbol and term.decl not in internal_decls:
                 values[term.decl] = arr_val
 
-        functions = {
-            decl: euf_model.func_interp(decl)
-            for decl in euf_model.func_decls()
-            if decl not in internal_decls
-        }
+        functions = {decl: euf_model.func_interp(decl) for decl in euf_model.func_decls() if decl not in internal_decls}
         universes = {sort: euf_model.universe(sort) for sort in euf_model.sorts()}
         div_zero: dict[tuple[DeclKind, Const], Const] = {}
         div_args = [
             expr
             for expr in lra_conc
-            if isinstance(expr, App)
-            and expr.decl.kind in (DeclKind.DIV, DeclKind.IDIV, DeclKind.MOD)
+            if isinstance(expr, App) and expr.decl.kind in (DeclKind.DIV, DeclKind.IDIV, DeclKind.MOD)
         ]
         if div_args:
             needed = [arg for expr in div_args for arg in expr.args]
@@ -631,9 +577,7 @@ class SMTSolver:
 
     def statistics(self) -> dict[str, int]:
         """Return merged SAT, EUF, LRA/LIA, Array, and Quantifier counters."""
-        stats: dict[str, int] = {
-            k: v for k, v in self._sat.statistics().items() if isinstance(v, int)
-        }
+        stats: dict[str, int] = {k: v for k, v in self._sat.statistics().items() if isinstance(v, int)}
         stats.update(self._euf.stats.to_dict())
         stats.update(self._lra.stats.to_dict())
         stats.update(self._arrays.stats.to_dict())

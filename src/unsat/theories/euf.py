@@ -141,14 +141,10 @@ class EUFSolver:
         if num_levels == 0:
             return
         if num_levels > len(self._trail_marks):
-            msg = (
-                f"Cannot pop {num_levels} levels: only {len(self._trail_marks)} active"
-            )
+            msg = f"Cannot pop {num_levels} levels: only {len(self._trail_marks)} active"
             raise ValueError(msg)
 
-        target_len, saved_conflict = self._trail_marks[
-            len(self._trail_marks) - num_levels
-        ]
+        target_len, saved_conflict = self._trail_marks[len(self._trail_marks) - num_levels]
         del self._trail_marks[len(self._trail_marks) - num_levels :]
 
         # Discard any pending work or conflict from the popped levels.
@@ -332,9 +328,7 @@ class EUFSolver:
             eq_term_id = self._expr_to_id.get(atom)
             if eq_term_id is not None and eq_term_id in self._registered_bools:
                 target_id = self._true_id if polarity else self._false_id
-                self._merge_queue.append(
-                    (eq_term_id, target_id, TheoryLit(atom, polarity))
-                )
+                self._merge_queue.append((eq_term_id, target_id, TheoryLit(atom, polarity)))
             return
 
         self.register_bool_term(atom)
@@ -440,11 +434,7 @@ class EUFSolver:
     def eclasses(self) -> list[Expr]:
         """Return the canonical representative ``Expr`` of each current E-class."""
         self._drain()
-        return [
-            self._id_to_expr[nid]
-            for nid in range(len(self._id_to_expr))
-            if self._rep[nid] == nid
-        ]
+        return [self._id_to_expr[nid] for nid in range(len(self._id_to_expr)) if self._rep[nid] == nid]
 
     def eclass_members(self, term: Expr) -> tuple[Expr, ...]:
         """Return all registered members in ``term``'s current E-class."""
@@ -462,11 +452,7 @@ class EUFSolver:
             msg = f"FuncDecl '{decl}' belongs to a different Context"
             raise ValueError(msg)
         self._drain()
-        return [
-            expr
-            for expr in self._id_to_expr
-            if isinstance(expr, App) and expr.decl is decl
-        ]
+        return [expr for expr in self._id_to_expr if isinstance(expr, App) and expr.decl is decl]
 
     def terms_of_sort(self, sort: Sort) -> list[Expr]:
         """Return canonical E-class representatives of sort ``sort``."""
@@ -486,9 +472,7 @@ class EUFSolver:
         out: list[tuple[Expr, Expr, Expr]] = []
         for lhs_id, rhs_id, eq_expr in self._eq_atoms:
             if self._asserted_atoms.get(eq_expr) is False:
-                out.append(
-                    (eq_expr, self._id_to_expr[lhs_id], self._id_to_expr[rhs_id])
-                )
+                out.append((eq_expr, self._id_to_expr[lhs_id], self._id_to_expr[rhs_id]))
         return out
 
     def _assign_root_values(
@@ -690,9 +674,7 @@ class EUFSolver:
                 expr_r = self._id_to_expr[r]
                 root_val[r] = (
                     expr_r
-                    if expr_r.is_reglan
-                    and isinstance(expr_r, App)
-                    and not expr_r.decl.is_uninterpreted
+                    if expr_r.is_reglan and isinstance(expr_r, App) and not expr_r.decl.is_uninterpreted
                     else self._ctx.mk_re_none()
                 )
 
@@ -705,9 +687,7 @@ class EUFSolver:
                             root_val[r] = ext
                             break
                 if r not in root_val:
-                    root_val[r] = self._default_expr_for_sort(
-                        arr_sort, universes, tag=offset
-                    )
+                    root_val[r] = self._default_expr_for_sort(arr_sort, universes, tag=offset)
 
         return root_val, universes
 
@@ -749,9 +729,7 @@ class EUFSolver:
             elem = self._ctx.mk_const_array(idx_sort, elem)
         return elem
 
-    def resolve_scalar_values(
-        self, external_values: Mapping[Expr, Expr] | None = None
-    ) -> dict[Expr, Expr]:
+    def resolve_scalar_values(self, external_values: Mapping[Expr, Expr] | None = None) -> dict[Expr, Expr]:
         """Return concrete ``Const`` values for registered non-Array terms."""
         self._drain()
         if self._conflict is not None:
@@ -840,16 +818,9 @@ class EUFSolver:
             node, expanded = stack.pop()
             if node in self._expr_to_id:
                 continue
-            if (
-                not expanded
-                and isinstance(node, App)
-                and node.decl.kind in _EUF_CONGRUENCE_KINDS
-                and node.args
-            ):
+            if not expanded and isinstance(node, App) and node.decl.kind in _EUF_CONGRUENCE_KINDS and node.args:
                 stack.append((node, True))
-                for arg in reversed(node.args):
-                    if arg not in self._expr_to_id:
-                        stack.append((arg, False))
+                stack.extend((arg, False) for arg in reversed(node.args) if arg not in self._expr_to_id)
                 continue
             self._alloc_node(node)
         return self._expr_to_id[expr]
@@ -868,11 +839,7 @@ class EUFSolver:
         self._lca_mark.append(0)
         self._eq_watches.append([])
 
-        is_uapp = (
-            isinstance(expr, App)
-            and expr.decl.kind in _EUF_CONGRUENCE_KINDS
-            and bool(expr.args)
-        )
+        is_uapp = isinstance(expr, App) and expr.decl.kind in _EUF_CONGRUENCE_KINDS and bool(expr.args)
         if is_uapp:
             assert isinstance(expr, App)
             arg_ids = tuple(self._expr_to_id[arg] for arg in expr.args)
@@ -1015,9 +982,7 @@ class EUFSolver:
         bool_len = len(self._class_bool_terms[r_large])
         use_len = len(self._use_list[r_large])
         if self._trail_marks:
-            self._history.append(
-                (_OP_UNION, r_small, r_large, mem_len, bool_len, use_len)
-            )
+            self._history.append((_OP_UNION, r_small, r_large, mem_len, bool_len, use_len))
 
         for member in self._class_members[r_small]:
             self._rep[member] = r_large
@@ -1088,10 +1053,7 @@ class EUFSolver:
             cur = self._proof_parent[cur]
 
         if self._trail_marks:
-            saved = tuple(
-                (node, self._proof_parent[node], self._proof_reason[node])
-                for node in path
-            )
+            saved = tuple((node, self._proof_parent[node], self._proof_reason[node]) for node in path)
             self._history.append((_OP_PROOF_LINK, saved))
 
         # Reverse pointers along the path so u_side becomes the subtree root.
@@ -1172,9 +1134,7 @@ class EUFSolver:
                                 result.append(reason)
                         else:
                             p1, p2 = reason
-                            for a_arg, b_arg in zip(
-                                self._arg_ids[p1], self._arg_ids[p2], strict=True
-                            ):
+                            for a_arg, b_arg in zip(self._arg_ids[p1], self._arg_ids[p2], strict=True):
                                 if a_arg != b_arg:
                                     pending.append((a_arg, b_arg))
                     cur = proof_parent[cur]

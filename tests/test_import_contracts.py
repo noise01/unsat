@@ -142,9 +142,8 @@ class LintWorker:
         self._proc.stdin.flush()
         response = self._proc.stdout.readline()
         if not response:
-            raise RuntimeError(
-                f"import-linter worker exited unexpectedly ({self._proc.poll()})"
-            )
+            msg = f"import-linter worker exited unexpectedly ({self._proc.poll()})"
+            raise RuntimeError(msg)
         payload = json.loads(response)
         return LintResult(passed=payload["passed"], output=payload["output"])
 
@@ -157,9 +156,7 @@ class LintWorker:
             self._proc.kill()
             self._proc.wait()
             raise
-        assert returncode == 0, (
-            f"import-linter worker failed with exit code {returncode}"
-        )
+        assert returncode == 0, f"import-linter worker failed with exit code {returncode}"
 
 
 def module_path(package: Path, name: str) -> Path:
@@ -205,9 +202,7 @@ def package(tmp_path: Path) -> Path:
     ]
     + SUBMODULE_FORBIDDEN_CASES,
 )
-def test_forbidden_direct_import(
-    lint_worker: LintWorker, package: Path, source: str, target: str
-) -> None:
+def test_forbidden_direct_import(lint_worker: LintWorker, package: Path, source: str, target: str) -> None:
     imported = full_module_name(target)
     importer = full_module_name(source)
     module_path(package, source).write_text(f"import {imported}\n", encoding="utf-8")

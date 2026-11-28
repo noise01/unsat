@@ -47,7 +47,7 @@ def _detect_format(input_arg: str, text: str, explicit: str) -> str:
             return "smt2"
         if line.startswith("%"):
             continue
-        if line.startswith("fof(") or line.startswith("fof "):
+        if line.startswith(("fof(", "fof ")):
             return "tptp"
         return "dimacs"
     return "dimacs"
@@ -117,11 +117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     try:
-        text = (
-            sys.stdin.read()
-            if args.input == "-"
-            else Path(args.input).read_text(encoding="utf-8-sig")
-        )
+        text = sys.stdin.read() if args.input == "-" else Path(args.input).read_text(encoding="utf-8-sig")
         fmt = _detect_format(args.input, text, args.format)
         if fmt == "smt2":
             outputs, stats = execute_smt2(
@@ -161,7 +157,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             for key, val in stats.items():
                 print(f"c {key}: {val}")
         print(format_dimacs_result(result, model, cnf.num_vars))
-        return 0
     except (OSError, TypeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    else:
+        return 0
